@@ -20,9 +20,8 @@ receipt = quote.execute()
 print(f"swapped: received {receipt.amount_out / 1e7:,.2f} AQUA")
 print(f"         https://stellar.expert/explorer/testnet/tx/{receipt.tx_hash}")
 
-# exact output: receive exactly 100 AQUA
-quote = aqua.quote(XLM, AQUA, amount_out=100_0000000)
-print(f"quote:   exactly 100 AQUA costs {quote.amount_in / 1e7:.4f} XLM")
-receipt = quote.execute()
+# exact output: receive exactly 100 AQUA — swap() re-quotes and retries
+# up to twice if the pool moves past the guard in between
+receipt = aqua.swap(XLM, AQUA, amount_out=100_0000000, retries=2)
 print(f"swapped: paid {receipt.amount_in / 1e7:.4f} XLM for exactly 100 AQUA")
 print(f"         https://stellar.expert/explorer/testnet/tx/{receipt.tx_hash}")

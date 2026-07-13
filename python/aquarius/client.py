@@ -53,7 +53,14 @@ class AquariusClient:
         horizon_url: str | None = None,
         api_url: str | None = None,
         base_fee: int = 100_000,
+        timeout: int | str | None = None,
     ):
+        """timeout: transaction time bound in seconds, or "infinite".
+
+        Default: 300 seconds when the signer is a local keypair (a stale bot
+        transaction should expire, not execute later at a worse price);
+        no bound when signing goes through a wallet (humans take their time).
+        """
         preset = NETWORKS.get(network)
         if preset is None:
             raise AquariusError(f"Unknown network: {network}")
@@ -64,9 +71,17 @@ class AquariusClient:
             horizon_url=horizon_url or preset.horizon_url,
             passphrase=preset.passphrase,
         )
+        if timeout is None:
+            resolved_timeout = 300 if isinstance(getattr(signer, "secret", None), str) else None
+        elif timeout == "infinite":
+            resolved_timeout = None
+        else:
+            resolved_timeout = int(timeout)
         self.api = ApiClient(self.network.api_url)
         self.server = SorobanServer(self.network.rpc_url)
-        self.engine = SubmitEngine(self.server, self.network.passphrase, base_fee)
+        self.engine = SubmitEngine(
+            self.server, self.network.passphrase, base_fee, timeout=resolved_timeout
+        )
         self.signer = signer
 
     # -- reads (no signer required) -------------------------------------------
@@ -119,9 +134,19 @@ class AquariusClient:
 
     # -- writes ------------------------------------------------------------------
 
-    def swap(self, from_: Asset, to: Asset, **kwargs) -> Receipt:
-        """quote() + execute() in one call, for bots."""
-        return self.quote(from_, to, **kwargs).execute()
+    def swap(self, from_: Asset, to: Asset, *, retries: int = 0, **kwargs) -> Receipt:
+        """quote() + execute() in one call, for bots.
+
+        retries: how many times to re-quote and retry after a SlippageError.
+        Each attempt starts from a fresh quote. Default 0 — fail on the first
+        guard breach.
+        """
+        for attempt in range(retries + 1):
+            try:
+                return self.quote(from_, to, **kwargs).execute()
+            except SlippageError:
+                if attempt == retries:
+                    raise
 
     # -- Stellar quirks, absorbed --------------------------------------------------
 

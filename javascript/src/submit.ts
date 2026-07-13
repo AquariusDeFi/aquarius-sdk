@@ -7,7 +7,13 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 
-import { AquariusError, SlippageError, TxTimeoutError, classifyContractError } from "./errors.js";
+import {
+  AquariusError,
+  SlippageError,
+  TxTimeoutError,
+  classifyContractError,
+  errorFromDiagnostics,
+} from "./errors.js";
 import { Signer, signTransaction } from "./signer.js";
 
 // Congestion backoff between resubmissions of the same signed transaction.
@@ -34,6 +40,12 @@ export class SubmitEngine {
     private readonly server: rpc.Server,
     private readonly passphrase: string,
     private readonly baseFee: string,
+    /**
+     * Transaction time bound in seconds; null means no upper bound (the right
+     * default when a human signs through a wallet, the wrong one for bots,
+     * whose stale transactions should expire rather than execute).
+     */
+    private readonly timeoutSeconds: number | null = null,
   ) {}
 
   async buildTransaction(source: string, operation: xdr.Operation): Promise<Transaction> {
@@ -43,7 +55,7 @@ export class SubmitEngine {
       networkPassphrase: this.passphrase,
     })
       .addOperation(operation)
-      .setTimeout(TimeoutInfinite)
+      .setTimeout(this.timeoutSeconds ?? TimeoutInfinite)
       .build();
   }
 
@@ -144,8 +156,14 @@ export class SubmitEngine {
       return { txHash: hash, returnValue: result.returnValue };
     }
     if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
-      // Simulation already passed, so an on-chain failure almost always means
-      // pool state moved past the guard between simulation and inclusion.
+      const diagnosed = errorFromDiagnostics(
+        (result as { diagnosticEventsXdr?: xdr.DiagnosticEvent[] }).diagnosticEventsXdr,
+        hash,
+      );
+      if (diagnosed) throw diagnosed;
+      // No recognizable cause in the diagnostics: simulation already passed,
+      // so pool state most likely moved past the guard between simulation and
+      // inclusion.
       throw new SlippageError(
         "The transaction failed on-chain — pool state likely moved past your guard between simulation and inclusion. Re-quote and retry.",
         hash,

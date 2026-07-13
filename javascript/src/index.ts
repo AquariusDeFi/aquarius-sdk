@@ -21,6 +21,7 @@ export { NETWORKS, type NetworkConfig } from "./networks.js";
 export {
   AquariusError,
   NoRouteError,
+  NoTrustlineError,
   PausedError,
   SlippageError,
   TxTimeoutError,

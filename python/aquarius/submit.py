@@ -8,7 +8,13 @@ from stellar_sdk import SorobanServer, TransactionBuilder, TransactionEnvelope
 from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
 from stellar_sdk.xdr import SCVal, TransactionMeta, TransactionResult
 
-from .errors import AquariusError, SlippageError, TxTimeoutError, classify_contract_error
+from .errors import (
+    AquariusError,
+    SlippageError,
+    TxTimeoutError,
+    classify_contract_error,
+    error_from_diagnostics,
+)
 from .signer import sign_transaction, signer_public_key
 
 # Congestion backoff between resubmissions of the same signed transaction.
@@ -34,10 +40,20 @@ class SubmitEngine:
     value — this is the single place in the SDK that touches transaction meta.
     """
 
-    def __init__(self, server: SorobanServer, passphrase: str, base_fee: int):
+    def __init__(
+        self,
+        server: SorobanServer,
+        passphrase: str,
+        base_fee: int,
+        timeout: int | None = None,
+    ):
         self.server = server
         self.passphrase = passphrase
         self.base_fee = base_fee
+        # Transaction time bound in seconds; None means no upper bound (the
+        # right default when a human signs through a wallet, the wrong one for
+        # bots, whose stale transactions should expire rather than execute).
+        self.timeout = timeout
 
     def build_transaction(
         self, source: str, append: Callable[[TransactionBuilder], TransactionBuilder]
@@ -46,7 +62,10 @@ class SubmitEngine:
         builder = TransactionBuilder(
             account, network_passphrase=self.passphrase, base_fee=self.base_fee
         )
-        return append(builder).add_time_bounds(0, 0).build()
+        builder = append(builder)
+        if self.timeout is None:
+            return builder.add_time_bounds(0, 0).build()
+        return builder.set_timeout(self.timeout).build()
 
     def prepare(
         self,
@@ -130,9 +149,12 @@ class SubmitEngine:
         if result.status == GetTransactionStatus.SUCCESS:
             return ConfirmedTx(tx_hash=tx_hash, return_value=self._return_value(result))
         if result.status == GetTransactionStatus.FAILED:
-            # Simulation already passed, so an on-chain failure almost always
-            # means pool state moved past the guard between simulation and
-            # inclusion.
+            diagnosed = error_from_diagnostics(result.diagnostic_events_xdr, tx_hash)
+            if diagnosed is not None:
+                raise diagnosed
+            # No recognizable cause in the diagnostics: simulation already
+            # passed, so pool state most likely moved past the guard between
+            # simulation and inclusion.
             raise SlippageError(
                 "The transaction failed on-chain — pool state likely moved past your "
                 "guard between simulation and inclusion. Re-quote and retry.",

@@ -11,6 +11,7 @@ from .client import AquariusClient, Quote, Receipt
 from .errors import (
     AquariusError,
     NoRouteError,
+    NoTrustlineError,
     PausedError,
     SlippageError,
     TxTimeoutError,
@@ -28,6 +29,7 @@ __all__ = [
     "NETWORKS",
     "NetworkConfig",
     "NoRouteError",
+    "NoTrustlineError",
     "ParsedRoute",
     "PausedError",
     "Quote",
