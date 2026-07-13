@@ -2,14 +2,14 @@
 
 Official SDKs for building on [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar, in Python and TypeScript.
 
-**Status: interface preview.** The Python swap surface works end-to-end (quote → execute, exact-input and exact-output, verified with real testnet swaps). The TypeScript package is typed interface stubs for design review. Nothing is published to a registry yet.
+**Status: interface preview (0.0.x).** The Python swap surface works end-to-end (quote → execute, exact-input and exact-output, verified with real testnet swaps). The TypeScript package publishes the typed interface for design review; implementation follows.
 
 ## Layout
 
 | Directory | Package | Registry name |
 | --- | --- | --- |
-| `python/` | `import aquarius` | `aquarius-sdk` (PyPI — free as of July 2026; claimed by first upload) |
-| `javascript/` | `@aquariusdefi/sdk` | npm — the `aquariusdefi` org is claimed and owns the scope |
+| `python/` | `import aquarius` | [`aquarius-sdk`](https://pypi.org/project/aquarius-sdk/) on PyPI |
+| `javascript/` | `@aquariusdefi/sdk` | [`@aquariusdefi/sdk`](https://www.npmjs.com/package/@aquariusdefi/sdk) on npm |
 | `testdata/` | Golden fixtures shared by both test suites | — |
 
 ## Try it
