@@ -34,6 +34,40 @@ export class ApiClient {
     }
     return (await response.json()) as FindPathResponse;
   }
+
+  /** Indexed metadata for the given pool addresses (type, fee, token labels). */
+  async poolsByAddresses(addresses: string[]): Promise<PoolMeta[]> {
+    const response = await fetch(
+      `${this.baseUrl}/pools/?address__in=${addresses.join(",")}`,
+    );
+    if (!response.ok) {
+      throw new Error(`Pools request failed: HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as { results?: PoolMeta[] };
+    return data.results ?? [];
+  }
+
+  /** Pools where the address holds a position. Empty when it holds none. */
+  async userPools(address: string): Promise<PoolMeta[]> {
+    const response = await fetch(`${this.baseUrl}/pools/user/${address}/`);
+    if (response.status === 404) return [];
+    if (!response.ok) {
+      throw new Error(`User pools request failed: HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as PoolMeta[] | { results?: PoolMeta[] };
+    return Array.isArray(data) ? data : (data.results ?? []);
+  }
+}
+
+export interface PoolMeta {
+  /** The pool hash, hex-encoded (the backend calls it "index"). */
+  index: string;
+  address: string;
+  tokens_addresses: string[];
+  tokens_str: string[];
+  pool_type: string;
+  /** Decimal fraction as a string, for example "0.0030". */
+  fee: string;
 }
 
 export interface ParsedRoute {

@@ -12,6 +12,10 @@ class NetworkConfig:
     rpc_url: str
     horizon_url: str
     passphrase: str
+    # A long-lived funded account used as the simulation source for signer-less
+    # reads (simulations need an existing source account; the AQUA issuer is the
+    # convention the documentation examples use).
+    read_source: str
 
 
 NETWORKS: dict[str, NetworkConfig] = {
@@ -21,6 +25,7 @@ NETWORKS: dict[str, NetworkConfig] = {
         rpc_url="https://mainnet.sorobanrpc.com",
         horizon_url="https://horizon.stellar.org",
         passphrase=Network.PUBLIC_NETWORK_PASSPHRASE,
+        read_source="GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
     ),
     "testnet": NetworkConfig(
         router="CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
@@ -28,5 +33,6 @@ NETWORKS: dict[str, NetworkConfig] = {
         rpc_url="https://soroban-testnet.stellar.org:443",
         horizon_url="https://horizon-testnet.stellar.org",
         passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        read_source="GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
     ),
 }

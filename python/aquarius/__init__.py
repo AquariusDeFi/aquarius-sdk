@@ -1,8 +1,7 @@
 """aquarius-sdk — the Python SDK for the Aquarius protocol on Stellar.
 
-0.1.x scope: the swap surface — quote() and execute() in both modes,
-trustline and friendbot helpers, typed errors, and escape hatches.
-Pools, liquidity, and rewards arrive in 0.2.
+Swaps (quote/execute in both modes), pools, liquidity, and rewards,
+with trustline and friendbot helpers, typed errors, and escape hatches.
 """
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
@@ -17,8 +16,9 @@ from .errors import (
     UserRejectedError,
 )
 from .networks import NETWORKS, NetworkConfig
+from .pool import ClaimResult, DepositResult, Pool, Position, WithdrawResult
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ApiClient",
@@ -27,8 +27,13 @@ __all__ = [
     "Asset",
     "NETWORKS",
     "NetworkConfig",
+    "ClaimResult",
+    "DepositResult",
     "NoRouteError",
     "ParsedRoute",
+    "Pool",
+    "Position",
+    "WithdrawResult",
     "PausedError",
     "Quote",
     "Receipt",

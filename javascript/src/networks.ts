@@ -6,6 +6,12 @@ export interface NetworkConfig {
   rpcUrl: string;
   horizonUrl: string;
   passphrase: string;
+  /**
+   * A long-lived funded account used as the simulation source for signer-less
+   * reads (simulations need an existing source account; the AQUA issuer is the
+   * convention the documentation examples use).
+   */
+  readSource: string;
 }
 
 export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
@@ -15,6 +21,7 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     rpcUrl: "https://mainnet.sorobanrpc.com",
     horizonUrl: "https://horizon.stellar.org",
     passphrase: Networks.PUBLIC,
+    readSource: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
   },
   testnet: {
     router: "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
@@ -22,5 +29,6 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     rpcUrl: "https://soroban-testnet.stellar.org:443",
     horizonUrl: "https://horizon-testnet.stellar.org",
     passphrase: Networks.TESTNET,
+    readSource: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
   },
 };

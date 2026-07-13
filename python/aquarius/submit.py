@@ -90,6 +90,31 @@ class SubmitEngine:
         signed = sign_transaction(signer, restore_tx, self.passphrase)
         self._submit(signed)
 
+    def read(
+        self,
+        source: str,
+        append: Callable[[TransactionBuilder], TransactionBuilder],
+        signer=None,
+    ) -> SCVal | None:
+        """Execute a read through simulation — nothing is signed or submitted.
+
+        If the entries are archived and a signer is available, restore them
+        first (one signed transaction), then simulate again.
+        """
+        tx = self.build_transaction(source, append)
+        simulation = self.server.simulate_transaction(tx)
+
+        if simulation.restore_preamble is not None and signer is not None:
+            self._restore(source, simulation.restore_preamble, signer)
+            tx = self.build_transaction(source, append)
+            simulation = self.server.simulate_transaction(tx)
+
+        if simulation.error is not None:
+            raise classify_contract_error(simulation.error) or AquariusError(simulation.error)
+        if not simulation.results:
+            return None
+        return SCVal.from_xdr(simulation.results[0].xdr)
+
     def sign_and_submit(self, tx: TransactionEnvelope, signer) -> ConfirmedTx:
         """Sign, submit with congestion retries, and wait for confirmation."""
         signed = sign_transaction(signer, tx, self.passphrase)

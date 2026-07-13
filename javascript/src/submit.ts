@@ -98,6 +98,34 @@ export class SubmitEngine {
     await this.submit(signed);
   }
 
+  /**
+   * Execute a read through simulation — nothing is signed or submitted. If the
+   * entries are archived and a signer is available, restore them first.
+   */
+  async read(
+    source: string,
+    buildOperation: () => xdr.Operation,
+    signer?: Signer,
+  ): Promise<xdr.ScVal> {
+    let tx = await this.buildTransaction(source, buildOperation());
+    let simulation = await this.server.simulateTransaction(tx);
+
+    if (rpc.Api.isSimulationRestore(simulation) && signer) {
+      await this.restore(source, simulation, signer);
+      tx = await this.buildTransaction(source, buildOperation());
+      simulation = await this.server.simulateTransaction(tx);
+    }
+
+    if (rpc.Api.isSimulationError(simulation)) {
+      throw classifyContractError(simulation.error) ?? new AquariusError(simulation.error);
+    }
+    const retval = (simulation as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) {
+      throw new AquariusError("Simulation returned no result");
+    }
+    return retval;
+  }
+
   /** Sign, submit with congestion retries, and wait for confirmation. */
   async signAndSubmit(tx: Transaction, signer: Signer): Promise<ConfirmedTx> {
     const signed = await signTransaction(signer, tx, this.passphrase);

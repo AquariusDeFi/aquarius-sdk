@@ -29,6 +29,27 @@ class ApiClient:
             raise AquariusError(f"Find-path request failed: HTTP {response.status_code}")
         return response.json()
 
+    def pools_by_addresses(self, addresses: list[str]) -> list[dict]:
+        """Indexed metadata for the given pool addresses (type, fee, token labels)."""
+        response = requests.get(
+            f"{self.base_url}/pools/",
+            params={"address__in": ",".join(addresses)},
+            timeout=30,
+        )
+        if not response.ok:
+            raise AquariusError(f"Pools request failed: HTTP {response.status_code}")
+        return response.json().get("results", [])
+
+    def user_pools(self, address: str) -> list[dict]:
+        """Pools where the address holds a position. Empty when it holds none."""
+        response = requests.get(f"{self.base_url}/pools/user/{address}/", timeout=30)
+        if response.status_code == 404:
+            return []
+        if not response.ok:
+            raise AquariusError(f"User pools request failed: HTTP {response.status_code}")
+        data = response.json()
+        return data.get("results", data) if isinstance(data, dict) else data
+
 
 def parse_find_path_response(
     response: dict,

@@ -1,0 +1,41 @@
+{
+    "count": 2,
+    "next": null,
+    "previous": null,
+    "results": [
+        {
+            "index": "9ac7a9cde23ac2ada11105eeaa42e43c2ea8332ca0aa8f41f58d7160274d718e",
+            "address": "CCSXYUVLYALKJGIIYMGYLZI447VS6TDWFTVDL43B4IKK2WERHLWUVCRC",
+            "tokens_addresses": [
+                "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+            ],
+            "tokens_str": [
+                "native",
+                "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+            ],
+            "pool_type": "constant_product",
+            "fee": "0.0030",
+            "a": null,
+            "tx_count": 178,
+            "total_volume": 125372723209
+        },
+        {
+            "index": "ed45429155f876475d3c7ac18d34273d638d6a5b2fcc736db36d71a5788852c5",
+            "address": "CBEPUTV5IJHR75PKITMFDCWTTKEHLWDEUOARPNVIW52A3AHK7OLIFCEK",
+            "tokens_addresses": [
+                "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+            ],
+            "tokens_str": [
+                "native",
+                "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+            ],
+            "pool_type": "concentrated",
+            "fee": "0.0030",
+            "a": null,
+            "tx_count": 226,
+            "total_volume": 369971058554
+        }
+    ]
+}

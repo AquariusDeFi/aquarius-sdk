@@ -1,11 +1,20 @@
+import { Buffer } from "buffer";
+
 import { Address, Asset as StellarAsset, Operation, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 
 import { ApiClient, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
 import { AquariusError, SlippageError } from "./errors.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
+import {
+  Pool,
+  Position,
+  parsePoolMeta,
+  parsePoolsMap,
+  sortTokenIds,
+} from "./pool.js";
 import { Signer } from "./signer.js";
-import { SubmitEngine } from "./submit.js";
+import { ConfirmedTx, SubmitEngine } from "./submit.js";
 
 export interface AquariusConfig {
   network: "mainnet" | "testnet";
@@ -156,16 +165,130 @@ export class AquariusClient {
     },
   };
 
-  // -- not yet implemented ------------------------------------------------------------
+  // -- pools & positions ---------------------------------------------------------------
 
   readonly pools = {
-    forPair: (): never => {
-      throw new AquariusError("Pool operations arrive in 0.2.0 — see the docs code examples meanwhile");
+    /** Every pool for the token pair, discovered on-chain, labeled via the API. */
+    forPair: async (a: Asset, b: Asset): Promise<Pool[]> => {
+      const tokens = sortTokenIds([
+        a.contractId(this.network.passphrase),
+        b.contractId(this.network.passphrase),
+      ]);
+      const value = await this.readRouter("get_pools", [
+        xdr.ScVal.scvVec(tokens.map(t => new Address(t).toScVal())),
+      ]);
+      const byHash = parsePoolsMap(value);
+      if (byHash.length === 0) return [];
+      const meta = new Map(
+        (await this.api.poolsByAddresses(byHash.map(([, address]) => address))).map(m => [
+          m.address,
+          m,
+        ]),
+      );
+      const pools = await Promise.all(
+        byHash.map(([hash, address]) => this.makePool(hash, address, tokens, meta.get(address))),
+      );
+      const order: Record<string, number> = { volatile: 0, stable: 1, concentrated: 2 };
+      return pools.sort(
+        (x, y) => (order[x.type] ?? 3) - (order[y.type] ?? 3) || x.feeBps - y.feeBps,
+      );
     },
   };
 
-  positions(): never {
-    throw new AquariusError("positions() arrives in 0.2.0 — see the docs code examples meanwhile");
+  /**
+   * Every pool where the address holds shares (default: the signer's account).
+   *
+   * Backed by the indexer — a deposit that just confirmed can take a few
+   * seconds to appear. Share amounts are read from the chain.
+   */
+  async positions(address?: string): Promise<Position[]> {
+    const holder = address ?? this.readSource(true);
+    const positions: Position[] = [];
+    for (const entry of await this.api.userPools(holder)) {
+      const pool = await this.makePool(
+        Buffer.from(entry.index, "hex"),
+        entry.address,
+        entry.tokens_addresses,
+        entry,
+      );
+      const shares = await pool.shareBalance(holder);
+      if (shares > 0n) positions.push({ pool, shares });
+    }
+    return positions;
+  }
+
+  private async makePool(
+    poolHash: Uint8Array,
+    address: string,
+    tokens: string[],
+    meta?: { pool_type: string; fee: string; tokens_str?: string[] },
+  ): Promise<Pool> {
+    let parsed;
+    if (meta) {
+      parsed = parsePoolMeta(meta);
+    } else {
+      // pool not indexed yet — read type and fee from the contract
+      const info = scValToNative(
+        await this.readRouter("get_info", [
+          xdr.ScVal.scvVec(tokens.map(t => new Address(t).toScVal())),
+          xdr.ScVal.scvBytes(Buffer.from(poolHash)),
+        ]),
+      ) as { pool_type: string; fee: number | bigint };
+      parsed = parsePoolMeta({
+        pool_type: info.pool_type,
+        fee: (Number(info.fee) / 10_000).toString(),
+        tokens_str: [],
+      });
+    }
+    return new Pool(address, poolHash, parsed.type, parsed.feeBps, [...tokens], parsed.labels, {
+      passphrase: this.network.passphrase,
+      readSource: (requireSigner?: boolean) => this.readSource(requireSigner),
+      readRouter: (fn, args) => this.readRouter(fn, args),
+      readContract: (contractId, fn, args) => this.readContract(contractId, fn, args),
+      submitRouter: (fn, args, withUser) => this.submitRouter(fn, args, withUser),
+    });
+  }
+
+  // -- read/submit plumbing shared with Pool ---------------------------------------------
+
+  private readSource(requireSigner = false): string {
+    if (this.signer) return this.signer.publicKey();
+    if (requireSigner) {
+      throw new AquariusError("This operation requires a signer — pass one in the client config");
+    }
+    return this.network.readSource;
+  }
+
+  private readRouter(fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
+    return this.readContract(this.network.router, fn, args);
+  }
+
+  private readContract(contractId: string, fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
+    return this.engine.read(
+      this.readSource(),
+      () => Operation.invokeContractFunction({ contract: contractId, function: fn, args }),
+      this.signer,
+    );
+  }
+
+  private async submitRouter(
+    fn: string,
+    args: xdr.ScVal[],
+    withUser: boolean,
+  ): Promise<ConfirmedTx> {
+    const signer = this.requireSigner();
+    const finalArgs = withUser ? [new Address(signer.publicKey()).toScVal(), ...args] : args;
+    const tx = await this.engine.prepare(
+      signer.publicKey(),
+      () =>
+        Operation.invokeContractFunction({
+          contract: this.network.router,
+          function: fn,
+          args: finalArgs,
+        }),
+      signer,
+    );
+    return this.engine.signAndSubmit(tx, signer);
   }
 
   // -- internals ---------------------------------------------------------------------

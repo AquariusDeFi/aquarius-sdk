@@ -2,7 +2,7 @@
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.1.x — the swap surface is complete and verified with real testnet swaps.** Pools, liquidity, and rewards arrive in 0.2. The API may still change before 1.0.
+**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
 
 ```bash
 pip install aquarius-sdk
@@ -23,6 +23,24 @@ receipt = quote.execute()
 # exact output: pass amount_out instead — strict-receive throughout
 quote = aqua.quote(XLM, AQUA, amount_out=500_0000000)
 ```
+
+## Liquidity
+
+```python
+pools = aqua.pools_for_pair(XLM, AQUA)          # discovered on-chain, sorted by type and fee
+pool = pools[0]                                  # Pool(type="volatile", fee_bps=10, ...)
+
+result = pool.deposit({XLM: 50_0000000, AQUA: 2500_0000000}, slippage=0.01)
+print(result.shares)                             # pool share tokens minted
+
+pool.pending_rewards()                           # accrued AQUA, in stroops
+pool.claim_rewards()
+pool.withdraw(result.shares, slippage=0.01)
+
+aqua.positions()                                 # every pool where the signer holds shares
+```
+
+Deposit and withdrawal guards come from a simulation of the exact call, reduced by `slippage` — quoted-versus-executed drift is bounded the same way as for swaps. Reads (`reserves()`, `pending_rewards()`, `pools_for_pair()`) need no signer.
 
 ## What the SDK handles for you
 

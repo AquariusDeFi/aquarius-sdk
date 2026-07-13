@@ -9,6 +9,7 @@ from stellar_sdk.xdr import SCVal
 from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .assets import Asset
 from .errors import AquariusError, SlippageError
+from .pool import Pool, Position, parse_pools_map, sort_token_ids
 from .networks import NETWORKS, NetworkConfig
 from .signer import signer_public_key
 from .submit import SubmitEngine
@@ -63,6 +64,7 @@ class AquariusClient:
             rpc_url=rpc_url or preset.rpc_url,
             horizon_url=horizon_url or preset.horizon_url,
             passphrase=preset.passphrase,
+            read_source=preset.read_source,
         )
         self.api = ApiClient(self.network.api_url)
         self.server = SorobanServer(self.network.rpc_url)
@@ -168,13 +170,114 @@ class AquariusClient:
         result = self.engine.sign_and_submit(tx, signer)
         return result.return_value
 
-    # -- not yet implemented ------------------------------------------------------------
+    # -- pools & positions ---------------------------------------------------------------
 
-    def pools_for_pair(self, *_args, **_kwargs):
-        raise AquariusError("Pool operations arrive in 0.2.0 — see the docs code examples meanwhile")
+    def pools_for_pair(self, a: Asset, b: Asset) -> list[Pool]:
+        """Every pool for the token pair, discovered on-chain, labeled via the API."""
+        tokens = sort_token_ids([
+            a.contract_id(self.network.passphrase),
+            b.contract_id(self.network.passphrase),
+        ])
+        value = self._read_router("get_pools", [
+            scval.to_vec([scval.to_address(t) for t in tokens])
+        ])
+        by_hash = parse_pools_map(value)
+        if not by_hash:
+            return []
+        meta = {m["address"]: m for m in self.api.pools_by_addresses(list(by_hash.values()))}
+        pools = [
+            self._make_pool(pool_hash, address, tokens, meta.get(address))
+            for pool_hash, address in by_hash.items()
+        ]
+        order = {"volatile": 0, "stable": 1, "concentrated": 2}
+        return sorted(pools, key=lambda p: (order.get(p.type, 3), p.fee_bps))
 
-    def positions(self, *_args, **_kwargs):
-        raise AquariusError("positions() arrives in 0.2.0 — see the docs code examples meanwhile")
+    def positions(self, address: str | None = None) -> list[Position]:
+        """Every pool where the address holds shares (default: the signer's account).
+
+        Backed by the indexer — a deposit that just confirmed can take a few
+        seconds to appear. Share amounts are read from the chain.
+        """
+        holder = address or self._read_source(require_signer=True)
+        positions = []
+        for entry in self.api.user_pools(holder):
+            pool = self._make_pool(
+                bytes.fromhex(entry["index"]),
+                entry["address"],
+                entry["tokens_addresses"],
+                entry,
+            )
+            shares = pool.share_balance(holder)
+            if shares > 0:
+                positions.append(Position(pool=pool, shares=shares))
+        return positions
+
+    def _make_pool(self, pool_hash: bytes, address: str, tokens: list[str], meta: dict | None) -> Pool:
+        from .pool import _POOL_TYPES
+
+        if meta is not None:
+            pool_type = _POOL_TYPES.get(meta["pool_type"], meta["pool_type"])
+            fee_bps = round(float(meta["fee"]) * 10_000)
+            labels = meta.get("tokens_str", [])
+        else:  # pool not indexed yet — read type and fee from the contract
+            info = self._read_router("get_info", [
+                scval.to_vec([scval.to_address(t) for t in tokens]),
+                scval.to_bytes(pool_hash),
+            ])
+            fields = {}
+            for item in info.map.sc_map:
+                key = item.key.sym.sc_symbol.decode()
+                fields[key] = item.val
+            pool_type = _POOL_TYPES.get(
+                fields["pool_type"].sym.sc_symbol.decode(),
+                fields["pool_type"].sym.sc_symbol.decode(),
+            )
+            fee_bps = fields["fee"].u32.uint32
+            labels = []
+        return Pool(
+            address=address,
+            pool_hash=pool_hash,
+            type=pool_type,
+            fee_bps=fee_bps,
+            tokens=list(tokens),
+            token_labels=labels,
+            _client=self,
+        )
+
+    # -- read/submit plumbing shared with Pool ---------------------------------------------
+
+    def _read_source(self, require_signer: bool = False) -> str:
+        if self.signer is not None:
+            return signer_public_key(self.signer)
+        if require_signer:
+            raise AquariusError("This operation requires a signer — pass one in the client config")
+        return self.network.read_source
+
+    def _read_router(self, fn: str, args: list[SCVal]) -> SCVal:
+        return self._read_contract(self.network.router, fn, args)
+
+    def _read_contract(self, contract_id: str, fn: str, args: list[SCVal]) -> SCVal:
+        return self.engine.read(
+            self._read_source(),
+            lambda b: b.append_invoke_contract_function_op(
+                contract_id=contract_id, function_name=fn, parameters=args
+            ),
+            self.signer,
+        )
+
+    def _submit_router(self, fn: str, args: list[SCVal], with_user: bool = False):
+        signer = self._require_signer()
+        source = signer_public_key(signer)
+        if with_user:
+            args = [scval.to_address(source)] + args
+        tx = self.engine.prepare(
+            source,
+            lambda b: b.append_invoke_contract_function_op(
+                contract_id=self.network.router, function_name=fn, parameters=args
+            ),
+            signer,
+        )
+        return self.engine.sign_and_submit(tx, signer)
 
     # -- internals ---------------------------------------------------------------------
 

@@ -2,7 +2,7 @@
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.1.x — the swap surface is complete and verified with real testnet swaps.** Pools, liquidity, and rewards arrive in 0.2. The API may still change before 1.0.
+**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
 
 ```bash
 npm install @aquariusdefi/sdk
@@ -23,6 +23,24 @@ const receipt = await quote.execute();
 // exact output: pass amountOut instead — strict-receive throughout
 await aqua.quote({ from: XLM, to: AQUA, amountOut: 500_0000000n });
 ```
+
+## Liquidity
+
+```ts
+const pools = await aqua.pools.forPair(XLM, AQUA);   // discovered on-chain, sorted by type and fee
+const pool = pools[0];                                // type "volatile", feeBps 10, ...
+
+const result = await pool.deposit({ amounts: [[XLM, 50_0000000n], [AQUA, 2500_0000000n]] });
+console.log(result.shares);                           // pool share tokens minted
+
+await pool.pendingRewards();                          // accrued AQUA, in stroops
+await pool.claimRewards();
+await pool.withdraw({ shares: result.shares });
+
+await aqua.positions();                               // every pool where the signer holds shares
+```
+
+Deposit and withdrawal guards come from a simulation of the exact call, reduced by `slippage` — quoted-versus-executed drift is bounded the same way as for swaps. Reads need no signer.
 
 ## What the SDK handles for you
 

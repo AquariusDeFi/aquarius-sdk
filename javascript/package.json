@@ -1,6 +1,6 @@
 {
   "name": "@aquariusdefi/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript SDK for the Aquarius protocol on Stellar",
   "type": "module",
   "main": "dist/index.js",
@@ -12,6 +12,7 @@
     "test": "npm run build && node --test tests/*.test.mjs"
   },
   "devDependencies": {
+    "@types/node": "^26.1.1",
     "typescript": "^5.5.0"
   },
   "license": "Apache-2.0",
