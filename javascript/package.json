@@ -1,14 +1,15 @@
 {
   "name": "@aquariusdefi/sdk",
-  "version": "0.0.1",
-  "description": "TypeScript SDK for the Aquarius protocol on Stellar (interface preview)",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Aquarius protocol on Stellar",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "npm run build && node --test tests/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.5.0"
@@ -26,5 +27,11 @@
   "homepage": "https://docs.aqua.network/developers/quickstart",
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.0.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
