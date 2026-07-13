@@ -132,6 +132,7 @@ export class AquariusClient {
    */
   async swap(params: QuoteParams & { retries?: number }): Promise<Receipt> {
     const { retries = 0, ...quoteParams } = params;
+    if (retries < 0) throw new AquariusError("retries must be >= 0");
     for (let attempt = 0; ; attempt++) {
       try {
         return await (await this.quote(quoteParams as QuoteParams)).execute();

@@ -141,12 +141,15 @@ class AquariusClient:
         Each attempt starts from a fresh quote. Default 0 — fail on the first
         guard breach.
         """
+        if retries < 0:
+            raise AquariusError("retries must be >= 0")
         for attempt in range(retries + 1):
             try:
                 return self.quote(from_, to, **kwargs).execute()
             except SlippageError:
                 if attempt == retries:
                     raise
+        raise AquariusError("unreachable: the retry loop always returns or raises")
 
     # -- Stellar quirks, absorbed --------------------------------------------------
 
