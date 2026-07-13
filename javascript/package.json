@@ -1,16 +1,30 @@
 {
   "name": "@aquariusdefi/sdk",
   "version": "0.0.1",
-  "private": true,
   "description": "TypeScript SDK for the Aquarius protocol on Stellar (interface preview)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "typescript": "^5.5.0"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AquariusDeFi/aquarius-sdk.git",
+    "directory": "javascript"
+  },
+  "homepage": "https://docs.aqua.network/developers/quickstart",
+  "publishConfig": {
+    "access": "public"
+  }
 }

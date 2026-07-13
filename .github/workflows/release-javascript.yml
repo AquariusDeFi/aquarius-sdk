@@ -1,0 +1,39 @@
+name: Release JavaScript
+
+# Publishes javascript/ to npm via Trusted Publishing (OIDC) — no tokens stored anywhere.
+# Trigger: push a tag like js-v0.0.2. The tag must match javascript/package.json's version.
+#
+# One-time prerequisites (already done for this package):
+# 1. First version published manually (npm requires the package to exist before
+#    a trusted publisher can be configured).
+# 2. Trusted publisher configured on npmjs.com: package Settings -> Trusted Publisher ->
+#    GitHub Actions: AquariusDeFi / aquarius-sdk / release-javascript.yml / environment npm.
+
+on:
+  push:
+    tags: ["js-v*"]
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Ensure npm supports trusted publishing (>= 11.5.1)
+        run: npm install -g npm@latest && npm --version
+      - name: Check tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#js-v}"
+          VERSION=$(node -p "require('./javascript/package.json').version")
+          test "$TAG" = "$VERSION" || { echo "tag $TAG != package.json $VERSION"; exit 1; }
+      - run: npm install
+        working-directory: javascript
+      - run: npm publish
+        working-directory: javascript
