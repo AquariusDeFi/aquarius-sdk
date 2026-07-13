@@ -1,0 +1,15 @@
+{
+  "name": "@aquarius/sdk",
+  "version": "0.0.1",
+  "private": true,
+  "description": "TypeScript SDK for the Aquarius protocol on Stellar (interface preview)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}
