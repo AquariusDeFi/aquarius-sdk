@@ -9,6 +9,10 @@ dependencies = [
     "requests>=2.28",
 ]
 
+[project.urls]
+Homepage = "https://aqua.network"
+Documentation = "https://docs.aqua.network/developers/quickstart"
+
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
