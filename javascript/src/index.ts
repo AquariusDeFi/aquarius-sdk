@@ -1,5 +1,5 @@
 /**
- * @aquarius/sdk — the TypeScript SDK for the Aquarius protocol on Stellar.
+ * @aquariusdefi/sdk — the TypeScript SDK for the Aquarius protocol on Stellar.
  *
  * INTERFACE STUBS for design review. Method signatures and types are the
  * proposal; bodies throw. The Python package implements the same surface —

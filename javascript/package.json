@@ -1,5 +1,5 @@
 {
-  "name": "@aquarius/sdk",
+  "name": "@aquariusdefi/sdk",
   "version": "0.0.1",
   "private": true,
   "description": "TypeScript SDK for the Aquarius protocol on Stellar (interface preview)",

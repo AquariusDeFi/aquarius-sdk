@@ -8,8 +8,8 @@ Official SDKs for building on [Aquarius](https://aqua.network) — swaps, liquid
 
 | Directory | Package | Registry name |
 | --- | --- | --- |
-| `python/` | `import aquarius` | `aquarius-sdk` (PyPI — free as of July 2026) |
-| `javascript/` | `@aquarius/sdk` | npm — name and scope free as of July 2026; the org must be claimed before first publish |
+| `python/` | `import aquarius` | `aquarius-sdk` (PyPI — free as of July 2026; claimed by first upload) |
+| `javascript/` | `@aquariusdefi/sdk` | npm — the `aquariusdefi` org is claimed and owns the scope |
 | `testdata/` | Golden fixtures shared by both test suites | — |
 
 ## Try it
