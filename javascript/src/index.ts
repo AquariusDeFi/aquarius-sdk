@@ -30,6 +30,7 @@ export {
 export {
   AquariusError,
   NoRouteError,
+  NoTrustlineError,
   PausedError,
   SlippageError,
   TxTimeoutError,

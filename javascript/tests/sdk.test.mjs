@@ -12,7 +12,8 @@ import {
   XLM,
   parseFindPathResponse,
 } from "../dist/index.js";
-import { classifyContractError, isUserRejection } from "../dist/errors.js";
+import { NoTrustlineError, SlippageError as SlippageErrorDirect } from "../dist/index.js";
+import { classifyContractError, errorFromDiagnostics, isUserRejection } from "../dist/errors.js";
 
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
 const AQUA = Asset.classic("AQUA", "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER");
@@ -89,4 +90,72 @@ test("wallet rejections are recognized across signers", () => {
   assert.ok(isUserRejection(new Error("The user rejected this request.")));
   assert.ok(isUserRejection(new Error("cancelled_by_user")));
   assert.ok(!isUserRejection(new Error("tx_bad_seq")));
+});
+
+
+const diagFixture = JSON.parse(
+  readFileSync(
+    new URL("../../testdata/diagnostic_events_missing_trustline.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+test("diagnostics detect a missing trustline", () => {
+  assert.ok(errorFromDiagnostics(diagFixture.events_xdr) instanceof NoTrustlineError);
+});
+
+test("diagnostics fall back to the contract error code", () => {
+  const withoutTrustline = diagFixture.events_xdr.filter(
+    e => !Buffer.from(e, "base64").includes("trustline entry is missing"),
+  );
+  const error = errorFromDiagnostics(withoutTrustline);
+  assert.ok(error);
+  assert.match(error.message, /#13/);
+});
+
+test("trustline marker wins over contract code", () => {
+  const message = "HostError: Error(Contract, #2006)\n... trustline entry is missing for account ...";
+  assert.ok(classifyContractError(message) instanceof NoTrustlineError);
+});
+
+test("timeout resolution follows the signer type", async () => {
+  const { Keypair } = await import("@stellar/stellar-sdk");
+  assert.equal(
+    new AquariusClient({ network: "testnet", signer: Keypair.random() }).engine.timeoutSeconds,
+    300,
+  );
+  assert.equal(new AquariusClient({ network: "testnet" }).engine.timeoutSeconds, null);
+  assert.equal(
+    new AquariusClient({ network: "testnet", timeoutSeconds: 120 }).engine.timeoutSeconds,
+    120,
+  );
+  assert.equal(
+    new AquariusClient({ network: "testnet", signer: Keypair.random(), timeoutSeconds: "infinite" })
+      .engine.timeoutSeconds,
+    null,
+  );
+});
+
+test("swap retries re-quote on slippage", async () => {
+  const client = new AquariusClient({ network: "testnet" });
+  let attempts = 0;
+  client.quote = async () => ({
+    execute: async () => {
+      attempts += 1;
+      if (attempts < 3) throw new SlippageErrorDirect("moved");
+      return "receipt";
+    },
+  });
+  assert.equal(await client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 2 }), "receipt");
+  assert.equal(attempts, 3);
+  attempts = 0;
+  await assert.rejects(
+    client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 1 }),
+    SlippageErrorDirect,
+  );
+  assert.equal(attempts, 2);
+});
+
+test("buffer import present for diagnostics", () => {
+  assert.ok(Buffer.isBuffer(Buffer.from("dGVzdA==", "base64")));
 });

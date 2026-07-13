@@ -20,9 +20,8 @@ let receipt = await quote.execute();
 console.log(`swapped: received ${Number(receipt.amountOut) / 1e7} AQUA`);
 console.log(`         https://stellar.expert/explorer/testnet/tx/${receipt.txHash}`);
 
-// exact output: receive exactly 100 AQUA
-quote = await aqua.quote({ from: XLM, to: AQUA, amountOut: 100_0000000n });
-console.log(`quote:   exactly 100 AQUA costs ${Number(quote.amountIn) / 1e7} XLM`);
-receipt = await quote.execute();
+// exact output: receive exactly 100 AQUA — swap() re-quotes and retries
+// up to twice if the pool moves past the guard in between
+receipt = await aqua.swap({ from: XLM, to: AQUA, amountOut: 100_0000000n, retries: 2 });
 console.log(`swapped: paid ${Number(receipt.amountIn) / 1e7} XLM for exactly 100 AQUA`);
 console.log(`         https://stellar.expert/explorer/testnet/tx/${receipt.txHash}`);

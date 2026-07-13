@@ -10,6 +10,7 @@ from .client import AquariusClient, Quote, Receipt
 from .errors import (
     AquariusError,
     NoRouteError,
+    NoTrustlineError,
     PausedError,
     SlippageError,
     TxTimeoutError,
@@ -30,6 +31,7 @@ __all__ = [
     "ClaimResult",
     "DepositResult",
     "NoRouteError",
+    "NoTrustlineError",
     "ParsedRoute",
     "Pool",
     "Position",

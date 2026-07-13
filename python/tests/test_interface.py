@@ -15,7 +15,8 @@ from aquarius import (
     SlippageError,
     parse_find_path_response,
 )
-from aquarius.errors import classify_contract_error, is_user_rejection
+from aquarius import NoTrustlineError
+from aquarius.errors import classify_contract_error, error_from_diagnostics, is_user_rejection
 
 TESTDATA = pathlib.Path(__file__).resolve().parents[2] / "testdata"
 TESTNET_PASSPHRASE = "Test SDF Network ; September 2015"
@@ -83,3 +84,63 @@ def test_wallet_rejections_are_recognized():
     assert is_user_rejection(Exception("The user rejected this request."))
     assert is_user_rejection(Exception("cancelled_by_user"))
     assert not is_user_rejection(Exception("tx_bad_seq"))
+
+
+DIAG_FIXTURE = json.loads((TESTDATA / "diagnostic_events_missing_trustline.json").read_text())
+
+
+def test_diagnostics_detect_missing_trustline():
+    error = error_from_diagnostics(DIAG_FIXTURE["events_xdr"])
+    assert isinstance(error, NoTrustlineError)
+
+
+def test_diagnostics_fall_back_to_contract_code():
+    import base64
+
+    without_trustline_events = [
+        e for e in DIAG_FIXTURE["events_xdr"]
+        if b"trustline entry is missing" not in base64.b64decode(e)
+    ]
+    error = error_from_diagnostics(without_trustline_events)
+    assert error is not None
+    assert "#13" in str(error)
+
+
+def test_trustline_marker_wins_over_contract_code():
+    message = "HostError: Error(Contract, #2006)\n... trustline entry is missing for account ..."
+    assert isinstance(classify_contract_error(message), NoTrustlineError)
+
+
+def test_timeout_resolution():
+    from stellar_sdk import Keypair
+
+    keypair_client = AquariusClient(network="testnet", signer=Keypair.random())
+    assert keypair_client.engine.timeout == 300
+    read_only = AquariusClient(network="testnet")
+    assert read_only.engine.timeout is None
+    explicit = AquariusClient(network="testnet", timeout=120)
+    assert explicit.engine.timeout == 120
+    infinite = AquariusClient(network="testnet", signer=Keypair.random(), timeout="infinite")
+    assert infinite.engine.timeout is None
+
+
+def test_swap_retries_requote_on_slippage():
+    client = AquariusClient(network="testnet")
+    attempts = []
+
+    class FakeQuote:
+        def __init__(self, n):
+            self.n = n
+
+        def execute(self):
+            if self.n < 3:
+                raise SlippageError("moved")
+            return "receipt"
+
+    client.quote = lambda *a, **k: (attempts.append(1), FakeQuote(len(attempts)))[1]
+    assert client.swap(XLM, AQUA, retries=2, amount_in=1) == "receipt"
+    assert len(attempts) == 3
+    attempts.clear()
+    with pytest.raises(SlippageError):
+        client.swap(XLM, AQUA, retries=1, amount_in=1)
+    assert len(attempts) == 2

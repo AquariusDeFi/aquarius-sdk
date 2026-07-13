@@ -25,6 +25,13 @@ export interface AquariusConfig {
   apiUrl?: string;
   /** Inclusion fee bid in stroops. Default 100000 (0.01 XLM). */
   baseFee?: string;
+  /**
+   * Transaction time bound in seconds, or "infinite". Default: 300 when the
+   * signer is a local keypair (a stale bot transaction should expire, not
+   * execute later at a worse price); "infinite" when signing goes through a
+   * wallet (humans take their time).
+   */
+  timeoutSeconds?: number | "infinite";
 }
 
 export interface Receipt {
@@ -78,7 +85,18 @@ export class AquariusClient {
     };
     this.api = new ApiClient(this.network.apiUrl);
     this.server = new rpc.Server(this.network.rpcUrl);
-    this.engine = new SubmitEngine(this.server, this.network.passphrase, config.baseFee ?? "100000");
+    let timeout: number | null;
+    if (config.timeoutSeconds === undefined) {
+      timeout = config.signer && "secret" in config.signer ? 300 : null;
+    } else {
+      timeout = config.timeoutSeconds === "infinite" ? null : config.timeoutSeconds;
+    }
+    this.engine = new SubmitEngine(
+      this.server,
+      this.network.passphrase,
+      config.baseFee ?? "100000",
+      timeout,
+    );
     this.signer = config.signer;
   }
 
@@ -114,9 +132,23 @@ export class AquariusClient {
 
   // -- writes ------------------------------------------------------------------
 
-  /** quote() + execute() in one call, for bots. */
-  async swap(params: QuoteParams): Promise<Receipt> {
-    return (await this.quote(params)).execute();
+  /**
+   * quote() + execute() in one call, for bots.
+   *
+   * retries: how many times to re-quote and retry after a SlippageError.
+   * Each attempt starts from a fresh quote. Default 0 — fail on the first
+   * guard breach.
+   */
+  async swap(params: QuoteParams & { retries?: number }): Promise<Receipt> {
+    const { retries = 0, ...quoteParams } = params;
+    if (retries < 0) throw new AquariusError("retries must be >= 0");
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await (await this.quote(quoteParams as QuoteParams)).execute();
+      } catch (error) {
+        if (!(error instanceof SlippageError) || attempt >= retries) throw error;
+      }
+    }
   }
 
   // -- Stellar quirks, absorbed --------------------------------------------------

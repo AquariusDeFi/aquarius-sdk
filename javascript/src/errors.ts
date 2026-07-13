@@ -1,3 +1,7 @@
+import { Buffer } from "buffer";
+
+import { xdr } from "@stellar/stellar-sdk";
+
 /** Base class for every error this SDK raises. */
 export class AquariusError extends Error {
   constructor(
@@ -41,6 +45,9 @@ export class UserRejectedError extends AquariusError {}
 /** The transaction was not confirmed within the polling window. Safe to retry. */
 export class TxTimeoutError extends AquariusError {}
 
+/** The receiving account holds no trustline for the output asset. */
+export class NoTrustlineError extends AquariusError {}
+
 // Wallet-rejection messages across signers: Freighter, WalletConnect, Ledger.
 const USER_REJECTED_MESSAGES = [
   "the user rejected this request.",
@@ -57,27 +64,42 @@ export function isUserRejection(error: unknown): boolean {
 const PAUSED_CODES = new Set([205, 206, 207, 2139]);
 const SLIPPAGE_CODES = new Set([2005, 2006, 2020]);
 
+// The token contract reports a missing trustline in its diagnostic output.
+// Checked before contract codes: the same situation surfaces under different
+// codes depending on where in the chain the payout fails.
+const TRUSTLINE_MARKER = "trustline entry is missing";
+
+const NO_TRUSTLINE_MESSAGE =
+  "The receiving account holds no trustline for the output asset — create it first (ensureTrustline)";
+
+/** @internal Map a numeric contract error code to a typed error. */
+export function classifyContractCode(code: number, txHash?: string): AquariusError {
+  if (SLIPPAGE_CODES.has(code)) {
+    return new SlippageError(
+      `Price moved past your guard (contract error #${code}) — re-quote and retry`,
+      txHash,
+    );
+  }
+  if (PAUSED_CODES.has(code)) {
+    return new PausedError(
+      `Operations are paused for this pool (contract error #${code}) — not an integration bug`,
+      txHash,
+    );
+  }
+  return new AquariusError(`Contract error #${code}`, txHash);
+}
+
 /**
  * @internal Map a simulation/prepare failure string to a typed error.
  * Contract failures surface as substrings like `Error(Contract, #2006)`.
  */
 export function classifyContractError(message: string, txHash?: string): AquariusError | null {
+  if (message.includes(TRUSTLINE_MARKER)) {
+    return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
+  }
   const match = message.match(/Error\(Contract, #(\d+)\)/);
   if (match) {
-    const code = Number(match[1]);
-    if (SLIPPAGE_CODES.has(code)) {
-      return new SlippageError(
-        `Price moved past your guard (contract error #${code}) — re-quote and retry`,
-        txHash,
-      );
-    }
-    if (PAUSED_CODES.has(code)) {
-      return new PausedError(
-        `Operations are paused for this pool (contract error #${code}) — not an integration bug`,
-        txHash,
-      );
-    }
-    return new AquariusError(`Contract error #${code}`, txHash);
+    return classifyContractCode(Number(match[1]), txHash);
   }
   if (message.includes("Error(Budget, ExceededLimit)")) {
     return new AquariusError(
@@ -86,4 +108,36 @@ export function classifyContractError(message: string, txHash?: string): Aquariu
     );
   }
   return null;
+}
+
+/**
+ * @internal Typed error from a failed transaction's diagnostic events, if
+ * determinable. The trustline marker is checked on the raw event bytes;
+ * contract error codes are read from `error` topics.
+ */
+export function errorFromDiagnostics(
+  events: (xdr.DiagnosticEvent | string)[] | undefined,
+  txHash?: string,
+): AquariusError | null {
+  let code: number | null = null;
+  for (const raw of events ?? []) {
+    try {
+      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : raw.toXDR();
+      if (bytes.includes(TRUSTLINE_MARKER)) {
+        return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
+      }
+      const event = typeof raw === "string" ? xdr.DiagnosticEvent.fromXDR(raw, "base64") : raw;
+      for (const topic of event.event().body().v0().topics()) {
+        if (code === null && topic.switch() === xdr.ScValType.scvError()) {
+          const scError = topic.error();
+          if (scError.switch() === xdr.ScErrorType.sceContract()) {
+            code = scError.contractCode();
+          }
+        }
+      }
+    } catch {
+      // a single undecodable event never masks the rest
+    }
+  }
+  return code === null ? null : classifyContractCode(code, txHash);
 }
