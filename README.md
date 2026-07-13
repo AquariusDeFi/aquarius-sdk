@@ -2,7 +2,7 @@
 
 Official SDKs for building on [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar, in Python and TypeScript.
 
-**Status: 0.1.x.** The swap surface is complete in TypeScript (quote → execute, both modes, verified with real testnet swaps); the Python package carries the working 0.0.x prototype and reaches parity next. Pools, liquidity, and rewards arrive in 0.2.
+**Status: 0.1.x.** The swap surface is complete in both languages — quote → execute in both modes, congestion retries, automatic archived-state restore, typed errors — each verified with real testnet swaps. Pools, liquidity, and rewards arrive in 0.2.
 
 ## Layout
 
