@@ -6,7 +6,7 @@ with trustline and friendbot helpers, typed errors, and escape hatches.
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .assets import XLM, Asset
-from .client import AquariusClient, Quote, Receipt
+from .client import AquariusClient, ProviderFeeConfig, Quote, Receipt
 from .errors import (
     AquariusError,
     NoRouteError,
@@ -19,7 +19,7 @@ from .errors import (
 from .networks import NETWORKS, NetworkConfig
 from .pool import ClaimResult, DepositResult, Pool, Position, WithdrawResult
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "ApiClient",
@@ -35,6 +35,7 @@ __all__ = [
     "ParsedRoute",
     "Pool",
     "Position",
+    "ProviderFeeConfig",
     "WithdrawResult",
     "PausedError",
     "Quote",

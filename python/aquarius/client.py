@@ -15,6 +15,39 @@ from .signer import signer_public_key
 from .submit import SubmitEngine
 
 _FRIENDBOT_URL = "https://friendbot.stellar.org"
+_U32_MAX = 2**32 - 1
+
+
+@dataclass(frozen=True)
+class ProviderFeeConfig:
+    """Configuration for a swap through a provider-fee collector contract."""
+
+    contract_id: str
+    fee_fraction: int
+    fee_denominator: int
+    recipient: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.contract_id, str) or not self.contract_id:
+            raise AquariusError("provider fee contract_id must be a non-empty address")
+        if self.recipient is not None and (
+            not isinstance(self.recipient, str) or not self.recipient
+        ):
+            raise AquariusError("provider fee recipient must be a non-empty address")
+        if type(self.fee_fraction) is not int or not 0 <= self.fee_fraction <= _U32_MAX:
+            raise AquariusError("provider fee_fraction must be a u32")
+        if type(self.fee_denominator) is not int or not 1 <= self.fee_denominator <= _U32_MAX:
+            raise AquariusError("provider fee_denominator must be a positive u32")
+        if self.fee_fraction >= self.fee_denominator:
+            raise AquariusError("provider fee_fraction must be smaller than fee_denominator")
+
+    def _net_amount(self, gross: int) -> int:
+        fee = (gross * self.fee_fraction + self.fee_denominator - 1) // self.fee_denominator
+        return gross - fee
+
+    def _gross_amount(self, net: int) -> int:
+        divisor = self.fee_denominator - self.fee_fraction
+        return (net * self.fee_denominator + divisor - 1) // divisor
 
 
 @dataclass
@@ -96,6 +129,7 @@ class AquariusClient:
         amount_in: int | None = None,
         amount_out: int | None = None,
         slippage: float = 0.01,
+        provider_fee: ProviderFeeConfig | None = None,
     ) -> Quote:
         """Best route for a swap. Pass amount_in (exact input) or amount_out (exact output)."""
         if (amount_in is None) == (amount_out is None):
@@ -105,23 +139,38 @@ class AquariusClient:
         token_in = from_.contract_id(self.network.passphrase)
         token_out = to.contract_id(self.network.passphrase)
 
+        route_amount = amount_in if exact_input else amount_out
+        if provider_fee is not None and not exact_input:
+            route_amount = provider_fee._gross_amount(amount_out)
+
         response = self.api.find_path(
             {
                 "token_in_address": token_in,
                 "token_out_address": token_out,
-                "amount": str(amount_in if exact_input else amount_out),
+                "amount": str(route_amount),
             },
             exact_input,
         )
         parsed = parse_find_path_response(
             response,
             amount_in=amount_in,
-            amount_out=amount_out,
+            amount_out=None if exact_input else route_amount,
             slippage_bps=slippage_bps,
             pair_label=f"{from_} -> {to}",
         )
+        if provider_fee is not None:
+            if exact_input:
+                parsed.amount_out = provider_fee._net_amount(parsed.amount_out)
+                parsed.guard = provider_fee._net_amount(parsed.guard)
+            else:
+                parsed.amount_out = amount_out
         params = dict(
-            from_=from_, to=to, amount_in=amount_in, amount_out=amount_out, slippage=slippage
+            from_=from_,
+            to=to,
+            amount_in=amount_in,
+            amount_out=amount_out,
+            slippage=slippage,
+            provider_fee=provider_fee,
         )
         return Quote(
             amount_in=parsed.amount_in,
@@ -311,18 +360,26 @@ class AquariusClient:
 
     def _swap_append(self, quote: Quote):
         token_in = quote._params["from_"].contract_id(self.network.passphrase)
+        provider_fee = quote._params["provider_fee"]
+        contract_id = self.network.router if provider_fee is None else provider_fee.contract_id
         fn = "swap_chained" if quote.is_exact_input else "swap_chained_strict_receive"
         amount = quote.amount_in if quote.is_exact_input else quote.amount_out
+        parameters = [scval.to_address(signer_public_key(self._require_signer()))]
+        if provider_fee is not None and provider_fee.recipient is not None:
+            fn += "_to"
+            parameters.append(scval.to_address(provider_fee.recipient))
+        parameters.extend([
+            SCVal.from_xdr(quote._parsed.swap_chain_xdr),
+            scval.to_address(token_in),
+            scval.to_uint128(amount),
+            scval.to_uint128(quote.guard),
+        ])
+        if provider_fee is not None:
+            parameters.append(scval.to_uint32(provider_fee.fee_fraction))
         return lambda b: b.append_invoke_contract_function_op(
-            contract_id=self.network.router,
+            contract_id=contract_id,
             function_name=fn,
-            parameters=[
-                scval.to_address(signer_public_key(self._require_signer())),
-                SCVal.from_xdr(quote._parsed.swap_chain_xdr),
-                scval.to_address(token_in),
-                scval.to_uint128(amount),
-                scval.to_uint128(quote.guard),
-            ],
+            parameters=parameters,
         )
 
     def _build_unsigned(self, quote: Quote) -> str:
@@ -347,6 +404,7 @@ class AquariusClient:
                 amount_in=quote._params["amount_in"],
                 amount_out=quote._params["amount_out"],
                 slippage=quote._params["slippage"],
+                provider_fee=quote._params["provider_fee"],
             ))
             raise
 

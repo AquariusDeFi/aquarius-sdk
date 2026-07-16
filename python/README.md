@@ -2,7 +2,7 @@
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
+**Status: 0.3.x — swaps, provider-fee collectors, and the liquidity lifecycle are available.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
 
 ```bash
 pip install aquarius-sdk
@@ -23,6 +23,32 @@ receipt = quote.execute()
 # exact output: pass amount_out instead — strict-receive throughout
 quote = aqua.quote(XLM, AQUA, amount_out=500_0000000)
 ```
+
+## Provider fees
+
+Pass the collector configuration with the quote. The SDK keeps the fee math exact, routes through the collector, and sends output to `recipient` without requiring that address to sign:
+
+```python
+from aquarius import ProviderFeeConfig
+
+provider_fee = ProviderFeeConfig(
+    contract_id="C...",
+    fee_fraction=30,
+    fee_denominator=10_000,
+    recipient="G...",
+)
+
+quote = aqua.quote(
+    XLM,
+    AQUA,
+    amount_in=100_0000000,
+    slippage=0.005,
+    provider_fee=provider_fee,
+)
+receipt = quote.execute()
+```
+
+Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amount_out` instead of `amount_in` for an exact-output provider swap.
 
 ## Liquidity
 
