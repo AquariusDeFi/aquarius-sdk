@@ -101,7 +101,10 @@ const diagFixture = JSON.parse(
 );
 
 test("diagnostics detect a missing trustline", () => {
-  assert.ok(errorFromDiagnostics(diagFixture.events_xdr) instanceof NoTrustlineError);
+  const error = errorFromDiagnostics(diagFixture.events_xdr);
+  assert.ok(error instanceof NoTrustlineError);
+  assert.match(error.message, /output recipient/);
+  assert.doesNotMatch(error.message, /ensureTrustline/);
 });
 
 test("diagnostics fall back to the contract error code", () => {

@@ -70,7 +70,7 @@ const SLIPPAGE_CODES = new Set([2005, 2006, 2020]);
 const TRUSTLINE_MARKER = "trustline entry is missing";
 
 const NO_TRUSTLINE_MESSAGE =
-  "The receiving account holds no trustline for the output asset — create it first (ensureTrustline)";
+  "The output recipient holds no trustline for the output asset — create the trustline on that recipient before retrying";
 
 /** @internal Map a numeric contract error code to a typed error. */
 export function classifyContractCode(code: number, txHash?: string): AquariusError {

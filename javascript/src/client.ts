@@ -42,11 +42,24 @@ export interface Receipt {
   amountOut: bigint;
 }
 
+export interface ProviderFeeConfig {
+  /** Deployed provider-fee collector contract. */
+  readonly contractId: string;
+  /** Raw u32 fee_fraction passed to the collector. */
+  readonly feeFraction: number;
+  /** Denominator configured when the collector was deployed. */
+  readonly feeDenominator: number;
+  /** Output recipient. Omit to send output back to the signer. */
+  readonly recipient?: string;
+}
+
 export type QuoteParams = {
   from: Asset;
   to: Asset;
   /** Fraction, default 0.01 (1%). */
   slippage?: number;
+  /** Route and execute the swap through a provider-fee collector. */
+  providerFee?: ProviderFeeConfig;
 } & ({ amountIn: bigint; amountOut?: never } | { amountOut: bigint; amountIn?: never });
 
 export interface Quote {
@@ -64,6 +77,42 @@ export interface Quote {
 }
 
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
+const U32_MAX = 2 ** 32 - 1;
+
+function validateProviderFee(config: ProviderFeeConfig): void {
+  if (typeof config.contractId !== "string" || config.contractId.length === 0) {
+    throw new AquariusError("provider fee contractId must be a non-empty address");
+  }
+  if (config.recipient !== undefined && config.recipient.length === 0) {
+    throw new AquariusError("provider fee recipient must be a non-empty address");
+  }
+  if (!Number.isInteger(config.feeFraction) || config.feeFraction < 0 || config.feeFraction > U32_MAX) {
+    throw new AquariusError("provider feeFraction must be a u32");
+  }
+  if (
+    !Number.isInteger(config.feeDenominator)
+    || config.feeDenominator < 1
+    || config.feeDenominator > U32_MAX
+  ) {
+    throw new AquariusError("provider feeDenominator must be a positive u32");
+  }
+  if (config.feeFraction >= config.feeDenominator) {
+    throw new AquariusError("provider feeFraction must be smaller than feeDenominator");
+  }
+}
+
+function netAfterProviderFee(gross: bigint, config: ProviderFeeConfig): bigint {
+  const fraction = BigInt(config.feeFraction);
+  const denominator = BigInt(config.feeDenominator);
+  const fee = (gross * fraction + denominator - 1n) / denominator;
+  return gross - fee;
+}
+
+function grossBeforeProviderFee(net: bigint, config: ProviderFeeConfig): bigint {
+  const denominator = BigInt(config.feeDenominator);
+  const divisor = denominator - BigInt(config.feeFraction);
+  return (net * denominator + divisor - 1n) / divisor;
+}
 
 export class AquariusClient {
   readonly network: NetworkConfig;
@@ -104,28 +153,45 @@ export class AquariusClient {
 
   /** Best route for a swap. Pass amountIn (exact input) or amountOut (exact output). */
   async quote(params: QuoteParams): Promise<Quote> {
+    const providerFee = params.providerFee
+      ? Object.freeze({ ...params.providerFee })
+      : undefined;
+    params = { ...params, providerFee } as QuoteParams;
     if ((params.amountIn === undefined) === (params.amountOut === undefined)) {
       throw new AquariusError("Pass exactly one of amountIn / amountOut");
     }
     const exactInput = params.amountIn !== undefined;
+    if (params.providerFee) validateProviderFee(params.providerFee);
     const slippageBps = Math.round((params.slippage ?? 0.01) * 10_000);
     const tokenIn = params.from.contractId(this.network.passphrase);
     const tokenOut = params.to.contractId(this.network.passphrase);
+    const requestedAmount = exactInput ? params.amountIn! : params.amountOut!;
+    const routeAmount = params.providerFee && !exactInput
+      ? grossBeforeProviderFee(requestedAmount, params.providerFee)
+      : requestedAmount;
 
     const response = await this.api.findPath(
       {
         token_in_address: tokenIn,
         token_out_address: tokenOut,
-        amount: (exactInput ? params.amountIn! : params.amountOut!).toString(),
+        amount: routeAmount.toString(),
       },
       exactInput,
     );
     const parsed = parseFindPathResponse(response, {
       amountIn: params.amountIn,
-      amountOut: params.amountOut,
+      amountOut: exactInput ? undefined : routeAmount,
       slippageBps,
       pairLabel: `${params.from} -> ${params.to}`,
     });
+    if (params.providerFee) {
+      if (exactInput) {
+        parsed.amountOut = netAfterProviderFee(parsed.amountOut, params.providerFee);
+        parsed.guard = netAfterProviderFee(parsed.guard, params.providerFee);
+      } else {
+        parsed.amountOut = params.amountOut!;
+      }
+    }
 
     return this.makeQuote(parsed, exactInput, tokenIn, params);
   }
@@ -331,7 +397,12 @@ export class AquariusClient {
     tokenIn: string,
     originalParams: QuoteParams,
   ): Quote {
-    const buildOperation = () => this.buildSwapOperation(parsed, exactInput, tokenIn);
+    const buildOperation = () => this.buildSwapOperation(
+      parsed,
+      exactInput,
+      tokenIn,
+      originalParams.providerFee,
+    );
 
     const quote: Quote = {
       amountIn: parsed.amountIn,
@@ -373,20 +444,33 @@ export class AquariusClient {
    * strict-receive the authorized transfer is maxIn — the contract pulls the
    * maximum and refunds the difference.
    */
-  private buildSwapOperation(parsed: ParsedRoute, exactInput: boolean, tokenIn: string): xdr.Operation {
+  private buildSwapOperation(
+    parsed: ParsedRoute,
+    exactInput: boolean,
+    tokenIn: string,
+    providerFee?: ProviderFeeConfig,
+  ): xdr.Operation {
     const signer = this.requireSigner();
     const user = signer.publicKey();
-    const fn = exactInput ? "swap_chained" : "swap_chained_strict_receive";
+    const contractId = providerFee?.contractId ?? this.network.router;
+    let fn = exactInput ? "swap_chained" : "swap_chained_strict_receive";
     const amount = exactInput ? parsed.amountIn : parsed.amountOut;
     const transferAmount = exactInput ? parsed.amountIn : parsed.guard;
 
-    const args = [
-      new Address(user).toScVal(),
+    const args: xdr.ScVal[] = [new Address(user).toScVal()];
+    if (providerFee?.recipient !== undefined) {
+      fn += "_to";
+      args.push(new Address(providerFee.recipient).toScVal());
+    }
+    args.push(
       xdr.ScVal.fromXDR(parsed.swapChainXdr, "base64"),
       new Address(tokenIn).toScVal(),
       nativeToScVal(amount, { type: "u128" }),
       nativeToScVal(parsed.guard, { type: "u128" }),
-    ];
+    );
+    if (providerFee) {
+      args.push(nativeToScVal(providerFee.feeFraction, { type: "u32" }));
+    }
 
     const transferInvocation = new xdr.SorobanAuthorizedInvocation({
       function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
@@ -395,7 +479,7 @@ export class AquariusClient {
           functionName: "transfer",
           args: [
             new Address(user).toScVal(),
-            new Address(this.network.router).toScVal(),
+            new Address(contractId).toScVal(),
             nativeToScVal(transferAmount, { type: "i128" }),
           ],
         }),
@@ -408,7 +492,7 @@ export class AquariusClient {
       rootInvocation: new xdr.SorobanAuthorizedInvocation({
         function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
           new xdr.InvokeContractArgs({
-            contractAddress: new Address(this.network.router).toScAddress(),
+            contractAddress: new Address(contractId).toScAddress(),
             functionName: fn,
             args,
           }),
@@ -418,7 +502,7 @@ export class AquariusClient {
     });
 
     return Operation.invokeContractFunction({
-      contract: this.network.router,
+      contract: contractId,
       function: fn,
       args,
       auth: [rootInvocation],

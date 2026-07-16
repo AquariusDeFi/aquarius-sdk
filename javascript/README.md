@@ -2,7 +2,7 @@
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
+**Status: 0.3.x — swaps, provider-fee collectors, and the liquidity lifecycle are available.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
 
 ```bash
 npm install @aquariusdefi/sdk
@@ -23,6 +23,28 @@ const receipt = await quote.execute();
 // exact output: pass amountOut instead — strict-receive throughout
 await aqua.quote({ from: XLM, to: AQUA, amountOut: 500_0000000n });
 ```
+
+## Provider fees
+
+Pass the collector configuration with the quote. The SDK keeps the fee math exact, routes through the collector, and sends output to `recipient` without requiring that address to sign:
+
+```ts
+const quote = await aqua.quote({
+  from: XLM,
+  to: AQUA,
+  amountIn: 100_0000000n,
+  slippage: 0.005,
+  providerFee: {
+    contractId: "C...",
+    feeFraction: 30,
+    feeDenominator: 10_000,
+    recipient: "G...",
+  },
+});
+const receipt = await quote.execute();
+```
+
+Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amountOut` instead of `amountIn` for an exact-output provider swap.
 
 ## Liquidity
 

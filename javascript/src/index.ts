@@ -9,6 +9,7 @@ export { Asset, XLM } from "./assets.js";
 export {
   AquariusClient,
   type AquariusConfig,
+  type ProviderFeeConfig,
   type Quote,
   type QuoteParams,
   type Receipt,
