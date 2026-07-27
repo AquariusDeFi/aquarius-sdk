@@ -18,6 +18,13 @@ from .errors import (
     UserRejectedError,
 )
 from .networks import NETWORKS, NetworkConfig
+from .limit_orders import (
+    LimitOrderConfig,
+    OnchainLimitOrder,
+    OnchainLimitOrderReceipt,
+    build_onchain_placement_args,
+    validate_onchain_limit_order_draft,
+)
 from .pool import ClaimResult, DepositResult, Pool, Position, WithdrawResult
 
 __version__ = "0.2.0"
@@ -29,6 +36,11 @@ __all__ = [
     "Asset",
     "NETWORKS",
     "NetworkConfig",
+    "LimitOrderConfig",
+    "OnchainLimitOrder",
+    "OnchainLimitOrderReceipt",
+    "build_onchain_placement_args",
+    "validate_onchain_limit_order_draft",
     "ClaimResult",
     "DepositResult",
     "NoRouteError",

@@ -2,7 +2,7 @@
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
+**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Programmatic on-chain limit orders are a PoC with unit/fixture coverage and are not yet live-verified against a deployed settlement contract. Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
 
 ```bash
 npm install @aquariusdefi/sdk
@@ -41,6 +41,40 @@ await aqua.positions();                               // every pool where the si
 ```
 
 Deposit and withdrawal guards come from a simulation of the exact call, reduced by `slippage` — quoted-versus-executed drift is bounded the same way as for swaps. Reads need no signer.
+
+## Programmatic on-chain limit orders
+
+The web application uses detached/off-chain placement. Bots and blockchain
+integrations can opt into `CONTRACT_ONCHAIN` by supplying trusted settlement and
+batcher addresses:
+
+```ts
+const aqua = new AquariusClient({
+  network: "testnet",
+  signer,
+  limitOrders: {
+    settlement: process.env.AQUARIUS_LIMIT_ORDER_SETTLEMENT!,
+    batcher: process.env.AQUARIUS_BATCHER!,
+  },
+});
+
+const order = await aqua.createOnchainLimitOrder({
+  from: XLM,
+  to: AQUA,
+  sellAmount: 100_0000000n,
+  minBuyAmount: 500_0000000n,
+  validAfterLedger: 1_000,
+  expiresAtLedger: 2_000,
+  allowanceExpirationLedger: 2_000,
+});
+const receipt = await order.place();
+```
+
+`allowanceExpirationLedger` is explicit because SEP-41 `allowance()` does not
+return the existing expiration. Keep it at or beyond this order and every other
+open order sharing the settlement allowance. It does not affect the order ID.
+For custom C accounts, use `validateOnchainLimitOrderDraft()` and
+`buildOnchainPlacementArgs()` with the account's own authorization policy.
 
 ## What the SDK handles for you
 

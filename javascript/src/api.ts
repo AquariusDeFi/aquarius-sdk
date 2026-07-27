@@ -1,4 +1,4 @@
-import { NoRouteError } from "./errors.js";
+import { AquariusError, NoRouteError } from "./errors.js";
 
 export interface FindPathRequest {
   token_in_address: string;
@@ -56,6 +56,30 @@ export class ApiClient {
     }
     const data = (await response.json()) as PoolMeta[] | { results?: PoolMeta[] };
     return Array.isArray(data) ? data : (data.results ?? []);
+  }
+
+  async createLimitOrderDraft(
+    baseUrl: string,
+    request: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/drafts/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const body = (await response.json()) as { detail?: string };
+        detail = body.detail ? `: ${body.detail}` : "";
+      } catch {
+        // The status remains sufficient when the server returns no JSON body.
+      }
+      throw new AquariusError(
+        `Limit-order draft request failed: HTTP ${response.status}${detail}`,
+      );
+    }
+    return (await response.json()) as Record<string, unknown>;
   }
 }
 

@@ -12,6 +12,7 @@ export interface NetworkConfig {
    * convention the documentation examples use).
    */
   readSource: string;
+  limitOrdersApiUrl: string;
 }
 
 export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
@@ -22,6 +23,7 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     horizonUrl: "https://horizon.stellar.org",
     passphrase: Networks.PUBLIC,
     readSource: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+    limitOrdersApiUrl: "https://amm-api.aqua.network/api/external/v1/limit-orders",
   },
   testnet: {
     router: "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
@@ -30,5 +32,6 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     horizonUrl: "https://horizon-testnet.stellar.org",
     passphrase: Networks.TESTNET,
     readSource: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+    limitOrdersApiUrl: "https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
   },
 };

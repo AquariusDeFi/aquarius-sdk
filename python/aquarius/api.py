@@ -50,6 +50,24 @@ class ApiClient:
         data = response.json()
         return data.get("results", data) if isinstance(data, dict) else data
 
+    def create_limit_order_draft(self, base_url: str, request: dict) -> dict:
+        response = requests.post(
+            f"{base_url.rstrip('/')}/drafts/",
+            json=request,
+            timeout=30,
+        )
+        if not response.ok:
+            detail = None
+            try:
+                detail = response.json().get("detail")
+            except Exception:  # noqa: BLE001 - best-effort API detail
+                pass
+            suffix = f": {detail}" if detail else ""
+            raise AquariusError(
+                f"Limit-order draft request failed: HTTP {response.status_code}{suffix}"
+            )
+        return response.json()
+
 
 def parse_find_path_response(
     response: dict,

@@ -16,6 +16,7 @@ class NetworkConfig:
     # reads (simulations need an existing source account; the AQUA issuer is the
     # convention the documentation examples use).
     read_source: str
+    limit_orders_api_url: str
 
 
 NETWORKS: dict[str, NetworkConfig] = {
@@ -26,6 +27,7 @@ NETWORKS: dict[str, NetworkConfig] = {
         horizon_url="https://horizon.stellar.org",
         passphrase=Network.PUBLIC_NETWORK_PASSPHRASE,
         read_source="GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+        limit_orders_api_url="https://amm-api.aqua.network/api/external/v1/limit-orders",
     ),
     "testnet": NetworkConfig(
         router="CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
@@ -34,5 +36,6 @@ NETWORKS: dict[str, NetworkConfig] = {
         horizon_url="https://horizon-testnet.stellar.org",
         passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
         read_source="GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+        limit_orders_api_url="https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
     ),
 }

@@ -5,6 +5,15 @@ import { Address, Asset as StellarAsset, Operation, nativeToScVal, scValToNative
 import { ApiClient, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
 import { AquariusError, SlippageError } from "./errors.js";
+import {
+  LimitOrderConfig,
+  LimitOrderConfigInput,
+  OnchainLimitOrder,
+  OnchainLimitOrderActions,
+  OnchainLimitOrderDraftPayload,
+  buildOnchainPlacementArgs,
+  validateOnchainLimitOrderDraft,
+} from "./limit-orders.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
   Pool,
@@ -32,6 +41,8 @@ export interface AquariusConfig {
    * wallet (humans take their time).
    */
   timeoutSeconds?: number | "infinite";
+  /** Trusted coordinates for programmatic on-chain limit-order placement. */
+  limitOrders?: LimitOrderConfigInput;
 }
 
 export interface Receipt {
@@ -48,6 +59,20 @@ export type QuoteParams = {
   /** Fraction, default 0.01 (1%). */
   slippage?: number;
 } & ({ amountIn: bigint; amountOut?: never } | { amountOut: bigint; amountIn?: never });
+
+export interface OnchainLimitOrderParams {
+  from: Asset;
+  to: Asset;
+  sellAmount: bigint;
+  minBuyAmount: bigint;
+  validAfterLedger: number;
+  expiresAtLedger: number;
+  /**
+   * SEP-41 allowance horizon. Must cover this order and should be no earlier
+   * than any other order sharing the same settlement allowance.
+   */
+  allowanceExpirationLedger: number;
+}
 
 export interface Quote {
   amountIn: bigint;
@@ -73,6 +98,7 @@ export class AquariusClient {
   private readonly server: rpc.Server;
   private readonly engine: SubmitEngine;
   private readonly signer?: Signer;
+  private readonly limitOrderConfig?: LimitOrderConfig;
 
   constructor(config: AquariusConfig) {
     const preset = NETWORKS[config.network];
@@ -98,6 +124,9 @@ export class AquariusClient {
       timeout,
     );
     this.signer = config.signer;
+    this.limitOrderConfig = config.limitOrders
+      ? new LimitOrderConfig(config.limitOrders)
+      : undefined;
   }
 
   // -- reads (no signer required) --------------------------------------------
@@ -149,6 +178,81 @@ export class AquariusClient {
         if (!(error instanceof SlippageError) || attempt >= retries) throw error;
       }
     }
+  }
+
+  /** Create a canonical API draft for programmatic G-account placement. */
+  async createOnchainLimitOrder(
+    params: OnchainLimitOrderParams,
+  ): Promise<OnchainLimitOrder> {
+    const signer = this.requireSigner();
+    const maker = signer.publicKey();
+    if (!maker.startsWith("G")) {
+      throw new AquariusError("generic SDK on-chain placement requires a G-account signer");
+    }
+    const i128Max = (1n << 127n) - 1n;
+    if (
+      params.sellAmount <= 0n ||
+      params.minBuyAmount <= 0n ||
+      params.sellAmount > i128Max ||
+      params.minBuyAmount > i128Max ||
+      !Number.isInteger(params.validAfterLedger) ||
+      !Number.isInteger(params.expiresAtLedger) ||
+      params.validAfterLedger < 0 ||
+      params.validAfterLedger > 0xffffffff ||
+      params.expiresAtLedger < 0 ||
+      params.expiresAtLedger > 0xffffffff ||
+      params.validAfterLedger > params.expiresAtLedger
+    ) {
+      throw new AquariusError(
+        "on-chain limit-order amounts must fit positive i128 values and ledgers must fit u32",
+      );
+    }
+    if (
+      !Number.isInteger(params.allowanceExpirationLedger) ||
+      params.allowanceExpirationLedger < params.expiresAtLedger ||
+      params.allowanceExpirationLedger > 0xffffffff
+    ) {
+      throw new AquariusError(
+        "allowance expiration must be a u32 ledger at or after order expiration",
+      );
+    }
+    const sellToken = params.from.contractId(this.network.passphrase);
+    const buyToken = params.to.contractId(this.network.passphrase);
+    if (sellToken === buyToken) {
+      throw new AquariusError("limit-order sell and buy tokens must differ");
+    }
+    const config = this.requireLimitOrderConfig();
+    const payload = await this.api.createLimitOrderDraft(
+      config.apiUrl ?? this.network.limitOrdersApiUrl,
+      {
+        placement_mode: "CONTRACT_ONCHAIN",
+        maker,
+        sell_token: sellToken,
+        sell_amount: params.sellAmount.toString(),
+        buy_token: buyToken,
+        min_buy_amount: params.minBuyAmount.toString(),
+        valid_after_ledger: params.validAfterLedger,
+        expires_at_ledger: params.expiresAtLedger,
+      },
+    );
+    return validateOnchainLimitOrderDraft(
+      payload as OnchainLimitOrderDraftPayload,
+      {
+        expectedNetworkPassphrase: this.network.passphrase,
+        expectedSettlement: config.settlement,
+        expectedMaker: maker,
+        expectedOrder: {
+          sellToken,
+          sellAmount: params.sellAmount,
+          buyToken,
+          minBuyAmount: params.minBuyAmount,
+          validAfterLedger: params.validAfterLedger,
+          expiresAtLedger: params.expiresAtLedger,
+        },
+        allowanceExpirationLedger: params.allowanceExpirationLedger,
+        actions: this.onchainLimitOrderActions(),
+      },
+    );
   }
 
   // -- Stellar quirks, absorbed --------------------------------------------------
@@ -366,6 +470,65 @@ export class AquariusClient {
     return quote;
   }
 
+  private onchainLimitOrderActions(): OnchainLimitOrderActions {
+    return {
+      buildPlacement: async order => {
+        const signer = this.requireSigner();
+        const operation = await this.buildOnchainLimitOrderOperation(order);
+        const tx = await this.engine.prepare(signer.publicKey(), () => operation, signer);
+        return tx.toXDR();
+      },
+      place: async order => {
+        const signer = this.requireSigner();
+        const operation = await this.buildOnchainLimitOrderOperation(order);
+        const tx = await this.engine.prepare(signer.publicKey(), () => operation, signer);
+        const result = await this.engine.signAndSubmit(tx, signer);
+        return { orderId: order.orderId, txHash: result.txHash };
+      },
+      buildCancel: async order => {
+        const signer = this.requireSigner();
+        const operation = this.buildOnchainLimitOrderCancelOperation(order);
+        const tx = await this.engine.prepare(signer.publicKey(), () => operation, signer);
+        return tx.toXDR();
+      },
+      cancel: async order => {
+        const signer = this.requireSigner();
+        const operation = this.buildOnchainLimitOrderCancelOperation(order);
+        const tx = await this.engine.prepare(signer.publicKey(), () => operation, signer);
+        const result = await this.engine.signAndSubmit(tx, signer);
+        return { orderId: order.orderId, txHash: result.txHash };
+      },
+    };
+  }
+
+  private async buildOnchainLimitOrderOperation(
+    order: OnchainLimitOrder,
+  ): Promise<xdr.Operation> {
+    const config = this.requireLimitOrderConfig();
+    const xlmToken = Asset.native().contractId(this.network.passphrase);
+    const currentAllowances = new Map<string, bigint>();
+    for (const token of order.requiredAllowances(xlmToken).keys()) {
+      const value = await this.readContract(token, "allowance", [
+        new Address(order.maker).toScVal(),
+        new Address(order.settlementAddress).toScVal(),
+      ]);
+      currentAllowances.set(token, BigInt(scValToNative(value) as bigint));
+    }
+    return Operation.invokeContractFunction({
+      contract: config.batcher,
+      function: "batch",
+      args: buildOnchainPlacementArgs(order, currentAllowances, xlmToken),
+    });
+  }
+
+  private buildOnchainLimitOrderCancelOperation(order: OnchainLimitOrder): xdr.Operation {
+    return Operation.invokeContractFunction({
+      contract: order.settlementAddress,
+      function: "cancel",
+      args: [order.orderScVal],
+    });
+  }
+
   /**
    * Mirrors the transaction shape used by the Aquarius web app: explicit
    * authorization of the router call and its token-transfer sub-invocation
@@ -440,5 +603,14 @@ export class AquariusClient {
       throw new AquariusError("This operation requires a signer — pass one in the client config");
     }
     return this.signer;
+  }
+
+  private requireLimitOrderConfig(): LimitOrderConfig {
+    if (!this.limitOrderConfig) {
+      throw new AquariusError(
+        "On-chain limit orders require trusted settlement and batcher configuration",
+      );
+    }
+    return this.limitOrderConfig;
   }
 }
