@@ -125,7 +125,7 @@ def test_timeout_resolution():
 
 
 def test_swap_retries_requote_on_slippage(monkeypatch):
-    monkeypatch.setattr(AquariusClient, "_requote_backoff_s", 0)
+    monkeypatch.setattr(AquariusClient, "_requote_delays_s", (0, 0))
     client = AquariusClient(network="testnet")
     attempts = []
 
@@ -162,7 +162,12 @@ def test_swap_backs_off_between_requote_attempts(monkeypatch):
     monkeypatch.setattr("aquarius.client.time.sleep", lambda seconds: sleeps.append(seconds))
 
     with pytest.raises(SlippageError):
-        client.swap(XLM, AQUA, amount_in=1, retries=2)
+        client.swap(XLM, AQUA, amount_in=1, retries=3)
 
-    assert len(quotes) == 3  # initial attempt + 2 retries, each freshly quoted
-    assert sleeps == [AquariusClient._requote_backoff_s] * 2  # none after the last
+    assert len(quotes) == 4  # initial attempt + 3 retries, each freshly quoted
+    # First retry is immediate (0 -> no sleep call), later ones escalate;
+    # nothing sleeps after the final attempt.
+    assert sleeps == [
+        AquariusClient._requote_delays_s[1],
+        AquariusClient._requote_delays_s[2],
+    ]

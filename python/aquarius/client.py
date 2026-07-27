@@ -46,11 +46,14 @@ class Quote:
 
 
 class AquariusClient:
-    # Pause before each re-quote in swap(). The find-path API prices from an
-    # indexer that lags the chain by a few seconds — after your own swap moves
-    # a pool, an instant re-quote reprices from pre-swap reserves and breaches
-    # the guard again. Class attribute so tests can shrink it.
-    _requote_backoff_s: float = 3.0
+    # Pauses before re-quotes in swap(), indexed by retry attempt (the last
+    # entry repeats). The find-path API prices from an indexer that can lag the
+    # chain — after your own swap moves a pool, a too-early re-quote reprices
+    # from pre-swap reserves and breaches the guard again. The first retry is
+    # immediate (an on-chain guard breach already burned enough wall-clock for
+    # the indexer to catch up); later ones wait for the lag window to close.
+    # Class attribute so tests can shrink it.
+    _requote_delays_s: tuple = (0.0, 1.5, 3.0)
 
     def __init__(
         self,
@@ -147,9 +150,9 @@ class AquariusClient:
         """quote() + execute() in one call, for bots.
 
         retries: how many times to re-quote and retry after a SlippageError.
-        Each attempt starts from a fresh quote, after a short pause that lets
-        the pricing indexer catch up with the chain. Default 0 — fail on the
-        first guard breach.
+        Each attempt starts from a fresh quote; the first retry is immediate
+        and later ones back off briefly so the pricing indexer can catch up
+        with the chain. Default 0 — fail on the first guard breach.
         """
         if retries < 0:
             raise AquariusError("retries must be >= 0")
@@ -159,7 +162,10 @@ class AquariusClient:
             except SlippageError:
                 if attempt == retries:
                     raise
-                time.sleep(self._requote_backoff_s)
+                delays = self._requote_delays_s
+                delay = delays[min(attempt, len(delays) - 1)]
+                if delay:
+                    time.sleep(delay)
         raise AquariusError("unreachable: the retry loop always returns or raises")
 
     # -- Stellar quirks, absorbed --------------------------------------------------
