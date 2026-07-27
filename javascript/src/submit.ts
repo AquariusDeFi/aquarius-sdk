@@ -17,8 +17,12 @@ import {
 import { Signer, signTransaction } from "./signer.js";
 
 // Congestion backoff between resubmissions of the same signed transaction.
-// Resubmitting is safe: the network dedupes by transaction hash.
-const RETRY_DELAYS_MS = [1_500, 3_000, 5_000, 8_000];
+// Resubmitting is safe: the network dedupes by transaction hash. Starts fast —
+// transient congestion often clears within a ledger — and escalates.
+const RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
+
+/** txBadSeq on submission — retried internally with a fresh sequence. */
+class BadSeqRejection extends AquariusError {}
 
 const POLL_ATTEMPTS = 30;
 const POLL_INTERVAL_MS = 2_000;
@@ -33,9 +37,19 @@ export interface ConfirmedTx {
 /**
  * @internal Builds, simulates, signs, submits, and confirms transactions,
  * handling the production failure modes: archived ledger state (restore and
- * retry), network congestion (bounded resubmission), and typed contract errors.
+ * retry), network congestion (bounded resubmission), stale sequence numbers
+ * from load-balanced RPC (re-sign and resubmit), and typed contract errors.
  */
 export class SubmitEngine {
+  /**
+   * Delays before re-signing after a txBadSeq rejection. Behind a
+   * load-balanced RPC, the replica that served the sequence number may lag
+   * the one that confirmed the previous transaction. The reload usually
+   * lands on a converged replica, so retry fast first and escalate.
+   * Static so tests can shrink the delays.
+   */
+  static _badSeqDelaysMs = [500, 1_000, 2_000];
+
   constructor(
     private readonly server: rpc.Server,
     private readonly passphrase: string,
@@ -138,10 +152,36 @@ export class SubmitEngine {
     return retval;
   }
 
-  /** Sign, submit with congestion retries, and wait for confirmation. */
+  /**
+   * Sign, submit with congestion retries, and wait for confirmation.
+   *
+   * A txBadSeq rejection never touched the chain, so it is safe to retry: the
+   * transaction is re-signed with a freshly loaded sequence number and
+   * resubmitted — same operations, same guards.
+   */
   async signAndSubmit(tx: Transaction, signer: Signer): Promise<ConfirmedTx> {
-    const signed = await signTransaction(signer, tx, this.passphrase);
+    let signed = await signTransaction(signer, tx, this.passphrase);
+    for (const delay of SubmitEngine._badSeqDelaysMs) {
+      try {
+        return await this.submit(signed);
+      } catch (error) {
+        if (!(error instanceof BadSeqRejection)) throw error;
+        await sleep(delay);
+        signed = await this.resignWithFreshSequence(signed, signer);
+      }
+    }
     return this.submit(signed);
+  }
+
+  private async resignWithFreshSequence(signed: Transaction, signer: Signer): Promise<Transaction> {
+    const account = await this.server.getAccount(signed.source);
+    const envelope = signed.toEnvelope();
+    envelope
+      .v1()
+      .tx()
+      .seqNum(xdr.Int64.fromString((BigInt(account.sequenceNumber()) + 1n).toString()));
+    envelope.v1().signatures([]);
+    return signTransaction(signer, new Transaction(envelope, this.passphrase), this.passphrase);
   }
 
   private async submit(signed: Transaction): Promise<ConfirmedTx> {
@@ -169,15 +209,21 @@ export class SubmitEngine {
         return this.poll(response.hash);
       default: {
         const name = response.errorResult?.result().switch().name ?? "unknown";
-        throw new AquariusError(`Transaction rejected on submission: ${name}`, response.hash);
+        const message = `Transaction rejected on submission: ${name}`;
+        if (name.toUpperCase().includes("BADSEQ")) {
+          throw new BadSeqRejection(message, response.hash);
+        }
+        throw new AquariusError(message, response.hash);
       }
     }
   }
 
   private async poll(hash: string): Promise<ConfirmedTx> {
+    // Poll fast at first — inclusion often lands within a ledger — then
+    // settle into the steady interval.
     const result = await this.server.pollTransaction(hash, {
       attempts: POLL_ATTEMPTS,
-      sleepStrategy: () => POLL_INTERVAL_MS,
+      sleepStrategy: (iter: number) => Math.min(500 * Math.max(iter, 1), POLL_INTERVAL_MS),
     });
 
     if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
