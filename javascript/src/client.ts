@@ -65,7 +65,17 @@ export interface Quote {
 
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export class AquariusClient {
+  /**
+   * Pause before each re-quote in swap(). The find-path API prices from an
+   * indexer that lags the chain by a few seconds — after your own swap moves
+   * a pool, an instant re-quote reprices from pre-swap reserves and breaches
+   * the guard again. Static so tests can shrink it.
+   */
+  static _requoteBackoffMs = 3_000;
+
   readonly network: NetworkConfig;
   /** Typed client for the public backend API — the raw escape hatch. */
   readonly api: ApiClient;
@@ -136,7 +146,8 @@ export class AquariusClient {
    * quote() + execute() in one call, for bots.
    *
    * retries: how many times to re-quote and retry after a SlippageError.
-   * Each attempt starts from a fresh quote. Default 0 — fail on the first
+   * Each attempt starts from a fresh quote, after a short pause that lets the
+   * pricing indexer catch up with the chain. Default 0 — fail on the first
    * guard breach.
    */
   async swap(params: QuoteParams & { retries?: number }): Promise<Receipt> {
@@ -147,6 +158,7 @@ export class AquariusClient {
         return await (await this.quote(quoteParams as QuoteParams)).execute();
       } catch (error) {
         if (!(error instanceof SlippageError) || attempt >= retries) throw error;
+        await sleep(AquariusClient._requoteBackoffMs);
       }
     }
   }

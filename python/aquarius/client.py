@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 import requests
@@ -45,6 +46,12 @@ class Quote:
 
 
 class AquariusClient:
+    # Pause before each re-quote in swap(). The find-path API prices from an
+    # indexer that lags the chain by a few seconds — after your own swap moves
+    # a pool, an instant re-quote reprices from pre-swap reserves and breaches
+    # the guard again. Class attribute so tests can shrink it.
+    _requote_backoff_s: float = 3.0
+
     def __init__(
         self,
         network: str = "mainnet",
@@ -140,8 +147,9 @@ class AquariusClient:
         """quote() + execute() in one call, for bots.
 
         retries: how many times to re-quote and retry after a SlippageError.
-        Each attempt starts from a fresh quote. Default 0 — fail on the first
-        guard breach.
+        Each attempt starts from a fresh quote, after a short pause that lets
+        the pricing indexer catch up with the chain. Default 0 — fail on the
+        first guard breach.
         """
         if retries < 0:
             raise AquariusError("retries must be >= 0")
@@ -151,6 +159,7 @@ class AquariusClient:
             except SlippageError:
                 if attempt == retries:
                     raise
+                time.sleep(self._requote_backoff_s)
         raise AquariusError("unreachable: the retry loop always returns or raises")
 
     # -- Stellar quirks, absorbed --------------------------------------------------
