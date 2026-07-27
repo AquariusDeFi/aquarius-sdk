@@ -14,6 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ./python[dev]
+      - run: ruff check python
       - run: pytest python/tests -q
 
   typescript:
@@ -26,4 +27,6 @@ jobs:
       - run: npm install
         working-directory: javascript
       - run: npm run typecheck
+        working-directory: javascript
+      - run: npm test
         working-directory: javascript
