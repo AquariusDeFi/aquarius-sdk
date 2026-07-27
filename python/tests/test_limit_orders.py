@@ -165,6 +165,9 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
         ),
     )
     client.api.create_limit_order_draft = Mock(return_value=DRAFT)
+    client.server.get_latest_ledger = Mock(return_value=SimpleNamespace(sequence=100))
+    assert client.latest_ledger() == 100
+
     order = client.create_onchain_limit_order(
         Asset.contract(DRAFT["sell_token"]),
         Asset.contract(DRAFT["buy_token"]),

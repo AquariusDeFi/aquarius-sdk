@@ -58,14 +58,15 @@ const aqua = new AquariusClient({
   },
 });
 
+const currentLedger = await aqua.latestLedger();
 const order = await aqua.createOnchainLimitOrder({
   from: XLM,
   to: AQUA,
   sellAmount: 100_0000000n,
   minBuyAmount: 500_0000000n,
-  validAfterLedger: 1_000,
-  expiresAtLedger: 2_000,
-  allowanceExpirationLedger: 2_000,
+  validAfterLedger: currentLedger,
+  expiresAtLedger: currentLedger + 17_280,
+  allowanceExpirationLedger: currentLedger + 17_280,
 });
 const receipt = await order.place();
 ```

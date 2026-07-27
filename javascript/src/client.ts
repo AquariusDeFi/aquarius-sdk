@@ -131,6 +131,11 @@ export class AquariusClient {
 
   // -- reads (no signer required) --------------------------------------------
 
+  /** Current Soroban RPC ledger sequence. */
+  async latestLedger(): Promise<number> {
+    return (await this.server.getLatestLedger()).sequence;
+  }
+
   /** Best route for a swap. Pass amountIn (exact input) or amountOut (exact output). */
   async quote(params: QuoteParams): Promise<Quote> {
     if ((params.amountIn === undefined) === (params.amountOut === undefined)) {

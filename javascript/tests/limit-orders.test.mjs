@@ -169,6 +169,9 @@ test("client creates a validated draft and builds batcher and cancel transaction
     draftRequest = { url, request };
     return draft;
   };
+  client.server.getLatestLedger = async () => ({ sequence: 100 });
+  assert.equal(await client.latestLedger(), 100);
+
   const order = await client.createOnchainLimitOrder({
     from: Asset.contract(draft.sell_token),
     to: Asset.contract(draft.buy_token),

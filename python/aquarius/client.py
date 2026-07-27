@@ -98,6 +98,10 @@ class AquariusClient:
 
     # -- reads (no signer required) -------------------------------------------
 
+    def latest_ledger(self) -> int:
+        """Current Soroban RPC ledger sequence."""
+        return self.server.get_latest_ledger().sequence
+
     def quote(
         self,
         from_: Asset,

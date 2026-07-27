@@ -61,14 +61,15 @@ aqua = AquariusClient(
         batcher=os.environ["AQUARIUS_BATCHER"],
     ),
 )
+current_ledger = aqua.latest_ledger()
 order = aqua.create_onchain_limit_order(
     XLM,
     AQUA,
     sell_amount=100_0000000,
     min_buy_amount=500_0000000,
-    valid_after_ledger=1_000,
-    expires_at_ledger=2_000,
-    allowance_expiration_ledger=2_000,
+    valid_after_ledger=current_ledger,
+    expires_at_ledger=current_ledger + 17_280,
+    allowance_expiration_ledger=current_ledger + 17_280,
 )
 receipt = order.place()
 ```
