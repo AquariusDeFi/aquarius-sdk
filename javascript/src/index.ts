@@ -33,6 +33,7 @@ export {
   NoTrustlineError,
   PausedError,
   SlippageError,
+  StaleSimulationError,
   TxTimeoutError,
   UserRejectedError,
 } from "./errors.js";
