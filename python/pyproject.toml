@@ -16,10 +16,7 @@ Homepage = "https://aqua.network"
 Documentation = "https://docs.aqua.network/developers/quickstart"
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8",
-    "ruff>=0.9",
-]
+dev = ["pytest>=8"]
 
 [build-system]
 requires = ["setuptools>=68"]
