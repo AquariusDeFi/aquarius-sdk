@@ -18,8 +18,9 @@ from .errors import (
 from .signer import sign_transaction, signer_public_key
 
 # Congestion backoff between resubmissions of the same signed transaction.
-# Resubmitting is safe: the network dedupes by transaction hash.
-_RETRY_DELAYS_S = (1.5, 3.0, 5.0, 8.0)
+# Resubmitting is safe: the network dedupes by transaction hash. Starts fast —
+# transient congestion often clears within a ledger — and escalates.
+_RETRY_DELAYS_S = (0.5, 1.0, 2.0, 4.0, 8.0)
 
 
 class _BadSeqRejection(AquariusError):
@@ -47,9 +48,10 @@ class SubmitEngine:
 
     # Delays before re-signing after a txBAD_SEQ rejection. Behind a
     # load-balanced RPC, the replica that served the sequence number may lag
-    # the one that confirmed the previous transaction; give the fleet a
-    # moment to converge. Class attribute so tests can shrink the delays.
-    _bad_seq_delays_s: tuple = (2.0, 4.0)
+    # the one that confirmed the previous transaction. The reload usually
+    # lands on a converged replica, so retry fast first and escalate.
+    # Class attribute so tests can shrink the delays.
+    _bad_seq_delays_s: tuple = (0.5, 1.0, 2.0)
 
     def __init__(
         self,
@@ -200,8 +202,12 @@ class SubmitEngine:
         raise AquariusError(message, response.hash)
 
     def _poll(self, tx_hash: str) -> ConfirmedTx:
+        # Poll fast at first — inclusion often lands within a ledger — then
+        # settle into the steady interval.
         result = self.server.poll_transaction(
-            tx_hash, max_attempts=_POLL_ATTEMPTS, sleep_strategy=lambda _i: _POLL_INTERVAL_S
+            tx_hash,
+            max_attempts=_POLL_ATTEMPTS,
+            sleep_strategy=lambda attempt: min(0.5 * max(attempt, 1), _POLL_INTERVAL_S),
         )
 
         if result.status == GetTransactionStatus.SUCCESS:

@@ -17,8 +17,9 @@ import {
 import { Signer, signTransaction } from "./signer.js";
 
 // Congestion backoff between resubmissions of the same signed transaction.
-// Resubmitting is safe: the network dedupes by transaction hash.
-const RETRY_DELAYS_MS = [1_500, 3_000, 5_000, 8_000];
+// Resubmitting is safe: the network dedupes by transaction hash. Starts fast —
+// transient congestion often clears within a ledger — and escalates.
+const RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
 
 /** txBadSeq on submission — retried internally with a fresh sequence. */
 class BadSeqRejection extends AquariusError {}
@@ -43,10 +44,11 @@ export class SubmitEngine {
   /**
    * Delays before re-signing after a txBadSeq rejection. Behind a
    * load-balanced RPC, the replica that served the sequence number may lag
-   * the one that confirmed the previous transaction; give the fleet a moment
-   * to converge. Static so tests can shrink the delays.
+   * the one that confirmed the previous transaction. The reload usually
+   * lands on a converged replica, so retry fast first and escalate.
+   * Static so tests can shrink the delays.
    */
-  static _badSeqDelaysMs = [2_000, 4_000];
+  static _badSeqDelaysMs = [500, 1_000, 2_000];
 
   constructor(
     private readonly server: rpc.Server,
@@ -217,9 +219,11 @@ export class SubmitEngine {
   }
 
   private async poll(hash: string): Promise<ConfirmedTx> {
+    // Poll fast at first — inclusion often lands within a ledger — then
+    // settle into the steady interval.
     const result = await this.server.pollTransaction(hash, {
       attempts: POLL_ATTEMPTS,
-      sleepStrategy: () => POLL_INTERVAL_MS,
+      sleepStrategy: (iter: number) => Math.min(500 * Math.max(iter, 1), POLL_INTERVAL_MS),
     });
 
     if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
