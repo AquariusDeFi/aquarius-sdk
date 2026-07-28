@@ -57,6 +57,20 @@ A stellar-sdk `Keypair` works as-is. Custom signers provide `public_key` plus `s
 
 `quote.build_transaction()` returns the simulated, unsigned envelope XDR for external signing flows. `client.contract_call(fn, *scvals)` invokes the router raw. `client.api` is the typed REST client.
 
+## Infrastructure
+
+Defaults point at the protocol's own endpoints: the mainnet RPC is
+`https://soroban-rpc.aqua.network` — the same node the Aquarius web app and
+backend use. Running your own infrastructure? Every endpoint is overridable:
+
+```python
+aqua = AquariusClient(
+    network="mainnet",
+    rpc_url="https://your-rpc.example.com",
+    horizon_url="https://your-horizon.example.com",
+)
+```
+
 ## Amounts
 
 All amounts are integers in token base units (stroops for classic assets: 1 token = 10^7).
