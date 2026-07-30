@@ -48,6 +48,13 @@ class NoTrustlineError(AquariusError):
     """The receiving account holds no trustline for the output asset."""
 
 
+class StaleSimulationError(AquariusError):
+    """The ledger footprint changed between simulation and execution.
+
+    Safe to retry: rebuilding the transaction re-simulates against current state.
+    """
+
+
 # Wallet-rejection messages across signers: Freighter, WalletConnect, Ledger.
 _USER_REJECTED_MESSAGES = (
     "the user rejected this request.",
@@ -113,31 +120,60 @@ def error_from_diagnostics(
 ) -> AquariusError | None:
     """Typed error from a failed transaction's diagnostic events, if determinable.
 
-    The trustline marker is checked on the raw event bytes; contract error
-    codes are read from ``error`` topics. Returns None when the events carry
-    no recognizable cause.
+    Only the trailing cascade of error events is diagnosed — that is the
+    failure that actually took the transaction down. Earlier error events can
+    be handled probes inside try_call (a reward-boost balance check on an
+    account without that trustline is routine) and must not drive the
+    diagnosis.
     """
     from stellar_sdk.xdr import DiagnosticEvent, SCErrorType, SCValType
 
-    code: int | None = None
+    decoded: list[tuple[str, object, bool]] = []
     for raw in events_xdr or []:
         try:
-            if _TRUSTLINE_MARKER.encode() in base64.b64decode(raw):
-                return NoTrustlineError(
-                    "The receiving account holds no trustline for the output asset — "
-                    "create it first (ensure_trustline)",
-                    tx_hash,
-                )
             event = DiagnosticEvent.from_xdr(raw)
-            for topic in event.event.body.v0.topics:
-                if (
-                    code is None
-                    and topic.type == SCValType.SCV_ERROR
-                    and topic.error.type == SCErrorType.SCE_CONTRACT
-                ):
-                    code = topic.error.contract_code.uint32
+            topics = event.event.body.v0.topics
+            is_error = any(
+                t.type == SCValType.SCV_SYMBOL and t.sym.sc_symbol == b"error" for t in topics
+            )
+            decoded.append((raw, event, is_error))
         except Exception:  # noqa: BLE001 — a single undecodable event never masks the rest
             continue
+
+    cascade: list[tuple[str, object]] = []
+    seen_error = False
+    for raw, event, is_error in reversed(decoded):
+        if is_error:
+            seen_error = True
+            cascade.append((raw, event))
+        elif seen_error:
+            break
+
+    if not cascade:
+        return None
+
+    code: int | None = None
+    storage = False
+    for raw, event in cascade:
+        if _TRUSTLINE_MARKER.encode() in base64.b64decode(raw):
+            return NoTrustlineError(
+                "The receiving account holds no trustline for the output asset — "
+                "create it first (ensure_trustline)",
+                tx_hash,
+            )
+        for topic in event.event.body.v0.topics:
+            if topic.type != SCValType.SCV_ERROR:
+                continue
+            if topic.error.type == SCErrorType.SCE_CONTRACT and code is None:
+                code = topic.error.contract_code.uint32
+            elif topic.error.type == SCErrorType.SCE_STORAGE:
+                storage = True
     if code is not None:
         return classify_contract_code(code, tx_hash)
+    if storage:
+        return StaleSimulationError(
+            "The ledger footprint changed between simulation and execution — "
+            "rebuild the transaction and retry",
+            tx_hash,
+        )
     return None

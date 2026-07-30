@@ -15,7 +15,7 @@ from aquarius import (
     SlippageError,
     parse_find_path_response,
 )
-from aquarius import NoTrustlineError
+from aquarius import NoTrustlineError, StaleSimulationError
 from aquarius.errors import classify_contract_error, error_from_diagnostics, is_user_rejection
 
 TESTDATA = pathlib.Path(__file__).resolve().parents[2] / "testdata"
@@ -171,3 +171,15 @@ def test_swap_backs_off_between_requote_attempts(monkeypatch):
         AquariusClient._requote_delays_s[1],
         AquariusClient._requote_delays_s[2],
     ]
+
+
+FOOTPRINT_FIXTURE = json.loads(
+    (TESTDATA / "diagnostic_events_footprint_withdraw.json").read_text()
+)
+
+
+def test_handled_probe_errors_do_not_drive_the_diagnosis():
+    """The footprint fixture contains a handled trustline probe before the
+    fatal storage error - the diagnosis must report the storage failure."""
+    error = error_from_diagnostics(FOOTPRINT_FIXTURE["events_xdr"])
+    assert isinstance(error, StaleSimulationError)
