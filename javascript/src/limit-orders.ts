@@ -124,6 +124,13 @@ export class PreparedLimitOrderFill {
   }
 }
 
+export class LimitOrderRouteQuote {
+  constructor(
+    readonly amountOut: bigint,
+    readonly swapChainXdr: string,
+  ) {}
+}
+
 export class LimitOrderRecord {
   constructor(
     readonly orderId: string,

@@ -48,7 +48,7 @@ trusted deployment configuration.
 ```python
 import os
 
-from aquarius import AquariusClient, LimitOrderConfig, XLM
+from aquarius import AquariusClient, LimitOrderConfig, NoRouteError, XLM
 
 aqua = AquariusClient(
     network="testnet",
@@ -95,17 +95,18 @@ on-chain placement, simulation receipt, maker minimum, execution fee, and
 maximum transaction fee before submission:
 
 ```python
-path = aqua.api.find_path(
-    {
-        "token_in_address": order.order.sell_token,
-        "token_out_address": order.order.buy_token,
-        "amount": str(order.order.sell_amount),
-    },
-    exact_input=True,
-)
-prepared = order.prepare_fill(path["swap_chain_xdr"])
+route = aqua.find_limit_order_route(order)
+xlm_token = XLM.contract_id(aqua.network.passphrase)
+if route.amount_out < order.required_router_min(xlm_token):
+    raise NoRouteError("Current route does not meet the order minimum")
+
+prepared = order.prepare_fill(route.swap_chain_xdr)
 result = prepared.execute()
 ```
+
+Route lookup, limit policy, fill preparation, and submission stay as separate
+primitives. Integrations decide which route is acceptable before asking the SDK
+to simulate a settlement fill.
 
 ## Design principles
 

@@ -13,6 +13,7 @@ from aquarius import (
     AquariusError,
     Asset,
     LimitOrderConfig,
+    NoRouteError,
     parse_limit_order_record,
     route_scval_from_swap_chain,
     validate_fill_receipt,
@@ -313,6 +314,52 @@ def test_prepare_fill_attaches_auth_checks_fee_and_submits_through_engine():
     prepared_tx.transaction.fee = 5_000_000
     with pytest.raises(AquariusError, match="below execution fee"):
         record.prepare_fill(route_xdr())
+
+
+def test_limit_order_route_lookup_is_separate_from_limit_policy():
+    payload, filler = detached_payload()
+    client = AquariusClient(
+        network="testnet",
+        signer=filler,
+        limit_orders=LimitOrderConfig(settlement=SETTLEMENT),
+    )
+    record = parse_limit_order_record(
+        payload,
+        network_passphrase=NETWORK,
+        settlement_address=SETTLEMENT,
+        xlm_token=XLM_TOKEN,
+        client=client,
+    )
+    client.api.find_path = Mock(
+        return_value={
+            "success": True,
+            "amount": "950",
+            "swap_chain_xdr": route_xdr(),
+        }
+    )
+    quote = client.find_limit_order_route(record)
+    assert quote.amount_out == 950
+    assert quote.swap_chain_xdr == route_xdr()
+    client.api.find_path.assert_called_once_with(
+        {
+            "token_in_address": SELL_TOKEN,
+            "token_out_address": BUY_TOKEN,
+            "amount": "1000",
+        },
+        exact_input=True,
+    )
+    client.api.find_path.return_value = {
+        "success": True,
+        "amount": "899",
+        "swap_chain_xdr": route_xdr(),
+    }
+    below_limit = client.find_limit_order_route(record)
+    assert below_limit.amount_out == 899
+    assert below_limit.amount_out < record.required_router_min(XLM_TOKEN)
+
+    client.api.find_path.return_value = {"success": False}
+    with pytest.raises(NoRouteError, match="No route"):
+        client.find_limit_order_route(record)
 
 
 def test_record_cancel_requires_the_maker_and_uses_canonical_order():

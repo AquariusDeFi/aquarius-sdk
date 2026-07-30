@@ -104,6 +104,12 @@ class LimitOrderFillResult:
 
 
 @dataclass(frozen=True)
+class LimitOrderRouteQuote:
+    amount_out: int
+    swap_chain_xdr: str
+
+
+@dataclass(frozen=True)
 class PreparedLimitOrderFill:
     order: "LimitOrderRecord"
     receipt: LimitOrderFillReceipt

@@ -22,6 +22,7 @@ export {
   LimitOrder,
   LimitOrderConfig,
   LimitOrderRecord,
+  LimitOrderRouteQuote,
   OnchainLimitOrder,
   PreparedLimitOrderFill,
   buildOnchainPlacementArgs,

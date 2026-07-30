@@ -8,12 +8,13 @@ from stellar_sdk.xdr import SCVal
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .assets import Asset
-from .errors import AquariusError, SlippageError
+from .errors import AquariusError, NoRouteError, SlippageError
 from .limit_orders import (
     LimitOrderConfig,
     LimitOrderFillResult,
     LimitOrderPage,
     LimitOrderRecord,
+    LimitOrderRouteQuote,
     OnchainLimitOrder,
     OnchainLimitOrderReceipt,
     PreparedLimitOrderFill,
@@ -586,6 +587,38 @@ class AquariusClient:
             swap_chain_xdr,
             reward_to=reward_to,
         ).execute()
+
+    def find_limit_order_route(
+        self,
+        record: LimitOrderRecord,
+    ) -> LimitOrderRouteQuote:
+        """Return the current exact-input route without applying fill policy."""
+        self._validate_limit_order_context(record)
+        response = self.api.find_path(
+            {
+                "token_in_address": record.order.sell_token,
+                "token_out_address": record.order.buy_token,
+                "amount": str(record.order.sell_amount),
+            },
+            exact_input=True,
+        )
+        if not response.get("success"):
+            raise NoRouteError(
+                f"No route for limit order {record.order_id}"
+            )
+        try:
+            amount = int(response["amount"])
+            swap_chain_xdr = response["swap_chain_xdr"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AquariusError(
+                "limit-order route response is invalid"
+            ) from exc
+        if not isinstance(swap_chain_xdr, str) or not swap_chain_xdr:
+            raise AquariusError("limit-order route response has no swap chain")
+        return LimitOrderRouteQuote(
+            amount_out=amount,
+            swap_chain_xdr=swap_chain_xdr,
+        )
 
     def build_limit_order_cancel(self, record: LimitOrderRecord) -> str:
         signer = self._limit_order_maker_signer(record)

@@ -10,7 +10,13 @@ npm install @aquariusdefi/sdk
 
 ```ts
 import { Keypair } from "@stellar/stellar-sdk";
-import { AquariusClient, Asset, XLM, SlippageError } from "@aquariusdefi/sdk";
+import {
+  AquariusClient,
+  Asset,
+  NoRouteError,
+  SlippageError,
+  XLM,
+} from "@aquariusdefi/sdk";
 
 const AQUA = Asset.classic("AQUA", "GBNZ...AQUA");
 
@@ -97,16 +103,18 @@ await order.cancel();
 An independent filler can request an exact-send route and prepare execution:
 
 ```ts
-const path = await aqua.api.findPath({
-  token_in_address: order.order.sellToken,
-  token_out_address: order.order.buyToken,
-  amount: order.order.sellAmount.toString(),
-}, true);
-const prepared = await order.prepareFill(path.swap_chain_xdr);
+const route = await aqua.findLimitOrderRoute(order);
+const xlmToken = XLM.contractId(aqua.network.passphrase);
+if (route.amountOut < order.requiredRouterMin(xlmToken)) {
+  throw new NoRouteError("Current route does not meet the order minimum");
+}
+
+const prepared = await order.prepareFill(route.swapChainXdr);
 const result = await prepared.execute();
 ```
 
-Before returning `prepared`, the SDK validates the registry record, detached
+Route lookup and limit policy are separate primitives. Before returning
+`prepared`, the SDK validates the registry record, detached
 `ADDRESS_V2` invocation tree or confirmed on-chain placement, settlement
 receipt, maker minimum, exact execution fee, and maximum transaction fee.
 
