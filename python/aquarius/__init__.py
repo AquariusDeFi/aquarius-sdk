@@ -13,6 +13,7 @@ from .errors import (
     NoTrustlineError,
     PausedError,
     SlippageError,
+    StaleSimulationError,
     TxTimeoutError,
     UserRejectedError,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "Quote",
     "Receipt",
     "SlippageError",
+    "StaleSimulationError",
     "TxTimeoutError",
     "UserRejectedError",
     "XLM",

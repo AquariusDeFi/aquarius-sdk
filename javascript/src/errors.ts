@@ -48,6 +48,12 @@ export class TxTimeoutError extends AquariusError {}
 /** The receiving account holds no trustline for the output asset. */
 export class NoTrustlineError extends AquariusError {}
 
+/**
+ * The ledger footprint changed between simulation and execution.
+ * Safe to retry: rebuilding the transaction re-simulates against current state.
+ */
+export class StaleSimulationError extends AquariusError {}
+
 // Wallet-rejection messages across signers: Freighter, WalletConnect, Ledger.
 const USER_REJECTED_MESSAGES = [
   "the user rejected this request.",
@@ -119,25 +125,62 @@ export function errorFromDiagnostics(
   events: (xdr.DiagnosticEvent | string)[] | undefined,
   txHash?: string,
 ): AquariusError | null {
-  let code: number | null = null;
+  // Only the trailing cascade of error events is diagnosed — that is the
+  // failure that actually took the transaction down. Earlier error events can
+  // be handled probes inside try_call (a reward-boost balance check on an
+  // account without that trustline is routine) and must not drive the
+  // diagnosis.
+  const decoded: { bytes: Buffer; event: xdr.DiagnosticEvent; isError: boolean }[] = [];
   for (const raw of events ?? []) {
     try {
-      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : raw.toXDR();
-      if (bytes.includes(TRUSTLINE_MARKER)) {
-        return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
-      }
       const event = typeof raw === "string" ? xdr.DiagnosticEvent.fromXDR(raw, "base64") : raw;
-      for (const topic of event.event().body().v0().topics()) {
-        if (code === null && topic.switch() === xdr.ScValType.scvError()) {
-          const scError = topic.error();
-          if (scError.switch() === xdr.ScErrorType.sceContract()) {
-            code = scError.contractCode();
-          }
-        }
-      }
+      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : raw.toXDR();
+      const isError = event
+        .event()
+        .body()
+        .v0()
+        .topics()
+        .some(t => t.switch() === xdr.ScValType.scvSymbol() && t.sym().toString() === "error");
+      decoded.push({ bytes, event, isError });
     } catch {
       // a single undecodable event never masks the rest
     }
   }
-  return code === null ? null : classifyContractCode(code, txHash);
+
+  const cascade: { bytes: Buffer; event: xdr.DiagnosticEvent }[] = [];
+  let seenError = false;
+  for (let i = decoded.length - 1; i >= 0; i--) {
+    if (decoded[i].isError) {
+      seenError = true;
+      cascade.push(decoded[i]);
+    } else if (seenError) {
+      break;
+    }
+  }
+  if (cascade.length === 0) return null;
+
+  let code: number | null = null;
+  let storage = false;
+  for (const { bytes, event } of cascade) {
+    if (bytes.includes(TRUSTLINE_MARKER)) {
+      return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
+    }
+    for (const topic of event.event().body().v0().topics()) {
+      if (topic.switch() !== xdr.ScValType.scvError()) continue;
+      const scError = topic.error();
+      if (scError.switch() === xdr.ScErrorType.sceContract() && code === null) {
+        code = scError.contractCode();
+      } else if (scError.switch() === xdr.ScErrorType.sceStorage()) {
+        storage = true;
+      }
+    }
+  }
+  if (code !== null) return classifyContractCode(code, txHash);
+  if (storage) {
+    return new StaleSimulationError(
+      "The ledger footprint changed between simulation and execution — rebuild the transaction and retry",
+      txHash,
+    );
+  }
+  return null;
 }

@@ -12,7 +12,7 @@ import {
   XLM,
   parseFindPathResponse,
 } from "../dist/index.js";
-import { NoTrustlineError, SlippageError as SlippageErrorDirect } from "../dist/index.js";
+import { NoTrustlineError, SlippageError as SlippageErrorDirect, StaleSimulationError } from "../dist/index.js";
 import { classifyContractError, errorFromDiagnostics, isUserRejection } from "../dist/errors.js";
 
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
@@ -161,4 +161,18 @@ test("swap retries re-quote on slippage", async () => {
 
 test("buffer import present for diagnostics", () => {
   assert.ok(Buffer.isBuffer(Buffer.from("dGVzdA==", "base64")));
+});
+
+
+const footprintFixture = JSON.parse(
+  readFileSync(
+    new URL("../../testdata/diagnostic_events_footprint_withdraw.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+test("handled probe errors do not drive the diagnosis", () => {
+  // The footprint fixture contains a handled trustline probe before the
+  // fatal storage error - the diagnosis must report the storage failure.
+  assert.ok(errorFromDiagnostics(footprintFixture.events_xdr) instanceof StaleSimulationError);
 });

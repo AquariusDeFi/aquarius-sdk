@@ -15,7 +15,7 @@ from aquarius import (
     SlippageError,
     parse_find_path_response,
 )
-from aquarius import NoTrustlineError
+from aquarius import NoTrustlineError, StaleSimulationError
 from aquarius.errors import classify_contract_error, error_from_diagnostics, is_user_rejection
 
 TESTDATA = pathlib.Path(__file__).resolve().parents[2] / "testdata"
@@ -146,3 +146,15 @@ def test_swap_retries_requote_on_slippage():
     with pytest.raises(SlippageError):
         client.swap(XLM, AQUA, retries=1, amount_in=1)
     assert len(attempts) == 2
+
+
+FOOTPRINT_FIXTURE = json.loads(
+    (TESTDATA / "diagnostic_events_footprint_withdraw.json").read_text()
+)
+
+
+def test_handled_probe_errors_do_not_drive_the_diagnosis():
+    """The footprint fixture contains a handled trustline probe before the
+    fatal storage error - the diagnosis must report the storage failure."""
+    error = error_from_diagnostics(FOOTPRINT_FIXTURE["events_xdr"])
+    assert isinstance(error, StaleSimulationError)
