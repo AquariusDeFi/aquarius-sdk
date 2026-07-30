@@ -65,7 +65,20 @@ export interface Quote {
 
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export class AquariusClient {
+  /**
+   * Pauses before re-quotes in swap(), indexed by retry attempt (the last
+   * entry repeats). The find-path API prices from an indexer that can lag the
+   * chain — after your own swap moves a pool, a too-early re-quote reprices
+   * from pre-swap reserves and breaches the guard again. The first retry is
+   * immediate (an on-chain guard breach already burned enough wall-clock for
+   * the indexer to catch up); later ones wait for the lag window to close.
+   * Static so tests can shrink it.
+   */
+  static _requoteDelaysMs = [0, 1_500, 3_000];
+
   readonly network: NetworkConfig;
   /** Typed client for the public backend API — the raw escape hatch. */
   readonly api: ApiClient;
@@ -136,8 +149,9 @@ export class AquariusClient {
    * quote() + execute() in one call, for bots.
    *
    * retries: how many times to re-quote and retry after a SlippageError.
-   * Each attempt starts from a fresh quote. Default 0 — fail on the first
-   * guard breach.
+   * Each attempt starts from a fresh quote; the first retry is immediate and
+   * later ones back off briefly so the pricing indexer can catch up with the
+   * chain. Default 0 — fail on the first guard breach.
    */
   async swap(params: QuoteParams & { retries?: number }): Promise<Receipt> {
     const { retries = 0, ...quoteParams } = params;
@@ -147,6 +161,9 @@ export class AquariusClient {
         return await (await this.quote(quoteParams as QuoteParams)).execute();
       } catch (error) {
         if (!(error instanceof SlippageError) || attempt >= retries) throw error;
+        const delays = AquariusClient._requoteDelaysMs;
+        const delay = delays[Math.min(attempt, delays.length - 1)];
+        if (delay) await sleep(delay);
       }
     }
   }

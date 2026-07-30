@@ -124,7 +124,8 @@ def test_timeout_resolution():
     assert infinite.engine.timeout is None
 
 
-def test_swap_retries_requote_on_slippage():
+def test_swap_retries_requote_on_slippage(monkeypatch):
+    monkeypatch.setattr(AquariusClient, "_requote_delays_s", (0, 0))
     client = AquariusClient(network="testnet")
     attempts = []
 
@@ -144,6 +145,32 @@ def test_swap_retries_requote_on_slippage():
     with pytest.raises(SlippageError):
         client.swap(XLM, AQUA, retries=1, amount_in=1)
     assert len(attempts) == 2
+
+
+def test_swap_backs_off_between_requote_attempts(monkeypatch):
+    client = AquariusClient(network="testnet")
+    quotes = []
+
+    class AlwaysBreached:
+        def execute(self):
+            raise SlippageError("guard breached")
+
+    monkeypatch.setattr(
+        client, "quote", lambda *args, **kwargs: quotes.append(1) or AlwaysBreached()
+    )
+    sleeps = []
+    monkeypatch.setattr("aquarius.client.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    with pytest.raises(SlippageError):
+        client.swap(XLM, AQUA, amount_in=1, retries=3)
+
+    assert len(quotes) == 4  # initial attempt + 3 retries, each freshly quoted
+    # First retry is immediate (0 -> no sleep call), later ones escalate;
+    # nothing sleeps after the final attempt.
+    assert sleeps == [
+        AquariusClient._requote_delays_s[1],
+        AquariusClient._requote_delays_s[2],
+    ]
 
 
 FOOTPRINT_FIXTURE = json.loads(

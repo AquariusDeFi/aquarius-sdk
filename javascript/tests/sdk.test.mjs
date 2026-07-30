@@ -137,6 +137,7 @@ test("timeout resolution follows the signer type", async () => {
 });
 
 test("swap retries re-quote on slippage", async () => {
+  AquariusClient._requoteDelaysMs = [0, 1]; // keep the test fast
   const client = new AquariusClient({ network: "testnet" });
   let attempts = 0;
   client.quote = async () => ({
@@ -154,6 +155,29 @@ test("swap retries re-quote on slippage", async () => {
     SlippageErrorDirect,
   );
   assert.equal(attempts, 2);
+});
+
+test("swap backs off between re-quote attempts, first retry immediate", async () => {
+  AquariusClient._requoteDelaysMs = [0, 40];
+  const client = new AquariusClient({ network: "testnet" });
+  let quotes = 0;
+  const quotedAt = [];
+  client.quote = async () => {
+    quotes += 1;
+    quotedAt.push(Date.now());
+    return {
+      execute: async () => {
+        throw new SlippageErrorDirect("guard breached");
+      },
+    };
+  };
+  await assert.rejects(
+    client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 2 }),
+    SlippageErrorDirect,
+  );
+  assert.equal(quotes, 3); // initial attempt + 2 retries, each freshly quoted
+  assert.ok(quotedAt[1] - quotedAt[0] < 30); // first retry fires immediately
+  assert.ok(quotedAt[2] - quotedAt[1] >= 40); // the next one escalates
 });
 
 test("buffer import present for diagnostics", () => {
