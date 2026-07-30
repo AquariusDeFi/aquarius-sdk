@@ -2,7 +2,7 @@
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Programmatic on-chain limit orders are a PoC with unit/fixture coverage and are not yet live-verified against a deployed settlement contract. Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
+**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Limit-order placement, registry reads, cancellation, and permissionless filling are a PoC with unit/fixture coverage. Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
 
 ```bash
 npm install @aquariusdefi/sdk
@@ -76,6 +76,39 @@ return the existing expiration. Keep it at or beyond this order and every other
 open order sharing the settlement allowance. It does not affect the order ID.
 For custom C accounts, use `validateOnchainLimitOrderDraft()` and
 `buildOnchainPlacementArgs()` with the account's own authorization policy.
+
+`batcher` is required only for `CONTRACT_ONCHAIN` placement. Registry reads,
+cancellation, and filling need the trusted settlement address:
+
+```ts
+const aqua = new AquariusClient({
+  network: "testnet",
+  signer,
+  limitOrders: {
+    settlement: process.env.AQUARIUS_LIMIT_ORDER_SETTLEMENT!,
+  },
+});
+
+const orders = await aqua.openLimitOrders(signer.publicKey());
+const order = await aqua.getLimitOrder(orders[0].orderId);
+await order.cancel();
+```
+
+An independent filler can request an exact-send route and prepare execution:
+
+```ts
+const path = await aqua.api.findPath({
+  token_in_address: order.order.sellToken,
+  token_out_address: order.order.buyToken,
+  amount: order.order.sellAmount.toString(),
+}, true);
+const prepared = await order.prepareFill(path.swap_chain_xdr);
+const result = await prepared.execute();
+```
+
+Before returning `prepared`, the SDK validates the registry record, detached
+`ADDRESS_V2` invocation tree or confirmed on-chain placement, settlement
+receipt, maker minimum, exact execution fee, and maximum transaction fee.
 
 ## What the SDK handles for you
 

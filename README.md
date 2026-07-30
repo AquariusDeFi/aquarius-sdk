@@ -2,7 +2,7 @@
 
 Official SDKs for building on [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar, in Python and TypeScript.
 
-**Status: 0.2.x.** Swaps (quote → execute in both modes) and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are complete in both languages, each verified end to end with real testnet transactions. Programmatic on-chain limit-order placement is a PoC and has unit/fixture coverage, but is not yet live-verified against a deployed settlement contract. Concentrated liquidity position management is not covered yet: pools are discovered and readable, and deposits into them are refused with an explanatory error.
+**Status: 0.2.x.** Swaps (quote → execute in both modes) and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are complete in both languages, each verified end to end with real testnet transactions. Limit-order placement, registry reads, cancellation, and permissionless filling are a PoC with unit/fixture coverage. Concentrated liquidity position management is not covered yet: pools are discovered and readable, and deposits into them are refused with an explanatory error.
 
 ## Layout
 
@@ -81,6 +81,32 @@ Custom C-account integrations can use the exported canonical-draft validator
 and batch-argument builder, then provide their own contract-account
 authorization policy.
 
+The same configuration exposes the validated public registry and cancellation:
+
+```python
+orders = aqua.open_limit_orders(maker=signer.public_key)
+order = aqua.get_limit_order(orders[0].order_id)
+order.cancel()
+```
+
+For permissionless execution, request an exact-send route and let the SDK
+validate the canonical order, detached `ADDRESS_V2` tree or confirmed
+on-chain placement, simulation receipt, maker minimum, execution fee, and
+maximum transaction fee before submission:
+
+```python
+path = aqua.api.find_path(
+    {
+        "token_in_address": order.order.sell_token,
+        "token_out_address": order.order.buy_token,
+        "amount": str(order.order.sell_amount),
+    },
+    exact_input=True,
+)
+prepared = order.prepare_fill(path["swap_chain_xdr"])
+result = prepared.execute()
+```
+
 ## Design principles
 
 1. **Two-phase everything.** `quote()` → `Quote.execute()`. UIs show before they commit; the quote object carries everything needed to execute, so what you quoted is what you execute.
@@ -92,7 +118,7 @@ authorization policy.
 
 ## Scope of v1
 
-Swaps (both modes), pool discovery, deposit/withdraw/claim, positions overview, programmatic on-chain limit-order placement, trustline and friendbot helpers, provider-fee configuration. Explicitly out: wallet and key management, price oracles, governance/ICE, SDEX rewards, historical data.
+Swaps (both modes), pool discovery, deposit/withdraw/claim, positions overview, limit-order placement/reads/cancellation/filling, trustline and friendbot helpers, provider-fee configuration. Explicitly out: wallet and key management, price oracles, governance/ICE, SDEX rewards, historical data.
 
 ## Releases
 

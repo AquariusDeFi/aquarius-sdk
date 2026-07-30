@@ -68,6 +68,29 @@ class ApiClient:
             )
         return response.json()
 
+    def list_limit_orders(self, base_url: str, params: dict) -> dict:
+        response = requests.get(
+            f"{base_url.rstrip('/')}/orders/",
+            params=params,
+            timeout=30,
+        )
+        if not response.ok:
+            raise AquariusError(
+                f"Limit-order list request failed: HTTP {response.status_code}"
+            )
+        return response.json()
+
+    def get_limit_order(self, base_url: str, order_id: str) -> dict:
+        response = requests.get(
+            f"{base_url.rstrip('/')}/orders/{order_id}/",
+            timeout=30,
+        )
+        if not response.ok:
+            raise AquariusError(
+                f"Limit-order detail request failed: HTTP {response.status_code}"
+            )
+        return response.json()
+
 
 def parse_find_path_response(
     response: dict,

@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-    "stellar-sdk>=13",
+    "stellar-sdk>=15",
     "requests>=2.28",
 ]
 

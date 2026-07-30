@@ -2,7 +2,7 @@
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Programmatic on-chain limit orders are a PoC with unit/fixture coverage and are not yet live-verified against a deployed settlement contract. Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
+**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Limit-order placement, registry reads, cancellation, and permissionless filling are a PoC with unit/fixture coverage. Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
 
 ```bash
 pip install aquarius-sdk
@@ -79,6 +79,42 @@ return the existing expiration. Keep it at or beyond this order and every other
 open order sharing the settlement allowance. It does not affect the order ID.
 For custom C accounts, use `validate_onchain_limit_order_draft()` and
 `build_onchain_placement_args()` with the account's own authorization policy.
+
+`batcher` is required only for `CONTRACT_ONCHAIN` placement. Registry reads,
+cancellation, and filling need the trusted settlement address:
+
+```python
+aqua = AquariusClient(
+    network="testnet",
+    signer=signer,
+    limit_orders=LimitOrderConfig(
+        settlement=os.environ["AQUARIUS_LIMIT_ORDER_SETTLEMENT"],
+    ),
+)
+
+orders = aqua.open_limit_orders(maker=signer.public_key)
+order = aqua.get_limit_order(orders[0].order_id)
+order.cancel()
+```
+
+An independent filler can request an exact-send route and prepare execution:
+
+```python
+path = aqua.api.find_path(
+    {
+        "token_in_address": order.order.sell_token,
+        "token_out_address": order.order.buy_token,
+        "amount": str(order.order.sell_amount),
+    },
+    exact_input=True,
+)
+prepared = order.prepare_fill(path["swap_chain_xdr"])
+result = prepared.execute()
+```
+
+Before returning `prepared`, the SDK validates the registry record, detached
+`ADDRESS_V2` invocation tree or confirmed on-chain placement, settlement
+receipt, maker minimum, exact execution fee, and maximum transaction fee.
 
 ## What the SDK handles for you
 

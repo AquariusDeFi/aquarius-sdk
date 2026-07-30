@@ -81,6 +81,37 @@ export class ApiClient {
     }
     return (await response.json()) as Record<string, unknown>;
   }
+
+  async listLimitOrders(
+    baseUrl: string,
+    params: Record<string, string>,
+  ): Promise<Record<string, unknown>> {
+    const query = new URLSearchParams(params);
+    const response = await fetch(
+      `${baseUrl.replace(/\/$/, "")}/orders/?${query}`,
+    );
+    if (!response.ok) {
+      throw new AquariusError(
+        `Limit-order list request failed: HTTP ${response.status}`,
+      );
+    }
+    return (await response.json()) as Record<string, unknown>;
+  }
+
+  async getLimitOrder(
+    baseUrl: string,
+    orderId: string,
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(
+      `${baseUrl.replace(/\/$/, "")}/orders/${orderId}/`,
+    );
+    if (!response.ok) {
+      throw new AquariusError(
+        `Limit-order detail request failed: HTTP ${response.status}`,
+      );
+    }
+    return (await response.json()) as Record<string, unknown>;
+  }
 }
 
 export interface PoolMeta {
