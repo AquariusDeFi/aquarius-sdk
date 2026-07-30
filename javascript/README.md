@@ -14,6 +14,7 @@ import {
   AquariusClient,
   Asset,
   NoRouteError,
+  parseFindPathResponse,
   SlippageError,
   XLM,
 } from "@aquariusdefi/sdk";
@@ -103,9 +104,18 @@ await order.cancel();
 An independent filler can request an exact-send route and prepare execution:
 
 ```ts
-const route = await aqua.findLimitOrderRoute(order);
+const response = await aqua.api.findPath({
+  token_in_address: order.order.sellToken,
+  token_out_address: order.order.buyToken,
+  amount: order.order.sellAmount.toString(),
+}, true);
+const route = parseFindPathResponse(response, {
+  amountIn: order.order.sellAmount,
+  slippageBps: 0,
+  pairLabel: `${order.order.sellToken} -> ${order.order.buyToken}`,
+});
 const xlmToken = XLM.contractId(aqua.network.passphrase);
-if (route.amountOut < order.requiredRouterMin(xlmToken)) {
+if (route.amountOut < order.order.requiredRouterMin(xlmToken)) {
   throw new NoRouteError("Current route does not meet the order minimum");
 }
 
@@ -113,8 +123,9 @@ const prepared = await order.prepareFill(route.swapChainXdr);
 const result = await prepared.execute();
 ```
 
-Route lookup and limit policy are separate primitives. Before returning
-`prepared`, the SDK validates the registry record, detached
+The existing generic path lookup and parser are reused unchanged. Route lookup
+and limit policy are separate primitives. Before returning `prepared`, the SDK
+validates the registry record, detached
 `ADDRESS_V2` invocation tree or confirmed on-chain placement, settlement
 receipt, maker minimum, exact execution fee, and maximum transaction fee.
 

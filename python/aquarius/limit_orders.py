@@ -104,12 +104,6 @@ class LimitOrderFillResult:
 
 
 @dataclass(frozen=True)
-class LimitOrderRouteQuote:
-    amount_out: int
-    swap_chain_xdr: str
-
-
-@dataclass(frozen=True)
 class PreparedLimitOrderFill:
     order: "LimitOrderRecord"
     receipt: LimitOrderFillReceipt
@@ -137,26 +131,18 @@ class LimitOrderRecord:
     _raw: dict = field(default_factory=dict, repr=False, compare=False)
     _client: "AquariusClient | None" = field(default=None, repr=False, compare=False)
 
-    def required_router_min(self, xlm_token: str) -> int:
-        return self.order.required_router_min(xlm_token)
-
     def prepare_fill(
         self, swap_chain_xdr: str, *, reward_to: str | None = None
     ) -> PreparedLimitOrderFill:
-        return self._bound_client().prepare_limit_order_fill(
+        return self._bound_client()._prepare_limit_order_fill(
             self, swap_chain_xdr, reward_to=reward_to
         )
 
-    def fill(
-        self, swap_chain_xdr: str, *, reward_to: str | None = None
-    ) -> LimitOrderFillResult:
-        return self.prepare_fill(swap_chain_xdr, reward_to=reward_to).execute()
-
     def build_cancel_transaction(self) -> str:
-        return self._bound_client().build_limit_order_cancel(self)
+        return self._bound_client()._build_limit_order_cancel(self)
 
     def cancel(self) -> OnchainLimitOrderReceipt:
-        return self._bound_client().cancel_limit_order(self)
+        return self._bound_client()._cancel_limit_order(self)
 
     @property
     def raw(self) -> dict:

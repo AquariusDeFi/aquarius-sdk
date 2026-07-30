@@ -51,7 +51,13 @@ batcher addresses:
 ```python
 import os
 
-from aquarius import AquariusClient, LimitOrderConfig, NoRouteError, XLM
+from aquarius import (
+    AquariusClient,
+    LimitOrderConfig,
+    NoRouteError,
+    XLM,
+    parse_find_path_response,
+)
 
 aqua = AquariusClient(
     network="testnet",
@@ -100,17 +106,31 @@ order.cancel()
 An independent filler can request an exact-send route and prepare execution:
 
 ```python
-route = aqua.find_limit_order_route(order)
+response = aqua.api.find_path(
+    {
+        "token_in_address": order.order.sell_token,
+        "token_out_address": order.order.buy_token,
+        "amount": str(order.order.sell_amount),
+    },
+    exact_input=True,
+)
+route = parse_find_path_response(
+    response,
+    amount_in=order.order.sell_amount,
+    slippage_bps=0,
+    pair_label=f"{order.order.sell_token} -> {order.order.buy_token}",
+)
 xlm_token = XLM.contract_id(aqua.network.passphrase)
-if route.amount_out < order.required_router_min(xlm_token):
+if route.amount_out < order.order.required_router_min(xlm_token):
     raise NoRouteError("Current route does not meet the order minimum")
 
 prepared = order.prepare_fill(route.swap_chain_xdr)
 result = prepared.execute()
 ```
 
-Route lookup and limit policy are separate primitives. Before returning
-`prepared`, the SDK validates the registry record, detached
+The existing generic path lookup and parser are reused unchanged. Route lookup
+and limit policy are separate primitives. Before returning `prepared`, the SDK
+validates the registry record, detached
 `ADDRESS_V2` invocation tree or confirmed on-chain placement, settlement
 receipt, maker minimum, exact execution fee, and maximum transaction fee.
 

@@ -2,10 +2,8 @@ import { Buffer } from "buffer";
 
 import {
   Address,
-  Transaction,
   hash,
   nativeToScVal,
-  rpc,
   scValToNative,
   xdr,
 } from "@stellar/stellar-sdk";
@@ -124,13 +122,6 @@ export class PreparedLimitOrderFill {
   }
 }
 
-export class LimitOrderRouteQuote {
-  constructor(
-    readonly amountOut: bigint,
-    readonly swapChainXdr: string,
-  ) {}
-}
-
 export class LimitOrderRecord {
   constructor(
     readonly orderId: string,
@@ -145,16 +136,8 @@ export class LimitOrderRecord {
     private readonly actions?: LimitOrderRecordActions,
   ) {}
 
-  requiredRouterMin(xlmToken: string): bigint {
-    return this.order.requiredRouterMin(xlmToken);
-  }
-
   prepareFill(swapChainXdr: string, rewardTo?: string): Promise<PreparedLimitOrderFill> {
     return this.boundActions().prepareLimitOrderFill(this, swapChainXdr, rewardTo);
-  }
-
-  async fill(swapChainXdr: string, rewardTo?: string): Promise<LimitOrderFillResult> {
-    return (await this.prepareFill(swapChainXdr, rewardTo)).execute();
   }
 
   buildCancelTransaction(): Promise<string> {
@@ -183,7 +166,6 @@ export interface ParseLimitOrderContext {
   settlementAddress: string;
   xlmToken: string;
   actions?: LimitOrderRecordActions;
-  client?: LimitOrderRecordActions;
 }
 
 export interface OnchainLimitOrderReceipt {
@@ -529,7 +511,7 @@ export function parseLimitOrderRecord(
     placementLedger,
     placementHash,
     { ...payload },
-    context.actions ?? context.client,
+    context.actions,
   );
 }
 
@@ -765,6 +747,3 @@ export function validateFillReceipt(
     rewardTo,
   };
 }
-
-export type LimitOrderFillSimulation = rpc.Api.SimulateTransactionSuccessResponse;
-export type LimitOrderFillTransaction = Transaction;

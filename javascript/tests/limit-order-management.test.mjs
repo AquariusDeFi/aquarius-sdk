@@ -17,7 +17,6 @@ import {
   AquariusClient,
   AquariusError,
   LimitOrderConfig,
-  NoRouteError,
   parseLimitOrderRecord,
   routeScValFromSwapChain,
   validateFillReceipt,
@@ -249,12 +248,8 @@ test("prepared fill checks receipt and fee before SDK submission", async () => {
     limitOrders: { settlement: draft.settlement_address },
     baseFee: "1000",
   });
-  const record = parseLimitOrderRecord(openPayload(), {
-    networkPassphrase: Networks.TESTNET,
-    settlementAddress: draft.settlement_address,
-    xlmToken,
-    client,
-  });
+  client.api.getLimitOrder = async () => openPayload();
+  const record = await client.getLimitOrder(draft.order_id);
   let operation;
   client.engine.buildTransaction = async (_source, built) => {
     operation = built;
@@ -294,55 +289,6 @@ test("prepared fill checks receipt and fee before SDK submission", async () => {
   await assert.rejects(record.prepareFill(routeXdr()), /below execution fee/);
 });
 
-test("limit-order route lookup is separate from limit policy", async () => {
-  const filler = Keypair.random();
-  const client = new AquariusClient({
-    network: "testnet",
-    signer: filler,
-    limitOrders: { settlement: draft.settlement_address },
-  });
-  const record = parseLimitOrderRecord(openPayload(), {
-    networkPassphrase: Networks.TESTNET,
-    settlementAddress: draft.settlement_address,
-    xlmToken,
-    client,
-  });
-  let findPathRequest;
-  client.api.findPath = async (request, exactInput) => {
-    findPathRequest = { request, exactInput };
-    return {
-      success: true,
-      amount: "950",
-      swap_chain_xdr: routeXdr(),
-    };
-  };
-  const quote = await client.findLimitOrderRoute(record);
-  assert.equal(quote.amountOut, 950n);
-  assert.equal(quote.swapChainXdr, routeXdr());
-  assert.deepEqual(findPathRequest, {
-    request: {
-      token_in_address: draft.sell_token,
-      token_out_address: draft.buy_token,
-      amount: "1000",
-    },
-    exactInput: true,
-  });
-  client.api.findPath = async () => ({
-    success: true,
-    amount: "899",
-    swap_chain_xdr: routeXdr(),
-  });
-  const belowLimit = await client.findLimitOrderRoute(record);
-  assert.equal(belowLimit.amountOut, 899n);
-  assert.ok(belowLimit.amountOut < record.requiredRouterMin(xlmToken));
-
-  client.api.findPath = async () => ({ success: false });
-  await assert.rejects(
-    client.findLimitOrderRoute(record),
-    error => error instanceof NoRouteError && /No route/.test(error.message),
-  );
-});
-
 test("record cancellation uses the canonical order body", async () => {
   const maker = Keypair.fromPublicKey(draft.maker);
   const client = new AquariusClient({
@@ -350,12 +296,8 @@ test("record cancellation uses the canonical order body", async () => {
     signer: { publicKey: () => maker.publicKey(), sign: value => value },
     limitOrders: { settlement: draft.settlement_address },
   });
-  const record = parseLimitOrderRecord(openPayload(), {
-    networkPassphrase: Networks.TESTNET,
-    settlementAddress: draft.settlement_address,
-    xlmToken,
-    client,
-  });
+  client.api.getLimitOrder = async () => openPayload();
+  const record = await client.getLimitOrder(draft.order_id);
   let operation;
   client.engine.prepare = async (_source, buildOperation) => {
     operation = buildOperation();

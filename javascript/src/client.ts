@@ -4,14 +4,12 @@ import { Address, Asset as StellarAsset, Operation, hash, nativeToScVal, scValTo
 
 import { ApiClient, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
-import { AquariusError, NoRouteError, SlippageError } from "./errors.js";
+import { AquariusError, SlippageError } from "./errors.js";
 import {
   LimitOrderConfig,
   LimitOrderConfigInput,
-  LimitOrderFillResult,
   LimitOrderPage,
   LimitOrderRecord,
-  LimitOrderRouteQuote,
   OnchainLimitOrderReceipt,
   OnchainLimitOrder,
   OnchainLimitOrderActions,
@@ -553,7 +551,7 @@ export class AquariusClient {
     return quote;
   }
 
-  async prepareLimitOrderFill(
+  private async prepareLimitOrderFill(
     record: LimitOrderRecord,
     swapChainXdr: string,
     rewardTo?: string,
@@ -611,44 +609,6 @@ export class AquariusClient {
     );
   }
 
-  async fillLimitOrder(
-    record: LimitOrderRecord,
-    swapChainXdr: string,
-    rewardTo?: string,
-  ): Promise<LimitOrderFillResult> {
-    return (await this.prepareLimitOrderFill(
-      record,
-      swapChainXdr,
-      rewardTo,
-    )).execute();
-  }
-
-  async findLimitOrderRoute(
-    record: LimitOrderRecord,
-  ): Promise<LimitOrderRouteQuote> {
-    this.validateLimitOrderContext(record);
-    const response = await this.api.findPath({
-      token_in_address: record.order.sellToken,
-      token_out_address: record.order.buyToken,
-      amount: record.order.sellAmount.toString(),
-    }, true);
-    if (!response.success) {
-      throw new NoRouteError(
-        `No route for limit order ${record.orderId}`,
-      );
-    }
-    let amount: bigint;
-    try {
-      amount = BigInt(response.amount);
-    } catch {
-      throw new AquariusError("limit-order route response is invalid");
-    }
-    if (!response.swap_chain_xdr) {
-      throw new AquariusError("limit-order route response has no swap chain");
-    }
-    return new LimitOrderRouteQuote(amount, response.swap_chain_xdr);
-  }
-
   /** @internal Exposed for deterministic simulation/assembly tests. */
   assembleLimitOrderFill(
     transaction: import("@stellar/stellar-sdk").Transaction,
@@ -657,7 +617,7 @@ export class AquariusClient {
     return rpc.assembleTransaction(transaction, simulation).build();
   }
 
-  async buildLimitOrderCancel(record: LimitOrderRecord): Promise<string> {
+  private async buildLimitOrderCancel(record: LimitOrderRecord): Promise<string> {
     const signer = this.limitOrderMakerSigner(record);
     const operation = this.buildLimitOrderCancelOperation(record);
     return (
@@ -665,7 +625,7 @@ export class AquariusClient {
     ).toXDR();
   }
 
-  async cancelLimitOrder(
+  private async cancelLimitOrder(
     record: LimitOrderRecord,
   ): Promise<OnchainLimitOrderReceipt> {
     const signer = this.limitOrderMakerSigner(record);

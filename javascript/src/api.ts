@@ -134,7 +134,7 @@ export interface ParsedRoute {
 }
 
 /**
- * @internal Turn a find-path response into quote numbers.
+ * Turn a find-path response into quote numbers.
  * Guards: minOut rounds down, maxIn rounds up — never in the caller's favor.
  */
 export function parseFindPathResponse(
