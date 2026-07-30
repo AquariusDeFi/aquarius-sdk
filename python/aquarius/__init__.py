@@ -38,7 +38,7 @@ from .limit_orders import (
 )
 from .pool import ClaimResult, DepositResult, Pool, Position, WithdrawResult
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "ApiClient",
