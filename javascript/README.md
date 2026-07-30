@@ -145,6 +145,20 @@ Anything with `publicKey()` plus either `secret()` (a stellar-sdk `Keypair`) or 
 
 `quote.buildTransaction()` returns the simulated, unsigned envelope XDR for external signing flows (multisig, custom pipelines). `client.contract.call(fn, ...scVals)` invokes the router raw. `client.api` is the typed REST client.
 
+## Infrastructure
+
+Defaults point at the protocol's own endpoints: the mainnet RPC is
+`https://soroban-rpc.aqua.network` — the same node the Aquarius web app and
+backend use. Running your own infrastructure? Every endpoint is overridable:
+
+```ts
+const aqua = new AquariusClient({
+  network: "mainnet",
+  rpcUrl: "https://your-rpc.example.com",
+  horizonUrl: "https://your-horizon.example.com",
+});
+```
+
 ## Amounts
 
 All amounts are `bigint` in token base units (stroops for classic assets: 1 token = 10^7).

@@ -19,7 +19,9 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
   mainnet: {
     router: "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK",
     apiUrl: "https://amm-api.aqua.network/api/external/v2",
-    rpcUrl: "https://mainnet.sorobanrpc.com",
+    // The protocol's own RPC — the same endpoint the Aquarius web app and
+    // backend run on. Override with rpcUrl to bring your own node.
+    rpcUrl: "https://soroban-rpc.aqua.network",
     horizonUrl: "https://horizon.stellar.org",
     passphrase: Networks.PUBLIC,
     readSource: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
