@@ -1,0 +1,74 @@
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  testnet-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ./python
+      - run: python e2e/testnet_lifecycle.py
+
+  testnet-javascript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+        working-directory: javascript
+      - run: npm run build
+        working-directory: javascript
+      - run: node javascript/e2e/testnet_lifecycle.mjs
+
+  mainnet-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e ./python
+      - run: python e2e/mainnet_readonly.py
+      - run: npm install
+        working-directory: javascript
+      - run: npm run build
+        working-directory: javascript
+      - run: node javascript/e2e/mainnet_readonly.mjs
+
+  # Real funds. Never on pull requests: fork PRs must not reach the secret,
+  # and two concurrent runs would trade against each other — hence the
+  # global non-cancelling concurrency group.
+  mainnet-lifecycle:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: mainnet-e2e
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ./python
+      - run: python e2e/mainnet_lifecycle.py
+        env:
+          MAINNET_E2E_SECRET: ${{ secrets.MAINNET_E2E_SECRET }}
