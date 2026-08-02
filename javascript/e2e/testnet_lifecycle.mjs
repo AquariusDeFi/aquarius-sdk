@@ -36,16 +36,16 @@ await aqua.ensureTrustline(AQUA);
 console.log("funded + AQUA trustline in place");
 
 // escape hatch first, before our own swaps move the pool
-const quote = await aqua.quote({ from: XLM, to: AQUA, amountIn: 10_000_000n });
+const quote = await aqua.quote({ from: XLM, to: AQUA, amountIn: 10_000_000n, slippage: 0.05 });
 const envelope = TransactionBuilder.fromXDR(await quote.buildTransaction(), aqua.network.passphrase);
 assert.equal(envelope.signatures.length, 0, "escape-hatch XDR arrived signed");
 console.log("buildTransaction() escape hatch: unsigned XDR parses");
 
-const receipt = await aqua.swap({ from: XLM, to: AQUA, amountIn: 100_000_000n, retries: 3 });
+const receipt = await aqua.swap({ from: XLM, to: AQUA, amountIn: 100_000_000n, retries: 3, slippage: 0.05 });
 assert.ok(receipt.amountOut > 0n, "exact-input swap returned nothing");
 console.log(`swap 10 XLM -> ${fmt(receipt.amountOut)} AQUA  ${EXPLORER}${receipt.txHash}`);
 
-const receipt2 = await aqua.swap({ from: AQUA, to: XLM, amountOut: 10_000_000n, retries: 3 });
+const receipt2 = await aqua.swap({ from: AQUA, to: XLM, amountOut: 10_000_000n, retries: 3, slippage: 0.05 });
 assert.equal(receipt2.amountOut, 10_000_000n, "exact-output swap missed the target");
 console.log(`swap ${fmt(receipt2.amountIn)} AQUA -> exactly 1 XLM  ${EXPLORER}${receipt2.txHash}`);
 

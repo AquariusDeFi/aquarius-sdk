@@ -43,18 +43,18 @@ print("funded + AQUA trustline in place")
 
 # escape hatch first, before our own swaps move the pool: the unsigned
 # envelope must parse and carry no signatures
-quote = client.quote(XLM, AQUA, amount_in=1_0000000)
+quote = client.quote(XLM, AQUA, amount_in=1_0000000, slippage=0.05)
 envelope = TransactionEnvelope.from_xdr(quote.build_transaction(), client.network.passphrase)
 assert len(envelope.signatures) == 0, "escape-hatch XDR arrived signed"
 print("build_transaction() escape hatch: unsigned XDR parses")
 
 # exact input, with the SDK's own retry/backoff absorbing testnet lag
-receipt = client.swap(XLM, AQUA, amount_in=10_0000000, retries=3)
+receipt = client.swap(XLM, AQUA, amount_in=10_0000000, retries=3, slippage=0.05)
 assert receipt.amount_out > 0, "exact-input swap returned nothing"
 print(f"swap 10 XLM -> {fmt(receipt.amount_out)} AQUA  {EXPLORER}{receipt.tx_hash}")
 
 # exact output
-receipt2 = client.swap(AQUA, XLM, amount_out=1_0000000, retries=3)
+receipt2 = client.swap(AQUA, XLM, amount_out=1_0000000, retries=3, slippage=0.05)
 assert receipt2.amount_out == 1_0000000, "exact-output swap missed the target"
 print(f"swap {fmt(receipt2.amount_in)} AQUA -> exactly 1 XLM  {EXPLORER}{receipt2.tx_hash}")
 
