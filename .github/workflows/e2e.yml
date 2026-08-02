@@ -9,25 +9,26 @@ on:
   workflow_dispatch:
 
 jobs:
-  testnet-python:
+  # One job, strictly sequential, and a cross-run mutex: concurrent testnet
+  # lifecycles trade against each other in the same tiny pools and breach
+  # each other's slippage guards (observed between the py and js jobs of a
+  # single run).
+  testnet:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    concurrency:
+      group: testnet-e2e
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ./python
-      - run: python e2e/testnet_lifecycle.py
-
-  testnet-javascript:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - run: pip install -e ./python
+      - run: python e2e/testnet_lifecycle.py
       - run: npm install
         working-directory: javascript
       - run: npm run build
