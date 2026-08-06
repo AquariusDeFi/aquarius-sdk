@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from stellar_sdk import Asset as _StellarAsset
 
+from .errors import AquariusError
+
 
 @dataclass(frozen=True)
 class Asset:
@@ -35,6 +37,16 @@ class Asset:
         if self.is_native:
             return _StellarAsset.native().contract_id(passphrase)
         return _StellarAsset(self.code, self.issuer).contract_id(passphrase)
+
+    def to_classic(self) -> _StellarAsset:
+        """The classic-asset form, required for trustline operations."""
+        if self._contract:
+            raise AquariusError(
+                "This asset is only known by contract ID — trustlines apply to classic assets"
+            )
+        if self.is_native:
+            return _StellarAsset.native()
+        return _StellarAsset(self.code, self.issuer)
 
     def __str__(self) -> str:
         return self.code or self._contract

@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, field
 
 import requests
-from stellar_sdk import Asset as StellarAsset, SorobanServer, scval
+from stellar_sdk import SorobanServer, scval
 from stellar_sdk.xdr import SCVal
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
@@ -174,6 +174,7 @@ class AquariusClient:
         """Create the trustline if the signer's account doesn't hold one. No-op for native."""
         if asset.is_native:
             return
+        classic = asset.to_classic()  # rejects contract-only assets before any network call
         signer = self._require_signer()
         source = signer_public_key(signer)
         account = self._fetch_horizon_account(source)
@@ -182,7 +183,7 @@ class AquariusClient:
                 return
         tx = self.engine.build_transaction(
             source,
-            lambda b: b.append_change_trust_op(asset=StellarAsset(asset.code, asset.issuer)),
+            lambda b: b.append_change_trust_op(asset=classic),
         )
         self.engine.sign_and_submit(tx, signer)
 
