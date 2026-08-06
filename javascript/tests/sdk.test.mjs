@@ -158,26 +158,38 @@ test("swap retries re-quote on slippage", async () => {
 });
 
 test("swap backs off between re-quote attempts, first retry immediate", async () => {
+  // Asserts on the delays the client requests, not on wall-clock gaps —
+  // measured timings flake on busy CI runners (mirrors the Python test,
+  // which patches time.sleep the same way).
   AquariusClient._requoteDelaysMs = [0, 40];
   const client = new AquariusClient({ network: "testnet" });
   let quotes = 0;
-  const quotedAt = [];
   client.quote = async () => {
     quotes += 1;
-    quotedAt.push(Date.now());
     return {
       execute: async () => {
         throw new SlippageErrorDirect("guard breached");
       },
     };
   };
-  await assert.rejects(
-    client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 2 }),
-    SlippageErrorDirect,
-  );
+  const slept = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms) => {
+    slept.push(ms);
+    return realSetTimeout(fn, 0);
+  };
+  try {
+    await assert.rejects(
+      client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 2 }),
+      SlippageErrorDirect,
+    );
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
   assert.equal(quotes, 3); // initial attempt + 2 retries, each freshly quoted
-  assert.ok(quotedAt[1] - quotedAt[0] < 30); // first retry fires immediately
-  assert.ok(quotedAt[2] - quotedAt[1] >= 40); // the next one escalates
+  // No pause before the first retry, one escalated pause before the second;
+  // nothing sleeps after the final attempt.
+  assert.deepEqual(slept, [40]);
 });
 
 test("buffer import present for diagnostics", () => {
