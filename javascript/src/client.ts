@@ -2,7 +2,7 @@ import { Buffer } from "buffer";
 
 import { Address, Asset as StellarAsset, Operation, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 
-import { ApiClient, parseFindPathResponse, ParsedRoute } from "./api.js";
+import { ApiClient, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
 import { AquariusError, SlippageError } from "./errors.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
@@ -192,7 +192,9 @@ export class AquariusClient {
       throw new AquariusError("Friendbot funds testnet accounts only");
     }
     const signer = this.requireSigner();
-    const response = await fetch(`${FRIENDBOT_URL}?addr=${signer.publicKey()}`);
+    const response = await fetch(`${FRIENDBOT_URL}?addr=${signer.publicKey()}`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!response.ok) {
       throw new AquariusError(`Friendbot funding failed: HTTP ${response.status}`);
     }
@@ -445,7 +447,9 @@ export class AquariusClient {
   private async fetchHorizonAccount(
     publicKey: string,
   ): Promise<{ balances: { asset_code?: string; asset_issuer?: string }[] }> {
-    const response = await fetch(`${this.network.horizonUrl}/accounts/${publicKey}`);
+    const response = await fetch(`${this.network.horizonUrl}/accounts/${publicKey}`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!response.ok) {
       throw new AquariusError(`Account lookup failed: HTTP ${response.status}`);
     }
