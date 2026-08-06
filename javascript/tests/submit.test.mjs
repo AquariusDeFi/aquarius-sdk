@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Account, Keypair, Networks, Operation, rpc } from "@stellar/stellar-sdk";
+import { Account, Keypair, Networks, Operation, rpc, xdr } from "@stellar/stellar-sdk";
 
 import { AquariusError } from "../dist/errors.js";
 import { SubmitEngine } from "../dist/submit.js";
@@ -83,4 +83,24 @@ test("other rejections are not retried", async () => {
     error => error instanceof AquariusError && /txInsufficientBalance/.test(error.message),
   );
   assert.equal(server.submitted.length, 1);
+});
+
+test("reads share one account fetch, even concurrently", async () => {
+  const server = new FakeServer([]);
+  server.simulateTransaction = async () => ({ result: { retval: xdr.ScVal.scvU32(7) } });
+  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  const op = () => Operation.manageData({ name: "t", value: "1" });
+  await Promise.all([engine.read(KEYPAIR.publicKey(), op), engine.read(KEYPAIR.publicKey(), op)]);
+  const value = await engine.read(KEYPAIR.publicKey(), op);
+  assert.equal(value.u32(), 7);
+  assert.equal(server.loads, 1); // sequence numbers are irrelevant to simulation
+});
+
+test("write builds always load a fresh account", async () => {
+  const server = new FakeServer([]);
+  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  const op = Operation.manageData({ name: "t", value: "1" });
+  await engine.buildTransaction(KEYPAIR.publicKey(), op);
+  await engine.buildTransaction(KEYPAIR.publicKey(), op);
+  assert.equal(server.loads, 2); // writes must never reuse a cached sequence
 });

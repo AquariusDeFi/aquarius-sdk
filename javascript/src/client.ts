@@ -252,18 +252,21 @@ export class AquariusClient {
    */
   async positions(address?: string): Promise<Position[]> {
     const holder = address ?? this.readSource(true);
-    const positions: Position[] = [];
-    for (const entry of await this.api.userPools(holder)) {
-      const pool = await this.makePool(
-        Buffer.from(entry.index, "hex"),
-        entry.address,
-        entry.tokens_addresses,
-        entry,
-      );
-      const shares = await pool.shareBalance(holder);
-      if (shares > 0n) positions.push({ pool, shares });
-    }
-    return positions;
+    const entries = await this.api.userPools(holder);
+    // Each pool needs its own share_id -> balance read chain; the chains are
+    // independent of each other, so they run concurrently.
+    const held = await Promise.all(
+      entries.map(async entry => {
+        const pool = await this.makePool(
+          Buffer.from(entry.index, "hex"),
+          entry.address,
+          entry.tokens_addresses,
+          entry,
+        );
+        return { pool, shares: await pool.shareBalance(holder) };
+      }),
+    );
+    return held.filter(p => p.shares > 0n);
   }
 
   private async makePool(
