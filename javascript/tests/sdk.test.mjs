@@ -163,6 +163,17 @@ test("timeout resolution follows the signer type", async () => {
   );
 });
 
+test("contract.call decodes the result to a native value", async () => {
+  const { Keypair, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const client = new AquariusClient({ network: "testnet", signer: Keypair.random() });
+  client.engine.prepare = async () => "prepared";
+  client.engine.signAndSubmit = async () => ({
+    txHash: "h",
+    returnValue: nativeToScVal(123n, { type: "u128" }),
+  });
+  assert.equal(await client.contract.call("some_fn"), 123n);
+});
+
 test("swap retries re-quote on slippage", async () => {
   AquariusClient._requoteDelaysMs = [0, 1]; // keep the test fast
   const client = new AquariusClient({ network: "testnet" });
