@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
+  ApiClient,
   AquariusClient,
   AquariusError,
   Asset,
@@ -66,6 +67,32 @@ test("no route raises the typed error", () => {
       ),
     NoRouteError,
   );
+});
+
+test("API HTTP failures raise typed errors and every request is time-bounded", async () => {
+  const realFetch = globalThis.fetch;
+  const signals = [];
+  globalThis.fetch = async (url, init) => {
+    signals.push(init?.signal);
+    return { ok: false, status: 503 };
+  };
+  try {
+    const api = new ApiClient("https://api.invalid");
+    await assert.rejects(
+      api.findPath({ token_in_address: "a", token_out_address: "b", amount: "1" }, true),
+      AquariusError,
+    );
+    await assert.rejects(api.poolsByAddresses(["CPOOL"]), AquariusError);
+    await assert.rejects(api.userPools("GUSER"), AquariusError);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(signals.length, 3);
+  assert.ok(signals.every(s => s instanceof AbortSignal));
+});
+
+test("toClassic on a contract-only asset raises the SDK's typed error", () => {
+  assert.throws(() => Asset.contract("CABC").toClassic(), AquariusError);
 });
 
 test("quote requires exactly one amount", async () => {
