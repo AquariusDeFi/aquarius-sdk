@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from stellar_sdk import SorobanServer, TransactionBuilder, TransactionEnvelope
+from stellar_sdk import Account, SorobanServer, TransactionBuilder, TransactionEnvelope
 from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
 from stellar_sdk.xdr import SCVal, TransactionMeta, TransactionResult
 
@@ -67,11 +67,16 @@ class SubmitEngine:
         # right default when a human signs through a wallet, the wrong one for
         # bots, whose stale transactions should expire rather than execute).
         self.timeout = timeout
+        self._simulation_accounts: dict[str, Account] = {}
 
     def build_transaction(
         self, source: str, append: Callable[[TransactionBuilder], TransactionBuilder]
     ) -> TransactionEnvelope:
-        account = self.server.load_account(source)
+        return self._build(self.server.load_account(source), append)
+
+    def _build(
+        self, account: Account, append: Callable[[TransactionBuilder], TransactionBuilder]
+    ) -> TransactionEnvelope:
         builder = TransactionBuilder(
             account, network_passphrase=self.passphrase, base_fee=self.base_fee
         )
@@ -79,6 +84,15 @@ class SubmitEngine:
         if self.timeout is None:
             return builder.add_time_bounds(0, 0).build()
         return builder.set_timeout(self.timeout).build()
+
+    def _simulation_account(self, source: str) -> Account:
+        # Simulation ignores sequence numbers, so one fetch per source serves
+        # every read. Writes keep loading fresh accounts via build_transaction.
+        account = self._simulation_accounts.get(source)
+        if account is None:
+            account = self.server.load_account(source)
+            self._simulation_accounts[source] = account
+        return account
 
     def prepare(
         self,
@@ -133,12 +147,12 @@ class SubmitEngine:
         If the entries are archived and a signer is available, restore them
         first (one signed transaction), then simulate again.
         """
-        tx = self.build_transaction(source, append)
+        tx = self._build(self._simulation_account(source), append)
         simulation = self.server.simulate_transaction(tx)
 
         if simulation.restore_preamble is not None and signer is not None:
             self._restore(source, simulation.restore_preamble, signer)
-            tx = self.build_transaction(source, append)
+            tx = self._build(self._simulation_account(source), append)
             simulation = self.server.simulate_transaction(tx)
 
         if simulation.error is not None:

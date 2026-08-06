@@ -236,3 +236,31 @@ test("handled probe errors do not drive the diagnosis", () => {
   // fatal storage error - the diagnosis must report the storage failure.
   assert.ok(errorFromDiagnostics(footprintFixture.events_xdr) instanceof StaleSimulationError);
 });
+
+test("positions resolves pools concurrently and filters empty ones", async () => {
+  const client = new AquariusClient({ network: "testnet" });
+  client.api.userPools = async () => [
+    { index: "00", address: "A", tokens_addresses: [] },
+    { index: "01", address: "B", tokens_addresses: [] },
+    { index: "02", address: "C", tokens_addresses: [] },
+  ];
+  const balances = { A: 5n, B: 0n, C: 7n };
+  let inFlight = 0;
+  let peak = 0;
+  client.makePool = async (hash, address) => ({
+    address,
+    shareBalance: async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      inFlight -= 1;
+      return balances[address];
+    },
+  });
+  const positions = await client.positions("GHOLDER");
+  assert.deepEqual(
+    positions.map(p => [p.pool.address, p.shares]),
+    [["A", 5n], ["C", 7n]], // input order kept, empty position dropped
+  );
+  assert.ok(peak > 1); // the per-pool read chains overlapped
+});
