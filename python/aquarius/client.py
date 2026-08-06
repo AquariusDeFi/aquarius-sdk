@@ -4,8 +4,18 @@ import time
 from dataclasses import dataclass, field
 
 import requests
-from stellar_sdk import SorobanServer, scval
-from stellar_sdk.xdr import SCVal
+from stellar_sdk import Address, SorobanServer, scval
+from stellar_sdk.xdr import (
+    InvokeContractArgs,
+    SCSymbol,
+    SCVal,
+    SorobanAuthorizationEntry,
+    SorobanAuthorizedFunction,
+    SorobanAuthorizedFunctionType,
+    SorobanAuthorizedInvocation,
+    SorobanCredentials,
+    SorobanCredentialsType,
+)
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .assets import Asset
@@ -326,19 +336,63 @@ class AquariusClient:
     # -- internals ---------------------------------------------------------------------
 
     def _swap_append(self, quote: Quote):
+        """The swap invocation with explicit, client-built authorization.
+
+        Mirrors the transaction shape of the Aquarius web app and the JS SDK:
+        the router call and its token-transfer sub-invocation are authorized
+        with exact amounts, so wallets present a bounded approval and the
+        authorization content never depends on what simulation echoes back
+        (assembly keeps pre-built auth and only fills in resources). For
+        strict-receive the authorized transfer is max-in — the contract pulls
+        the maximum and refunds the difference.
+        """
+        user = signer_public_key(self._require_signer())
         token_in = quote._params["from_"].contract_id(self.network.passphrase)
         fn = "swap_chained" if quote.is_exact_input else "swap_chained_strict_receive"
         amount = quote.amount_in if quote.is_exact_input else quote.amount_out
+        transfer_amount = quote.amount_in if quote.is_exact_input else quote.guard
+
+        args = [
+            scval.to_address(user),
+            SCVal.from_xdr(quote._parsed.swap_chain_xdr),
+            scval.to_address(token_in),
+            scval.to_uint128(amount),
+            scval.to_uint128(quote.guard),
+        ]
+
+        def authorized_contract_fn(contract_id: str, name: str, fn_args: list[SCVal]):
+            return SorobanAuthorizedFunction(
+                type=SorobanAuthorizedFunctionType.SOROBAN_AUTHORIZED_FUNCTION_TYPE_CONTRACT_FN,
+                contract_fn=InvokeContractArgs(
+                    contract_address=Address(contract_id).to_xdr_sc_address(),
+                    function_name=SCSymbol(name.encode()),
+                    args=fn_args,
+                ),
+            )
+
+        transfer_invocation = SorobanAuthorizedInvocation(
+            function=authorized_contract_fn(token_in, "transfer", [
+                scval.to_address(user),
+                scval.to_address(self.network.router),
+                scval.to_int128(transfer_amount),
+            ]),
+            sub_invocations=[],
+        )
+        root_entry = SorobanAuthorizationEntry(
+            credentials=SorobanCredentials(
+                type=SorobanCredentialsType.SOROBAN_CREDENTIALS_SOURCE_ACCOUNT
+            ),
+            root_invocation=SorobanAuthorizedInvocation(
+                function=authorized_contract_fn(self.network.router, fn, args),
+                sub_invocations=[transfer_invocation],
+            ),
+        )
+
         return lambda b: b.append_invoke_contract_function_op(
             contract_id=self.network.router,
             function_name=fn,
-            parameters=[
-                scval.to_address(signer_public_key(self._require_signer())),
-                SCVal.from_xdr(quote._parsed.swap_chain_xdr),
-                scval.to_address(token_in),
-                scval.to_uint128(amount),
-                scval.to_uint128(quote.guard),
-            ],
+            parameters=args,
+            auth=[root_entry],
         )
 
     def _build_unsigned(self, quote: Quote) -> str:

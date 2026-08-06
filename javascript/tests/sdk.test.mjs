@@ -237,6 +237,49 @@ test("handled probe errors do not drive the diagnosis", () => {
   assert.ok(errorFromDiagnostics(footprintFixture.events_xdr) instanceof StaleSimulationError);
 });
 
+test("swap operation carries bounded client-built authorization", async () => {
+  const { Keypair, scValToNative, xdr } = await import("@stellar/stellar-sdk");
+  const client = new AquariusClient({ network: "testnet", signer: Keypair.random() });
+  const tokenIn = XLM.contractId(TESTNET_PASSPHRASE);
+
+  const build = exactInput => {
+    const parsed = parseFindPathResponse(fixture, {
+      amountIn: exactInput ? 100_000_000n : undefined,
+      amountOut: exactInput ? undefined : 100_000_000n,
+      slippageBps: 100,
+      pairLabel: "XLM -> AQUA",
+    });
+    return { op: client.buildSwapOperation(parsed, exactInput, tokenIn), parsed };
+  };
+
+  {
+    const { op, parsed } = build(true);
+    const [entry] = op.body().invokeHostFunctionOp().auth();
+    assert.equal(
+      entry.credentials().switch(),
+      xdr.SorobanCredentialsType.sorobanCredentialsSourceAccount(),
+    );
+    const root = entry.rootInvocation();
+    assert.equal(root.function().contractFn().functionName().toString(), "swap_chained");
+    const [transfer] = root.subInvocations();
+    const t = transfer.function().contractFn();
+    assert.equal(t.functionName().toString(), "transfer");
+    assert.equal(scValToNative(t.args()[2]), parsed.amountIn); // bounded: exactly what is spent
+  }
+  {
+    const { op, parsed } = build(false);
+    const [entry] = op.body().invokeHostFunctionOp().auth();
+    const root = entry.rootInvocation();
+    assert.equal(
+      root.function().contractFn().functionName().toString(),
+      "swap_chained_strict_receive",
+    );
+    const [transfer] = root.subInvocations();
+    // max-in: the contract pulls at most the guard and refunds the difference
+    assert.equal(scValToNative(transfer.function().contractFn().args()[2]), parsed.guard);
+  }
+});
+
 test("positions resolves pools concurrently and filters empty ones", async () => {
   const client = new AquariusClient({ network: "testnet" });
   client.api.userPools = async () => [
