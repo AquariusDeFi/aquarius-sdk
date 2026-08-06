@@ -131,6 +131,21 @@ def test_timeout_resolution():
     assert infinite.engine.timeout is None
 
 
+def test_contract_call_decodes_the_result(monkeypatch):
+    from stellar_sdk import Keypair, scval
+
+    from aquarius.submit import ConfirmedTx
+
+    client = AquariusClient(network="testnet", signer=Keypair.random())
+    monkeypatch.setattr(client.engine, "prepare", lambda *a, **k: "prepared")
+    monkeypatch.setattr(
+        client.engine,
+        "sign_and_submit",
+        lambda tx, signer: ConfirmedTx(tx_hash="h", return_value=scval.to_uint128(123)),
+    )
+    assert client.contract_call("some_fn") == 123  # native int, not a raw SCVal
+
+
 def test_swap_retries_requote_on_slippage(monkeypatch):
     monkeypatch.setattr(AquariusClient, "_requote_delays_s", (0, 0))
     client = AquariusClient(network="testnet")

@@ -201,7 +201,7 @@ class AquariusClient:
     # -- escape hatches ---------------------------------------------------------------
 
     def contract_call(self, fn: str, *args: SCVal):
-        """Raw router invocation. Arguments are SCVal values; the raw return SCVal comes back."""
+        """Raw router invocation. Arguments are SCVal values; the result is decoded."""
         signer = self._require_signer()
         source = signer_public_key(signer)
         tx = self.engine.prepare(
@@ -212,7 +212,7 @@ class AquariusClient:
             signer,
         )
         result = self.engine.sign_and_submit(tx, signer)
-        return result.return_value
+        return scval.to_native(result.return_value) if result.return_value is not None else None
 
     # -- pools & positions ---------------------------------------------------------------
 
