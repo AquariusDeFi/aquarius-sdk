@@ -98,3 +98,13 @@ def test_other_rejections_are_not_retried():
     with pytest.raises(AquariusError, match="txINSUFFICIENT_BALANCE"):
         submit_through(server)
     assert len(server.submitted) == 1
+
+
+def test_read_with_no_result_raises_typed_error():
+    server = FakeServer([])
+    server.simulate_transaction = lambda tx: SimpleNamespace(
+        restore_preamble=None, error=None, results=[]
+    )
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    with pytest.raises(AquariusError, match="no result"):
+        engine.read(KEYPAIR.public_key, lambda b: b.append_manage_data_op("test", "1"))

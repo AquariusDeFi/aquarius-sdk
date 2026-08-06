@@ -17,7 +17,7 @@ class NoRouteError(AquariusError):
 
 
 class SlippageError(AquariusError):
-    """The pool moved past your guard (contract errors 2006 / 2020). Re-quote and retry."""
+    """The pool moved past your guard (contract errors 2005 / 2006 / 2020). Re-quote and retry."""
 
     _requote_thunk = None
 
@@ -33,7 +33,7 @@ class SlippageError(AquariusError):
 
 
 class PausedError(AquariusError):
-    """Operations paused by an emergency kill switch (contract errors 205-207). Not your bug."""
+    """Operations paused by an emergency kill switch (contract errors 205-207, 2139). Not your bug."""
 
 
 class UserRejectedError(AquariusError):

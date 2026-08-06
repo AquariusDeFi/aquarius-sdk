@@ -36,6 +36,13 @@ def test_asset_forms_resolve_to_known_contract_ids():
     assert Asset.contract("CABC").contract_id(TESTNET_PASSPHRASE) == "CABC"
 
 
+def test_to_classic_covers_native_and_issued_but_rejects_contract_only():
+    assert XLM.to_classic().is_native()
+    assert AQUA.to_classic().code == "AQUA"
+    with pytest.raises(AquariusError, match="contract ID"):
+        Asset.contract("CABC").to_classic()
+
+
 def test_golden_fixture_parses_into_exact_input_quote():
     parsed = parse_find_path_response(
         FIXTURE, amount_in=100_000_000, slippage_bps=100, pair_label="XLM -> AQUA"

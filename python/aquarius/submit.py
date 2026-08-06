@@ -127,7 +127,7 @@ class SubmitEngine:
         source: str,
         append: Callable[[TransactionBuilder], TransactionBuilder],
         signer=None,
-    ) -> SCVal | None:
+    ) -> SCVal:
         """Execute a read through simulation — nothing is signed or submitted.
 
         If the entries are archived and a signer is available, restore them
@@ -144,7 +144,7 @@ class SubmitEngine:
         if simulation.error is not None:
             raise classify_contract_error(simulation.error) or AquariusError(simulation.error)
         if not simulation.results:
-            return None
+            raise AquariusError("Simulation returned no result")
         return SCVal.from_xdr(simulation.results[0].xdr)
 
     def sign_and_submit(self, tx: TransactionEnvelope, signer) -> ConfirmedTx:

@@ -16,7 +16,7 @@ export class AquariusError extends Error {
 /** The find-path API found no route for the requested pair and amount. */
 export class NoRouteError extends AquariusError {}
 
-/** The pool moved past your guard (contract errors 2006 / 2020). Re-quote and retry. */
+/** The pool moved past your guard (contract errors 2005 / 2006 / 2020). Re-quote and retry. */
 export class SlippageError extends AquariusError {
   /** Set by the client when the error is thrown from a quote context. */
   private requoteThunk?: () => Promise<unknown>;
@@ -36,7 +36,7 @@ export class SlippageError extends AquariusError {
   }
 }
 
-/** Operations paused by an emergency kill switch (contract errors 205-207). Not your bug. */
+/** Operations paused by an emergency kill switch (contract errors 205-207, 2139). Not your bug. */
 export class PausedError extends AquariusError {}
 
 /** The signer (wallet) rejected the transaction. */
