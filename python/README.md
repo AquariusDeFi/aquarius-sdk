@@ -4,6 +4,23 @@ The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and re
 
 **Status: 0.3.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
 
+## Swap through a specific pool
+
+`client.quote()`/`swap()` route through the path-finding API. To pin a swap to
+one pool you trust — your own routing, API independence — quote and swap on the
+pool itself; the estimate comes from the router's on-chain `estimate_swap`:
+
+```python
+pool = next(p for p in client.pools_for_pair(XLM, AQUA) if p.fee_bps == 10)
+
+quote = pool.quote(XLM, AQUA, amount_in=100_0000000)   # no signer needed
+receipt = quote.execute()                              # swaps in this pool only
+# or: pool.swap(XLM, AQUA, amount_in=100_0000000, retries=3)
+```
+
+Exact input only — the router has no single-pool strict-receive; for exact
+output use `client.quote(..., amount_out=...)`.
+
 ## Concentrated liquidity positions (beta)
 
 A position is the key `(owner, tick_lower, tick_upper)` on the pool contract — no

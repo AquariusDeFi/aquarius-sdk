@@ -54,11 +54,16 @@ jobs:
         working-directory: javascript
       - run: node javascript/e2e/mainnet_readonly.mjs
 
-  # Real funds. Never on pull requests: fork PRs must not reach the secret,
-  # and two concurrent runs would trade against each other — hence the
-  # global non-cancelling concurrency group.
+  # Real funds, pull requests included — deliberately. A testnet pass proves
+  # nothing about the production contracts (the two networks can run
+  # different versions), so every PR must carry a live mainnet write proof;
+  # that is the default gate for write-path changes, not an afterthought.
+  # Safe on PRs because GitHub withholds secrets from fork PRs (the script
+  # then self-skips), and the global non-cancelling concurrency group keeps
+  # two runs from trading against each other. Post-merge pushes are excluded:
+  # the PR already proved the exact commits, and the nightly covers drift.
   mainnet-lifecycle:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:

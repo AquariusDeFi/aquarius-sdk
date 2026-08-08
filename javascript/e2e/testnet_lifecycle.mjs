@@ -61,6 +61,11 @@ assert.ok(pools.length > 0, "no pools discovered for XLM/AQUA");
 console.log(`pools discovered: ${pools.map(p => `${p.type}@${p.feeBps}bps`).join(", ")}`);
 const pool = pools.find(p => p.type !== "concentrated");
 
+// swap pinned to this exact pool — no path-finding API involved
+const pinned = await pool.swap({ from: XLM, to: AQUA, amountIn: 5_000_000n, slippage: 0.05, retries: 3 });
+assert.ok(pinned.amountOut > 0n, "pinned-pool swap returned nothing");
+console.log(`pinned-pool swap: 0.5 XLM -> ${fmt(pinned.amountOut)} AQUA (${pool.type}@${pool.feeBps}bps)  ${EXPLORER}${pinned.txHash}`);
+
 const deposit = await retryStale(() => pool.deposit({ amounts: [[XLM, 50_000_000n], [AQUA, 500_000_000n]] }));
 assert.ok(deposit.shares > 0n, "deposit minted no shares");
 console.log(`deposited [${deposit.amounts.map(fmt)}] -> ${fmt(deposit.shares)} shares  ${EXPLORER}${deposit.txHash}`);

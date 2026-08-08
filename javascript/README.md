@@ -4,6 +4,23 @@ The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, an
 
 **Status: 0.3.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
 
+## Swap through a specific pool
+
+`aqua.quote()`/`swap()` route through the path-finding API. To pin a swap to
+one pool you trust — your own routing, API independence — quote and swap on the
+pool itself; the estimate comes from the router's on-chain `estimate_swap`:
+
+```ts
+const pool = (await aqua.pools.forPair(XLM, AQUA)).find(p => p.feeBps === 10)!;
+
+const quote = await pool.quote({ from: XLM, to: AQUA, amountIn: 1_000_000_000n });
+const receipt = await quote.execute();                 // swaps in this pool only
+// or: await pool.swap({ from: XLM, to: AQUA, amountIn: 1_000_000_000n, retries: 3 });
+```
+
+Exact input only — the router has no single-pool strict-receive; for exact
+output use `aqua.quote({ amountOut })`.
+
 ## Concentrated liquidity positions (beta)
 
 A position is the key `(owner, tickLower, tickUpper)` on the pool contract — no
