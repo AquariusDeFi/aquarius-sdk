@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { nativeToScVal, scValToNative } from "@stellar/stellar-sdk";
+import { Address, nativeToScVal, scValToNative } from "@stellar/stellar-sdk";
 
 import { AquariusError, NETWORKS, Pool } from "../dist/index.js";
 
@@ -89,16 +89,20 @@ test("execute submits a pinned router swap with bounded auth", async () => {
   const [entry] = auth;
   const root = entry.rootInvocation();
   assert.equal(root.function().contractFn().functionName().toString(), "swap");
-  const [transfer, poolSwap] = root.subInvocations();
-  assert.equal(transfer.function().contractFn().functionName().toString(), "transfer");
-  assert.equal(scValToNative(transfer.function().contractFn().args()[2]), 500n);
-  // The pool's own swap is authorized too: it calls user.require_auth().
+  // Nested exactly like the contracts call each other:
+  // router.swap -> pool.swap (require_auth) -> transfer(user, pool, amount).
+  const [poolSwap] = root.subInvocations();
   const poolFn = poolSwap.function().contractFn();
   assert.equal(poolFn.functionName().toString(), "swap");
   assert.equal(scValToNative(poolFn.args()[1]), 0); // in_idx (XLM)
   assert.equal(scValToNative(poolFn.args()[2]), 1); // out_idx (AQUA)
   assert.equal(scValToNative(poolFn.args()[3]), 500n);
   assert.equal(scValToNative(poolFn.args()[4]), 990n);
+  const [transfer] = poolSwap.subInvocations();
+  const transferFn = transfer.function().contractFn();
+  assert.equal(transferFn.functionName().toString(), "transfer");
+  assert.equal(Address.fromScVal(transferFn.args()[1]).toString(), POOL_ID);
+  assert.equal(scValToNative(transferFn.args()[2]), 500n);
   assert.equal(receipt.amountIn, 500n);
   assert.equal(receipt.amountOut, 995n);
 });
