@@ -21,6 +21,7 @@ const est = await pool.estimatePositionDeposit({
 const opened = await est.execute({ slippage: 0.01 }); // min-liquidity guard from the estimate
 
 await pool.positionRanges();                          // all of the signer's ranges
+await pool.positionRangeStatus(est.tickLower, est.tickUpper); // in_range / below / above
 await pool.positionValue(est.tickLower, est.tickUpper); // principal / fees / total, split
 await pool.claimPositionFees(est.tickLower, est.tickUpper);
 await pool.withdrawPosition({ tickLower: est.tickLower, tickUpper: est.tickUpper }); // full close

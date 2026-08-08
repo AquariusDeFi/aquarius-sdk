@@ -104,6 +104,22 @@ def price_at_tick(tick: int, *, decimals: tuple[int, int] | None = None) -> floa
     return price
 
 
+def range_status(tick: int, tick_lower: int, tick_upper: int) -> str:
+    """Where a tick sits relative to a range: "in_range", "below", or "above".
+
+    Matches the contract's active-liquidity semantics exactly: the range is
+    half-open ``[tick_lower, tick_upper)``, so at ``tick_upper`` a position
+    is already out of range and earns no fees.
+    """
+    if tick_lower >= tick_upper:
+        raise AquariusError("tick_lower must be below tick_upper")
+    if tick < tick_lower:
+        return "below"
+    if tick >= tick_upper:
+        return "above"
+    return "in_range"
+
+
 def snap_tick(tick: int, spacing: int, *, up: bool = False) -> int:
     """Align a tick to the pool's spacing (floor by default, ceil with up=True),
     clamped to the spacing-aligned representable bounds."""
@@ -129,6 +145,27 @@ class ConcentratedPosition:
     tick_lower: int
     tick_upper: int
     liquidity: int
+
+
+@dataclass
+class PositionRangeStatus:
+    """Where the current price sits relative to a position's range.
+
+    "below" means the price is under the range — the position sits entirely
+    in the first sorted token; "above" means over it — entirely in the
+    second. Fees accrue only while "in_range".
+    """
+
+    status: str            # "in_range" | "below" | "above"
+    current_tick: int
+    tick_lower: int
+    tick_upper: int
+    ticks_from_lower: int  # current_tick - tick_lower (negative: below the range)
+    ticks_to_upper: int    # tick_upper - current_tick (zero or negative: above)
+
+    @property
+    def in_range(self) -> bool:
+        return self.status == "in_range"
 
 
 @dataclass

@@ -6,7 +6,7 @@ import { test } from "node:test";
 
 import { Address, nativeToScVal, scValToNative, xdr } from "@stellar/stellar-sdk";
 
-import { AquariusError, MAX_TICK, Pool, snapTick, tickFromPrice } from "../dist/index.js";
+import { AquariusError, MAX_TICK, Pool, rangeStatus, snapTick, tickFromPrice } from "../dist/index.js";
 import { sqrtRatioX96 } from "../dist/concentrated.js";
 
 const FIX = JSON.parse(
@@ -55,6 +55,16 @@ test("known values and bounds", () => {
   assert.throws(() => sqrtRatioX96(MAX_TICK + 1), AquariusError);
   assert.throws(() => tickFromPrice("0"), AquariusError);
   assert.throws(() => tickFromPrice("not a price"), AquariusError);
+});
+
+test("rangeStatus matches contract boundary semantics", () => {
+  // Half-open [lower, upper), exactly the contract's is_position_in_range.
+  assert.equal(rangeStatus(-1, 0, 60), "below");
+  assert.equal(rangeStatus(0, 0, 60), "in_range"); // lower bound is inclusive
+  assert.equal(rangeStatus(59, 0, 60), "in_range");
+  assert.equal(rangeStatus(60, 0, 60), "above"); // at tickUpper: already out
+  assert.equal(rangeStatus(100, 0, 60), "above");
+  assert.throws(() => rangeStatus(0, 60, 60), AquariusError);
 });
 
 // --- pool flows on a fake context ---------------------------------------------------
@@ -186,6 +196,34 @@ test("positionValue splits principal and fees", async () => {
   assert.deepEqual(value.total, [110n, 220n]);
   assert.deepEqual(value.fees, [10n, 20n]);
   assert.deepEqual(value.principal, [100n, 200n]);
+});
+
+test("positionRangeStatus reads slot0", async () => {
+  const ctx = fakeContext({
+    get_slot0: xdr.ScVal.scvMap([
+      new xdr.ScMapEntry({
+        key: sym("sqrt_price_x96"),
+        val: nativeToScVal(1n << 96n, { type: "u256" }),
+      }),
+      new xdr.ScMapEntry({ key: sym("tick"), val: xdr.ScVal.scvI32(7) }),
+    ]),
+  });
+  const status = await concentratedPool(ctx).positionRangeStatus(-60, 60);
+  assert.equal(status.status, "in_range");
+  assert.equal(status.inRange, true);
+  assert.equal(status.currentTick, 7);
+  assert.equal(status.ticksFromLower, 67);
+  assert.equal(status.ticksToUpper, 53);
+
+  const above = await concentratedPool(ctx).positionRangeStatus(-120, -60);
+  assert.equal(above.status, "above");
+  assert.equal(above.inRange, false);
+  assert.equal(above.ticksToUpper, -67);
+
+  await assert.rejects(
+    concentratedPool(ctx, "stable").positionRangeStatus(-60, 60),
+    /concentrated/,
+  );
 });
 
 test("reads parse slot0 and ranges", async () => {

@@ -11,8 +11,10 @@ import {
   ConcentratedWithdrawResult,
   MAX_TICK,
   MIN_TICK,
+  PositionRangeStatus,
   PositionValue,
   Slot0,
+  rangeStatus,
   snapTick,
   tickFromPrice,
 } from "./concentrated.js";
@@ -303,6 +305,25 @@ export class Pool {
 
   async currentTick(): Promise<number> {
     return (await this.slot0()).tick;
+  }
+
+  /**
+   * Where the current price sits relative to the range. The contract's
+   * range is half-open `[tickLower, tickUpper)`: at `tickUpper` the
+   * position is already "above" and earns no fees.
+   */
+  async positionRangeStatus(tickLower: number, tickUpper: number): Promise<PositionRangeStatus> {
+    const tick = await this.currentTick();
+    const status = rangeStatus(tick, tickLower, tickUpper);
+    return {
+      status,
+      inRange: status === "in_range",
+      currentTick: tick,
+      tickLower,
+      tickUpper,
+      ticksFromLower: tick - tickLower,
+      ticksToUpper: tickUpper - tick,
+    };
   }
 
   /** All [tickLower, tickUpper] ranges the address holds (default: signer). */

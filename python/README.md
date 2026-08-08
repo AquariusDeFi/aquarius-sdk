@@ -21,6 +21,7 @@ est = pool.estimate_position_deposit(
 opened = est.execute(slippage=0.01)          # min-liquidity guard from the estimate
 
 pool.position_ranges()                        # all of the signer's ranges
+pool.position_range_status(est.tick_lower, est.tick_upper)  # in_range / below / above
 pool.position_value(est.tick_lower, est.tick_upper)  # principal / fees / total, split
 pool.claim_position_fees(est.tick_lower, est.tick_upper)
 pool.withdraw_position(est.tick_lower, est.tick_upper)  # full close, auto-claims fees
