@@ -93,6 +93,15 @@ if concentrated is not None:
     except AquariusError:
         print("concentrated deposit refused as designed")
 
+    # Close positions a previous crashed run left behind. The contract caps
+    # an account at 20 ranges, so leftovers would eventually brick this
+    # wallet — and the final cleanup assert below only means something when
+    # the run starts from zero.
+    for stale_lower, stale_upper in concentrated.position_ranges():
+        retry_stale(lambda lo=stale_lower, up=stale_upper: concentrated.withdraw_position(
+            lo, up, slippage=0.05))
+        print(f"swept leftover position [{stale_lower}, {stale_upper})")
+
     # full range-position lifecycle on the concentrated pool (beta surface)
     fuel = client.swap(XLM, AQUA, amount_in=2_0000000, retries=3, slippage=0.05)
     spacing = concentrated.tick_spacing()
