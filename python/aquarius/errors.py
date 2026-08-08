@@ -66,6 +66,19 @@ _CONTRACT_ERROR_RE = re.compile(r"Error\(Contract, #(\d+)\)")
 _PAUSED_CODES = {205, 206, 207, 2139}
 _SLIPPAGE_CODES = {2005, 2006, 2020}
 
+# Known contract error codes without a dedicated error class — the code alone
+# is opaque, so attach what it means (concentrated position management).
+_CONTRACT_MESSAGES = {
+    212: "position not found",
+    213: "insufficient liquidity",
+    2107: "tick out of bounds",
+    2109: "tick not aligned to the pool's tick spacing",
+    2110: "tick_lower must be below tick_upper",
+    2114: "amount must be greater than zero",
+    2119: "too many positions for this account",
+    2120: "liquidity amount too large",
+}
+
 
 def is_user_rejection(error: object) -> bool:
     message = str(error).lower()
@@ -90,6 +103,9 @@ def classify_contract_code(code: int, tx_hash: str | None = None) -> AquariusErr
             f"Operations are paused for this pool (contract error #{code}) — not an integration bug",
             tx_hash,
         )
+    detail = _CONTRACT_MESSAGES.get(code)
+    if detail:
+        return AquariusError(f"Contract error #{code}: {detail}", tx_hash)
     return AquariusError(f"Contract error #{code}", tx_hash)
 
 

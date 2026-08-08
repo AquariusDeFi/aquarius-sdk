@@ -2,7 +2,32 @@
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
+**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+
+## Concentrated liquidity positions (beta)
+
+A position is the key `(owner, tickLower, tickUpper)` on the pool contract — no
+NFTs, merged on re-deposit, at most 20 ranges per account. Quotes come from the
+contract's own estimators; `execute`/`withdrawPosition` derive real slippage
+guards from them:
+
+```ts
+const pool = (await aqua.pools.forPair(XLM, AQUA)).find(p => p.type === "concentrated")!;
+
+const est = await pool.estimatePositionDeposit({
+  amounts: [[XLM, 100_000_000n], [AQUA, 1_000_000_000n]],
+  priceRange: ["0.9", "1.1"],   // snaps to tick spacing; or tickRange: [lower, upper]
+});
+const opened = await est.execute({ slippage: 0.01 }); // min-liquidity guard from the estimate
+
+await pool.positionRanges();                          // all of the signer's ranges
+await pool.positionValue(est.tickLower, est.tickUpper); // principal / fees / total, split
+await pool.claimPositionFees(est.tickLower, est.tickUpper);
+await pool.withdrawPosition({ tickLower: est.tickLower, tickUpper: est.tickUpper }); // full close
+```
+
+`tickFromPrice`, `priceAtTick`, and `snapTick` are exported for range math —
+integer-exact and identical across both language packages.
 
 ```bash
 npm install @aquariusdefi/sdk

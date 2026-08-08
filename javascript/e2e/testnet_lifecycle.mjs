@@ -5,7 +5,14 @@ import assert from "node:assert/strict";
 
 import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
 
-import { AquariusClient, AquariusError, Asset, StaleSimulationError, XLM } from "../dist/index.js";
+import {
+  AquariusClient,
+  AquariusError,
+  Asset,
+  StaleSimulationError,
+  XLM,
+  snapTick,
+} from "../dist/index.js";
 
 const AQUA = Asset.classic("AQUA", "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER");
 const EXPLORER = "https://stellar.expert/explorer/testnet/tx/";
@@ -82,6 +89,52 @@ if (concentrated) {
     "concentrated deposit was not refused",
   );
   console.log("concentrated deposit refused as designed");
+
+  // full range-position lifecycle on the concentrated pool (beta surface)
+  const fuel = await aqua.swap({ from: XLM, to: AQUA, amountIn: 20_000_000n, retries: 3, slippage: 0.05 });
+  const spacing = await concentrated.tickSpacing();
+  const tick = await concentrated.currentTick();
+  const lower = snapTick(tick - 10 * spacing, spacing);
+  const upper = snapTick(tick + 10 * spacing, spacing, { up: true });
+
+  const position = await retryStale(async () => {
+    const est = await concentrated.estimatePositionDeposit({
+      amounts: [[XLM, 10_000_000n], [AQUA, fuel.amountOut / 2n]],
+      tickRange: [lower, upper],
+    });
+    assert.ok(est.liquidity > 0n, "estimate quoted no liquidity");
+    return est.execute({ slippage: 0.05 });
+  });
+  assert.ok(position.liquidity > 0n, "deposit minted no liquidity");
+  console.log(`opened position [${lower}, ${upper}] -> ${position.liquidity} liquidity  ${EXPLORER}${position.txHash}`);
+  const ranges = await concentrated.positionRanges();
+  assert.ok(ranges.some(([l, u]) => l === lower && u === upper), "position missing from snapshot");
+
+  const value = await concentrated.positionValue(lower, upper);
+  assert.equal(value.total.length, 2, "position value arity mismatch");
+  console.log(`position value: total [${value.total.map(fmt)}], fees [${value.fees.map(fmt)}]`);
+
+  const half = await retryStale(() =>
+    concentrated.withdrawPosition({
+      tickLower: lower,
+      tickUpper: upper,
+      liquidity: position.liquidity / 2n,
+      slippage: 0.05,
+    }),
+  );
+  console.log(`withdrew half: [${half.amounts.map(fmt)}]  ${EXPLORER}${half.txHash}`);
+
+  const feesClaim = await retryStale(() => concentrated.claimPositionFees(lower, upper));
+  console.log(`claimed position fees: [${feesClaim.amounts.map(fmt)}]  ${EXPLORER}${feesClaim.txHash}`);
+
+  const rest = await retryStale(() =>
+    concentrated.withdrawPosition({ tickLower: lower, tickUpper: upper, slippage: 0.05 }),
+  );
+  console.log(`closed position: [${rest.amounts.map(fmt)}]  ${EXPLORER}${rest.txHash}`);
+  const after = await concentrated.positionRanges();
+  assert.ok(!after.some(([l, u]) => l === lower && u === upper), "position not cleaned up");
+} else {
+  console.log("no concentrated XLM/AQUA pool on testnet — concentrated segment skipped");
 }
 
 console.log("\ntestnet lifecycle: all checks passed");

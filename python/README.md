@@ -2,7 +2,32 @@
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
+**Status: 0.2.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+
+## Concentrated liquidity positions (beta)
+
+A position is the key `(owner, tick_lower, tick_upper)` on the pool contract — no
+NFTs, merged on re-deposit, at most 20 ranges per account. Quotes come from the
+contract's own estimators; `execute`/`withdraw_position` derive real slippage
+guards from them:
+
+```python
+pool = next(p for p in aqua.pools_for_pair(XLM, AQUA) if p.type == "concentrated")
+
+est = pool.estimate_position_deposit(
+    {XLM: 10_0000000, AQUA: 100_0000000},
+    price_range=("0.9", "1.1"),   # snaps to tick spacing; or tick_range=(lower, upper)
+)
+opened = est.execute(slippage=0.01)          # min-liquidity guard from the estimate
+
+pool.position_ranges()                        # all of the signer's ranges
+pool.position_value(est.tick_lower, est.tick_upper)  # principal / fees / total, split
+pool.claim_position_fees(est.tick_lower, est.tick_upper)
+pool.withdraw_position(est.tick_lower, est.tick_upper)  # full close, auto-claims fees
+```
+
+`tick_from_price`, `price_at_tick`, and `snap_tick` are exported for range math —
+integer-exact and identical across both language packages.
 
 ```bash
 pip install aquarius-sdk

@@ -7,6 +7,19 @@ with trustline and friendbot helpers, typed errors, and escape hatches.
 from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .assets import XLM, Asset
 from .client import AquariusClient, Quote, Receipt
+from .concentrated import (
+    MAX_TICK,
+    MIN_TICK,
+    ClaimFeesResult,
+    ConcentratedDepositResult,
+    ConcentratedPosition,
+    ConcentratedWithdrawResult,
+    PositionValue,
+    Slot0,
+    price_at_tick,
+    snap_tick,
+    tick_from_price,
+)
 from .errors import (
     AquariusError,
     NoRouteError,
@@ -29,8 +42,19 @@ __all__ = [
     "Asset",
     "NETWORKS",
     "NetworkConfig",
+    "ClaimFeesResult",
     "ClaimResult",
+    "ConcentratedDepositResult",
+    "ConcentratedPosition",
+    "ConcentratedWithdrawResult",
     "DepositResult",
+    "MAX_TICK",
+    "MIN_TICK",
+    "PositionValue",
+    "Slot0",
+    "price_at_tick",
+    "snap_tick",
+    "tick_from_price",
     "NoRouteError",
     "NoTrustlineError",
     "ParsedRoute",
