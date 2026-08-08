@@ -14,8 +14,10 @@ from .concentrated import (
     ConcentratedDepositResult,
     ConcentratedPosition,
     ConcentratedWithdrawResult,
+    PositionRangeStatus,
     PositionValue,
     Slot0,
+    range_status,
     snap_tick,
     tick_from_price,
 )
@@ -234,6 +236,22 @@ class Pool:
 
     def current_tick(self) -> int:
         return self.slot0().tick
+
+    def position_range_status(self, tick_lower: int, tick_upper: int) -> PositionRangeStatus:
+        """Where the current price sits relative to the range.
+
+        The contract's range is half-open ``[tick_lower, tick_upper)``: at
+        ``tick_upper`` the position is already "above" and earns no fees.
+        """
+        tick = self.current_tick()
+        return PositionRangeStatus(
+            status=range_status(tick, tick_lower, tick_upper),
+            current_tick=tick,
+            tick_lower=tick_lower,
+            tick_upper=tick_upper,
+            ticks_from_lower=tick - tick_lower,
+            ticks_to_upper=tick_upper - tick,
+        )
 
     def position_ranges(self, address: str | None = None) -> list[tuple[int, int]]:
         """All (tick_lower, tick_upper) ranges the address holds (default: signer)."""

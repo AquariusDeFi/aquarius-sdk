@@ -118,6 +118,24 @@ export function priceAtTick(tick: number, options?: { decimals?: [number, number
   return price;
 }
 
+export type RangeStatus = "in_range" | "below" | "above";
+
+/**
+ * Where a tick sits relative to a range: "in_range", "below", or "above".
+ *
+ * Matches the contract's active-liquidity semantics exactly: the range is
+ * half-open `[tickLower, tickUpper)`, so at `tickUpper` a position is
+ * already out of range and earns no fees.
+ */
+export function rangeStatus(tick: number, tickLower: number, tickUpper: number): RangeStatus {
+  if (tickLower >= tickUpper) {
+    throw new AquariusError("tickLower must be below tickUpper");
+  }
+  if (tick < tickLower) return "below";
+  if (tick >= tickUpper) return "above";
+  return "in_range";
+}
+
 /**
  * Align a tick to the pool's spacing (floor by default, ceil with up=true),
  * clamped to the spacing-aligned representable bounds.
@@ -143,6 +161,25 @@ export interface ConcentratedPosition {
   tickLower: number;
   tickUpper: number;
   liquidity: bigint;
+}
+
+/**
+ * Where the current price sits relative to a position's range.
+ *
+ * "below" means the price is under the range — the position sits entirely
+ * in the first sorted token; "above" means over it — entirely in the
+ * second. Fees accrue only while "in_range".
+ */
+export interface PositionRangeStatus {
+  status: RangeStatus;
+  inRange: boolean;
+  currentTick: number;
+  tickLower: number;
+  tickUpper: number;
+  /** currentTick - tickLower (negative: below the range). */
+  ticksFromLower: number;
+  /** tickUpper - currentTick (zero or negative: above the range). */
+  ticksToUpper: number;
 }
 
 /** A position's worth, split honestly: total = principal + fees. */

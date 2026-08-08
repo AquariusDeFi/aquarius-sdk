@@ -6,7 +6,7 @@ from math import isqrt
 import pytest
 from stellar_sdk import scval
 
-from aquarius import MAX_TICK, AquariusError, snap_tick, tick_from_price
+from aquarius import MAX_TICK, AquariusError, range_status, snap_tick, tick_from_price
 from aquarius.concentrated import sqrt_ratio_x96
 from aquarius.pool import Pool
 from aquarius.submit import ConfirmedTx
@@ -61,6 +61,17 @@ def test_known_values_and_bounds():
         tick_from_price("0")
     with pytest.raises(AquariusError):
         tick_from_price("not a price")
+
+
+def test_range_status_matches_contract_boundary_semantics():
+    # Half-open [lower, upper), exactly the contract's is_position_in_range.
+    assert range_status(-1, 0, 60) == "below"
+    assert range_status(0, 0, 60) == "in_range"    # lower bound is inclusive
+    assert range_status(59, 0, 60) == "in_range"
+    assert range_status(60, 0, 60) == "above"      # at tick_upper: already out
+    assert range_status(100, 0, 60) == "above"
+    with pytest.raises(AquariusError, match="below tick_upper"):
+        range_status(0, 60, 60)
 
 
 # --- pool flows on a fake client ----------------------------------------------------
@@ -198,6 +209,26 @@ def test_position_value_splits_principal_and_fees():
     assert value.total == [110, 220]
     assert value.fees == [10, 20]
     assert value.principal == [100, 200]
+
+
+def test_position_range_status_reads_slot0():
+    client = FakeClient({
+        "get_slot0": scval.to_map({
+            scval.to_symbol("sqrt_price_x96"): scval.to_uint256(1 << 96),
+            scval.to_symbol("tick"): scval.to_int32(7),
+        }),
+    })
+    status = concentrated_pool(client).position_range_status(-60, 60)
+    assert status.in_range and status.status == "in_range"
+    assert status.current_tick == 7
+    assert status.ticks_from_lower == 67 and status.ticks_to_upper == 53
+
+    above = concentrated_pool(client).position_range_status(-120, -60)
+    assert not above.in_range and above.status == "above"
+    assert above.ticks_to_upper == -67
+
+    with pytest.raises(AquariusError, match="concentrated"):
+        concentrated_pool(client, pool_type="stable").position_range_status(-60, 60)
 
 
 def test_reads_parse_slot0_and_ranges():

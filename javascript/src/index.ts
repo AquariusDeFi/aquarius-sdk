@@ -32,13 +32,16 @@ export {
   MAX_TICK,
   MIN_TICK,
   priceAtTick,
+  rangeStatus,
   snapTick,
   tickFromPrice,
   type ClaimFeesResult,
   type ConcentratedDepositResult,
   type ConcentratedPosition,
   type ConcentratedWithdrawResult,
+  type PositionRangeStatus,
   type PositionValue,
+  type RangeStatus,
   type Slot0,
 } from "./concentrated.js";
 export {

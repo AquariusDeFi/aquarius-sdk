@@ -113,6 +113,10 @@ if concentrated is not None:
           f"{EXPLORER}{position.tx_hash}")
     assert (lower, upper) in concentrated.position_ranges(), "position missing from snapshot"
 
+    status = concentrated.position_range_status(lower, upper)
+    assert status.in_range, f"fresh position around the current tick is {status.status}"
+    print(f"range status: {status.status} (tick {status.current_tick} in [{lower}, {upper}))")
+
     value = concentrated.position_value(lower, upper)
     assert len(value.total) == 2, "position value arity mismatch"
     print(f"position value: total {[fmt(a) for a in value.total]}, "
