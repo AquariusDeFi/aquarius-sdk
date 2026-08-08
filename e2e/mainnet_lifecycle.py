@@ -87,6 +87,12 @@ volatiles = [p for p in pools if p.type == "volatile"]
 pool = next((p for p in volatiles if p.fee_bps == 30), None) or max(
     volatiles, key=lambda p: p.reserves()[0]
 )
+# swap pinned to this exact pool — no path-finding API involved
+pinned = pool.swap(XLM, AQUA, amount_in=2000000, retries=3)
+aqua_have += pinned.amount_out
+print(f"pinned-pool swap: 0.2 XLM -> {fmt(pinned.amount_out)} AQUA "
+      f"({pool.type}@{pool.fee_bps}bps)  {EXPLORER}{pinned.tx_hash}")
+
 reserves = pool.reserves()
 xlm_index = pool.tokens.index(XLM.contract_id(client.network.passphrase))
 aqua_needed = DEPOSIT_XLM * reserves[1 - xlm_index] // reserves[xlm_index]
