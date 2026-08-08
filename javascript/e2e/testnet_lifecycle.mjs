@@ -110,6 +110,10 @@ if (concentrated) {
   const ranges = await concentrated.positionRanges();
   assert.ok(ranges.some(([l, u]) => l === lower && u === upper), "position missing from snapshot");
 
+  const status = await concentrated.positionRangeStatus(lower, upper);
+  assert.ok(status.inRange, `fresh position around the current tick is ${status.status}`);
+  console.log(`range status: ${status.status} (tick ${status.currentTick} in [${lower}, ${upper}))`);
+
   const value = await concentrated.positionValue(lower, upper);
   assert.equal(value.total.length, 2, "position value arity mismatch");
   console.log(`position value: total [${value.total.map(fmt)}], fees [${value.fees.map(fmt)}]`);
