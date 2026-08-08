@@ -83,7 +83,14 @@ def test_execute_submits_a_pinned_router_swap_with_bounded_auth():
     [entry] = auth
     root = entry.root_invocation
     assert root.function.contract_fn.function_name.sc_symbol == b"swap"
-    [transfer] = root.sub_invocations
+    transfer, pool_swap = root.sub_invocations
     assert transfer.function.contract_fn.function_name.sc_symbol == b"transfer"
     assert scval.from_int128(transfer.function.contract_fn.args[2]) == 500
+    # The pool's own swap is authorized too: it calls user.require_auth().
+    pool_fn = pool_swap.function.contract_fn
+    assert pool_fn.function_name.sc_symbol == b"swap"
+    assert scval.from_uint32(pool_fn.args[1]) == 0   # in_idx (XLM)
+    assert scval.from_uint32(pool_fn.args[2]) == 1   # out_idx (AQUA)
+    assert scval.from_uint128(pool_fn.args[3]) == 500
+    assert scval.from_uint128(pool_fn.args[4]) == 990
     assert receipt.amount_in == 500 and receipt.amount_out == 995

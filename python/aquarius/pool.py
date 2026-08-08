@@ -579,15 +579,26 @@ class PoolQuote:
             scval.to_uint128(self.amount_in),
             scval.to_uint128(self.guard),
         ]
-        # Same bounded shape as routed swaps: the router call as root, one
-        # exact-amount transfer(user -> router) sub-invocation.
+        # The router call as root with two sub-invocations: the exact-amount
+        # transfer(user -> router), and the pool contract's own swap — unlike
+        # the chained path, the single-pool swap calls user.require_auth()
+        # inside the pool, so that invocation must be authorized too.
         entry = source_account_entry(authorized_invocation(
             client.network.router, "swap", args,
-            [authorized_invocation(self._token_in, "transfer", [
-                scval.to_address(user),
-                scval.to_address(client.network.router),
-                scval.to_int128(self.amount_in),
-            ])],
+            [
+                authorized_invocation(self._token_in, "transfer", [
+                    scval.to_address(user),
+                    scval.to_address(client.network.router),
+                    scval.to_int128(self.amount_in),
+                ]),
+                authorized_invocation(pool.address, "swap", [
+                    scval.to_address(user),
+                    scval.to_uint32(pool.tokens.index(self._token_in)),
+                    scval.to_uint32(pool.tokens.index(self._token_out)),
+                    scval.to_uint128(self.amount_in),
+                    scval.to_uint128(self.guard),
+                ]),
+            ],
         ))
         from .client import Receipt  # runtime import: client.py imports this module
 

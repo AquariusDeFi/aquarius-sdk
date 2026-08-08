@@ -89,9 +89,16 @@ test("execute submits a pinned router swap with bounded auth", async () => {
   const [entry] = auth;
   const root = entry.rootInvocation();
   assert.equal(root.function().contractFn().functionName().toString(), "swap");
-  const [transfer] = root.subInvocations();
+  const [transfer, poolSwap] = root.subInvocations();
   assert.equal(transfer.function().contractFn().functionName().toString(), "transfer");
   assert.equal(scValToNative(transfer.function().contractFn().args()[2]), 500n);
+  // The pool's own swap is authorized too: it calls user.require_auth().
+  const poolFn = poolSwap.function().contractFn();
+  assert.equal(poolFn.functionName().toString(), "swap");
+  assert.equal(scValToNative(poolFn.args()[1]), 0); // in_idx (XLM)
+  assert.equal(scValToNative(poolFn.args()[2]), 1); // out_idx (AQUA)
+  assert.equal(scValToNative(poolFn.args()[3]), 500n);
+  assert.equal(scValToNative(poolFn.args()[4]), 990n);
   assert.equal(receipt.amountIn, 500n);
   assert.equal(receipt.amountOut, 995n);
 });

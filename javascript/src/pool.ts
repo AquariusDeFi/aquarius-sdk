@@ -648,14 +648,23 @@ export class PoolQuote {
       u128(this.amountIn),
       u128(this.guard),
     ];
-    // Same bounded shape as routed swaps: the router call as root, one
-    // exact-amount transfer(user -> router) sub-invocation.
+    // The router call as root with two sub-invocations: the exact-amount
+    // transfer(user -> router), and the pool contract's own swap — unlike
+    // the chained path, the single-pool swap calls user.require_auth()
+    // inside the pool, so that invocation must be authorized too.
     const entry = sourceAccountEntry(
       authorizedInvocation(this.ctx.router, "swap", args, [
         authorizedInvocation(this.tokenIn, "transfer", [
           new Address(user).toScVal(),
           new Address(this.ctx.router).toScVal(),
           nativeToScVal(this.amountIn, { type: "i128" }),
+        ]),
+        authorizedInvocation(this.pool.address, "swap", [
+          new Address(user).toScVal(),
+          xdr.ScVal.scvU32(this.pool.tokens.indexOf(this.tokenIn)),
+          xdr.ScVal.scvU32(this.pool.tokens.indexOf(this.tokenOut)),
+          u128(this.amountIn),
+          u128(this.guard),
         ]),
       ]),
     );
