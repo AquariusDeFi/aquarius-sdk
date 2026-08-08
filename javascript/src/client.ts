@@ -297,6 +297,7 @@ export class AquariusClient {
     }
     return new Pool(address, poolHash, parsed.type, parsed.feeBps, [...tokens], parsed.labels, {
       passphrase: this.network.passphrase,
+      router: this.network.router,
       readSource: (requireSigner?: boolean) => this.readSource(requireSigner),
       readRouter: (fn, args) => this.readRouter(fn, args),
       readContract: (contractId, fn, args) => this.readContract(contractId, fn, args),

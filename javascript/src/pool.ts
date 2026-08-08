@@ -4,6 +4,7 @@ import { Address, StrKey, nativeToScVal, scValToNative, xdr } from "@stellar/ste
 
 import { Asset } from "./assets.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
+import type { Receipt } from "./client.js";
 import {
   ClaimFeesResult,
   ConcentratedDepositResult,
@@ -18,7 +19,7 @@ import {
   snapTick,
   tickFromPrice,
 } from "./concentrated.js";
-import { AquariusError } from "./errors.js";
+import { AquariusError, SlippageError } from "./errors.js";
 import { ConfirmedTx } from "./submit.js";
 
 /** On-chain pool_type symbols -> the names the documentation uses. */
@@ -61,6 +62,7 @@ export interface Position {
 /** @internal What Pool needs from the client. */
 export interface PoolContext {
   passphrase: string;
+  router: string;
   readSource(requireSigner?: boolean): string;
   readRouter(fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal>;
   readContract(contractId: string, fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal>;
@@ -260,6 +262,88 @@ export class Pool {
       txHash: confirmed.txHash,
       amount: scValToNative(confirmed.returnValue!) as bigint,
     };
+  }
+
+  // -- single-pool swaps ---------------------------------------------------------
+
+  /**
+   * Quote a swap against this pool only — the router's own on-chain
+   * estimator, no path-finding API involved. Exact input only: the router
+   * has no single-pool strict-receive; for exact output use
+   * `client.quote({ amountOut })`.
+   */
+  async quote(params: {
+    from: Asset | string;
+    to: Asset | string;
+    amountIn?: bigint;
+    amountOut?: bigint;
+    slippage?: number;
+  }): Promise<PoolQuote> {
+    if (params.amountOut !== undefined) {
+      throw new AquariusError(
+        "The router has no single-pool strict-receive — use client.quote({ amountOut }) for exact-output swaps",
+      );
+    }
+    if (params.amountIn === undefined || params.amountIn <= 0n) {
+      throw new AquariusError("Pass a positive amountIn");
+    }
+    const [tokenIn, tokenOut] = this.swapPair(params.from, params.to);
+    const estimated = scValToNative(
+      await this.ctx.readRouter("estimate_swap", [
+        xdr.ScVal.scvVec(this.tokens.map(t => new Address(t).toScVal())),
+        new Address(tokenIn).toScVal(),
+        new Address(tokenOut).toScVal(),
+        xdr.ScVal.scvBytes(Buffer.from(this.poolHash)),
+        u128(params.amountIn),
+      ]),
+    ) as bigint;
+    const factor = BigInt(Math.round((1 - (params.slippage ?? 0.01)) * 10_000));
+    return new PoolQuote(
+      this,
+      this.ctx,
+      params.amountIn,
+      estimated,
+      (estimated * factor) / 10_000n,
+      tokenIn,
+      tokenOut,
+      params.slippage ?? 0.01,
+    );
+  }
+
+  /**
+   * quote() + execute() pinned to this pool, for bots. `retries`: how many
+   * times to re-quote and retry after a SlippageError — the estimate reads
+   * the chain directly (no pricing indexer to wait for), so retries are
+   * immediate. Default 0: fail on the first guard breach.
+   */
+  async swap(params: {
+    from: Asset | string;
+    to: Asset | string;
+    amountIn?: bigint;
+    slippage?: number;
+    retries?: number;
+  }): Promise<Receipt> {
+    const retries = params.retries ?? 0;
+    if (retries < 0) throw new AquariusError("retries must be >= 0");
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await (await this.quote(params)).execute();
+      } catch (error) {
+        if (!(error instanceof SlippageError) || attempt === retries) throw error;
+      }
+    }
+  }
+
+  private swapPair(from: Asset | string, to: Asset | string): [string, string] {
+    const tokenIn = from instanceof Asset ? from.contractId(this.ctx.passphrase) : from;
+    const tokenOut = to instanceof Asset ? to.contractId(this.ctx.passphrase) : to;
+    for (const token of [tokenIn, tokenOut]) {
+      if (!this.tokens.includes(token)) {
+        throw new AquariusError(`Token ${token} is not part of this pool`);
+      }
+    }
+    if (tokenIn === tokenOut) throw new AquariusError("from and to must be different tokens");
+    return [tokenIn, tokenOut];
   }
 
   // -- concentrated positions (beta; direct pool-contract calls) ----------------------
@@ -533,6 +617,68 @@ export class Pool {
   private simulateWrite(fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
     const user = new Address(this.ctx.readSource(true)).toScVal();
     return this.ctx.readRouter(fn, [user, ...args]);
+  }
+}
+
+/** A swap quoted against one specific pool: execute() pins the swap there. */
+export class PoolQuote {
+  constructor(
+    private readonly pool: Pool,
+    private readonly ctx: PoolContext,
+    /** Base units in. */
+    readonly amountIn: bigint,
+    /** The router's estimate_swap for this pool. */
+    readonly amountOut: bigint,
+    /** Minimum acceptable output: the estimate reduced by slippage. */
+    readonly guard: bigint,
+    private readonly tokenIn: string,
+    private readonly tokenOut: string,
+    private readonly slippage: number,
+  ) {}
+
+  /** Build, sign, submit, confirm, and parse the pinned-pool swap. */
+  async execute(): Promise<Receipt> {
+    const user = this.ctx.readSource(true);
+    const args = [
+      new Address(user).toScVal(),
+      xdr.ScVal.scvVec(this.pool.tokens.map(t => new Address(t).toScVal())),
+      new Address(this.tokenIn).toScVal(),
+      new Address(this.tokenOut).toScVal(),
+      xdr.ScVal.scvBytes(Buffer.from(this.pool.poolHash)),
+      u128(this.amountIn),
+      u128(this.guard),
+    ];
+    // Same bounded shape as routed swaps: the router call as root, one
+    // exact-amount transfer(user -> router) sub-invocation.
+    const entry = sourceAccountEntry(
+      authorizedInvocation(this.ctx.router, "swap", args, [
+        authorizedInvocation(this.tokenIn, "transfer", [
+          new Address(user).toScVal(),
+          new Address(this.ctx.router).toScVal(),
+          nativeToScVal(this.amountIn, { type: "i128" }),
+        ]),
+      ]),
+    );
+    try {
+      const confirmed = await this.ctx.submitContract(this.ctx.router, "swap", args, [entry]);
+      return {
+        txHash: confirmed.txHash,
+        amountIn: this.amountIn,
+        amountOut: scValToNative(confirmed.returnValue!) as bigint,
+      };
+    } catch (error) {
+      if (error instanceof SlippageError) {
+        error.attachRequote(() =>
+          this.pool.quote({
+            from: this.tokenIn,
+            to: this.tokenOut,
+            amountIn: this.amountIn,
+            slippage: this.slippage,
+          }),
+        );
+      }
+      throw error;
+    }
   }
 }
 

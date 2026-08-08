@@ -64,6 +64,12 @@ assert pools, "no pools discovered for XLM/AQUA"
 print(f"pools discovered: {[(p.type, p.fee_bps) for p in pools]}")
 pool = next(p for p in pools if p.type != "concentrated")
 
+# swap pinned to this exact pool — no path-finding API involved
+pinned = pool.swap(XLM, AQUA, amount_in=5000000, slippage=0.05, retries=3)
+assert pinned.amount_out > 0, "pinned-pool swap returned nothing"
+print(f"pinned-pool swap: 0.5 XLM -> {fmt(pinned.amount_out)} AQUA "
+      f"({pool.type}@{pool.fee_bps}bps)  {EXPLORER}{pinned.tx_hash}")
+
 deposit = retry_stale(lambda: pool.deposit({XLM: 5_0000000, AQUA: 50_0000000}))
 assert deposit.shares > 0, "deposit minted no shares"
 print(f"deposited {[fmt(a) for a in deposit.amounts]} -> {fmt(deposit.shares)} shares  "

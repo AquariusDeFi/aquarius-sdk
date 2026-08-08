@@ -21,7 +21,7 @@ from .concentrated import (
     snap_tick,
     tick_from_price,
 )
-from .errors import AquariusError
+from .errors import AquariusError, SlippageError
 
 # On-chain pool_type symbols -> the names the documentation uses.
 _POOL_TYPES = {
@@ -203,6 +203,78 @@ class Pool:
         return ClaimResult(
             tx_hash=confirmed.tx_hash, amount=parse_u128(confirmed.return_value)
         )
+
+    # -- single-pool swaps ---------------------------------------------------------
+
+    def quote(
+        self,
+        from_,
+        to,
+        *,
+        amount_in: int | None = None,
+        amount_out: int | None = None,
+        slippage: float = 0.01,
+    ) -> "PoolQuote":
+        """Quote a swap against this pool only — the router's own on-chain
+        estimator, no path-finding API involved.
+
+        Exact input only: the router has no single-pool strict-receive.
+        For exact output use ``client.quote(..., amount_out=...)``.
+        """
+        if amount_out is not None:
+            raise AquariusError(
+                "The router has no single-pool strict-receive — use "
+                "client.quote(..., amount_out=...) for exact-output swaps"
+            )
+        if amount_in is None or int(amount_in) <= 0:
+            raise AquariusError("Pass a positive amount_in")
+        token_in, token_out = self._swap_pair(from_, to)
+        estimated = parse_u128(self._client._read_router("estimate_swap", [
+            scval.to_vec([scval.to_address(t) for t in self.tokens]),
+            scval.to_address(token_in),
+            scval.to_address(token_out),
+            scval.to_bytes(self.pool_hash),
+            scval.to_uint128(int(amount_in)),
+        ]))
+        guard = estimated * round((1 - slippage) * 10_000) // 10_000
+        return PoolQuote(
+            amount_in=int(amount_in),
+            amount_out=estimated,
+            guard=guard,
+            _pool=self,
+            _token_in=token_in,
+            _token_out=token_out,
+            _slippage=slippage,
+        )
+
+    def swap(self, from_, to, *, retries: int = 0, **kwargs):
+        """quote() + execute() pinned to this pool, for bots.
+
+        retries: how many times to re-quote and retry after a SlippageError.
+        Unlike routed swaps there is no pricing indexer to wait for — the
+        estimate reads the chain directly — so retries are immediate.
+        Default 0: fail on the first guard breach.
+        """
+        if retries < 0:
+            raise AquariusError("retries must be >= 0")
+        for attempt in range(retries + 1):
+            try:
+                return self.quote(from_, to, **kwargs).execute()
+            except SlippageError:
+                if attempt == retries:
+                    raise
+        raise AquariusError("unreachable: the retry loop always returns or raises")
+
+    def _swap_pair(self, from_, to) -> tuple[str, str]:
+        passphrase = self._client.network.passphrase
+        token_in = from_.contract_id(passphrase) if isinstance(from_, Asset) else from_
+        token_out = to.contract_id(passphrase) if isinstance(to, Asset) else to
+        for token in (token_in, token_out):
+            if token not in self.tokens:
+                raise AquariusError(f"Token {token} is not part of this pool")
+        if token_in == token_out:
+            raise AquariusError("from and to must be different tokens")
+        return token_in, token_out
 
     # -- concentrated positions (beta; direct pool-contract calls) ----------------------
     #
@@ -479,6 +551,57 @@ class Pool:
 
     def _submit_write(self, fn: str, args: list[SCVal]):
         return self._client._submit_router(fn, args, with_user=True)
+
+
+@dataclass
+class PoolQuote:
+    """A swap quoted against one specific pool: execute() pins the swap there."""
+
+    amount_in: int
+    amount_out: int  # the router's estimate_swap for this pool
+    guard: int       # minimum acceptable output: the estimate reduced by slippage
+    _pool: Pool = field(repr=False)
+    _token_in: str = field(repr=False)
+    _token_out: str = field(repr=False)
+    _slippage: float = field(repr=False)
+
+    def execute(self):
+        """Build, sign, submit, confirm, and parse the pinned-pool swap."""
+        pool = self._pool
+        client = pool._client
+        user = client._read_source(require_signer=True)
+        args = [
+            scval.to_address(user),
+            scval.to_vec([scval.to_address(t) for t in pool.tokens]),
+            scval.to_address(self._token_in),
+            scval.to_address(self._token_out),
+            scval.to_bytes(pool.pool_hash),
+            scval.to_uint128(self.amount_in),
+            scval.to_uint128(self.guard),
+        ]
+        # Same bounded shape as routed swaps: the router call as root, one
+        # exact-amount transfer(user -> router) sub-invocation.
+        entry = source_account_entry(authorized_invocation(
+            client.network.router, "swap", args,
+            [authorized_invocation(self._token_in, "transfer", [
+                scval.to_address(user),
+                scval.to_address(client.network.router),
+                scval.to_int128(self.amount_in),
+            ])],
+        ))
+        from .client import Receipt  # runtime import: client.py imports this module
+
+        try:
+            confirmed = client._submit_contract(
+                client.network.router, "swap", args, auth=[entry]
+            )
+        except SlippageError as error:
+            error.attach_requote(lambda: pool.quote(
+                self._token_in, self._token_out,
+                amount_in=self.amount_in, slippage=self._slippage,
+            ))
+            raise
+        return Receipt(confirmed.tx_hash, self.amount_in, parse_u128(confirmed.return_value))
 
 
 @dataclass

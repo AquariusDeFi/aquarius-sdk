@@ -20,6 +20,7 @@ export { NETWORKS, type NetworkConfig } from "./networks.js";
 export {
   ConcentratedDepositEstimate,
   Pool,
+  PoolQuote,
   sortTokenIds,
   type ClaimResult,
   type DepositAmounts,

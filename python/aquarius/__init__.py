@@ -33,7 +33,7 @@ from .errors import (
     UserRejectedError,
 )
 from .networks import NETWORKS, NetworkConfig
-from .pool import ClaimResult, DepositResult, Pool, Position, WithdrawResult
+from .pool import ClaimResult, DepositResult, Pool, PoolQuote, Position, WithdrawResult
 
 __version__ = "0.3.0"
 
@@ -63,6 +63,7 @@ __all__ = [
     "NoTrustlineError",
     "ParsedRoute",
     "Pool",
+    "PoolQuote",
     "Position",
     "WithdrawResult",
     "PausedError",
