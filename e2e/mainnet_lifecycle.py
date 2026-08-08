@@ -27,7 +27,10 @@ AQUA = Asset.classic("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M
 EXPLORER = "https://stellar.expert/explorer/public/tx/"
 SWAP_XLM = 1_0000000
 DEPOSIT_XLM = 5000000
-MAX_ACCEPTABLE_LOSS = 2000000  # 0.2 XLM: fees + slippage on a clean run are far below this
+# 0.6 XLM: the concentrated deposit initializes fresh tick entries most runs
+# (new persistent ledger entries), and that one transaction alone costs
+# ~0.32 XLM in resource fees; everything else totals well under 0.1.
+MAX_ACCEPTABLE_LOSS = 6000000
 
 secret = os.environ.get("MAINNET_E2E_SECRET", "")
 if not secret:
@@ -133,8 +136,8 @@ else:
     position = retry_stale(open_position)
     aqua_have -= position.amounts[1 - xlm_c]
     assert position.liquidity > 0
-    print(f"position: [{lower}, {upper}) -> {position.liquidity} liquidity  "
-          f"{EXPLORER}{position.tx_hash}")
+    print(f"position: [{lower}, {upper}) {[fmt(a) for a in position.amounts]} "
+          f"-> {position.liquidity} liquidity  {EXPLORER}{position.tx_hash}")
 
     status = concentrated.position_range_status(lower, upper)
     assert status.in_range, f"fresh position around the current tick is {status.status}"
