@@ -1,8 +1,11 @@
 """E2E: the write lifecycle on MAINNET with real (tiny) funds.
 
 Flow: swap 1 XLM -> AQUA, deposit 0.5 XLM + matching AQUA into the deep
-XLM/AQUA volatile pool, read the position back, withdraw, swap everything
-back to XLM. ~1.5 XLM in play, returned minus fees (typically < 0.05 XLM).
+XLM/AQUA volatile pool, read the position back, withdraw; then the same
+shape on the concentrated pool (beta surface): sweep leftovers, open a
+range around the current tick, read it back, close; finally swap
+everything back to XLM. ~2 XLM in play, returned minus fees (typically
+< 0.05 XLM).
 
 Requires MAINNET_E2E_SECRET in the environment — a dedicated, lightly funded
 account (>= 5 XLM spendable). Never run two instances concurrently: they
@@ -18,7 +21,7 @@ import time
 import requests
 from stellar_sdk import Keypair
 
-from aquarius import AquariusClient, Asset, StaleSimulationError, XLM
+from aquarius import AquariusClient, Asset, StaleSimulationError, XLM, snap_tick
 
 AQUA = Asset.classic("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
 EXPLORER = "https://stellar.expert/explorer/public/tx/"
@@ -96,6 +99,52 @@ assert pool.pending_rewards() >= 0
 withdraw = retry_stale(lambda: pool.withdraw(deposit.shares))
 aqua_have += withdraw.amounts[1 - xlm_index]
 print(f"withdraw: {[fmt(a) for a in withdraw.amounts]}  {EXPLORER}{withdraw.tx_hash}")
+
+# --- concentrated lifecycle (beta surface) on the production pool -----------
+concentrated = next((p for p in pools if p.type == "concentrated"), None)
+if concentrated is None:
+    print("no concentrated XLM/AQUA pool on mainnet — concentrated segment skipped")
+else:
+    xlm_c = concentrated.tokens.index(XLM.contract_id(client.network.passphrase))
+
+    # Close positions a previous crashed run left behind (20-range cap; and
+    # the cleanup assert below only means something starting from zero).
+    for stale_lower, stale_upper in concentrated.position_ranges():
+        out = retry_stale(lambda lo=stale_lower, up=stale_upper:
+                          concentrated.withdraw_position(lo, up))
+        aqua_have += out.amounts[1 - xlm_c]
+        print(f"swept leftover position [{stale_lower}, {stale_upper})")
+
+    spacing = concentrated.tick_spacing()
+    tick = concentrated.current_tick()
+    lower = snap_tick(tick - 10 * spacing, spacing)
+    upper = snap_tick(tick + 10 * spacing, spacing, up=True)
+    c_reserves = concentrated.reserves()
+    aqua_for_range = DEPOSIT_XLM * c_reserves[1 - xlm_c] // c_reserves[xlm_c]
+
+    def open_position():
+        est = concentrated.estimate_position_deposit(
+            {XLM: DEPOSIT_XLM, AQUA: min(aqua_for_range, aqua_have)},
+            tick_range=(lower, upper),
+        )
+        assert est.liquidity > 0, "estimate quoted no liquidity"
+        return est.execute()
+
+    position = retry_stale(open_position)
+    aqua_have -= position.amounts[1 - xlm_c]
+    assert position.liquidity > 0
+    print(f"position: [{lower}, {upper}) -> {position.liquidity} liquidity  "
+          f"{EXPLORER}{position.tx_hash}")
+
+    status = concentrated.position_range_status(lower, upper)
+    assert status.in_range, f"fresh position around the current tick is {status.status}"
+    value = concentrated.position_value(lower, upper)
+    assert len(value.total) == len(concentrated.tokens)
+
+    closed = retry_stale(lambda: concentrated.withdraw_position(lower, upper))
+    aqua_have += closed.amounts[1 - xlm_c]
+    print(f"closed  : {[fmt(a) for a in closed.amounts]}  {EXPLORER}{closed.tx_hash}")
+    assert (lower, upper) not in concentrated.position_ranges(), "position not cleaned up"
 
 receipt2 = client.swap(AQUA, XLM, amount_in=aqua_have, retries=3)
 print(f"swap out: {fmt(receipt2.amount_in)} AQUA -> {fmt(receipt2.amount_out)} XLM  "
