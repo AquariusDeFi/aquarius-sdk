@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
+  ApiClient,
   AquariusClient,
   AquariusError,
   Asset,
@@ -66,6 +67,32 @@ test("no route raises the typed error", () => {
       ),
     NoRouteError,
   );
+});
+
+test("API HTTP failures raise typed errors and every request is time-bounded", async () => {
+  const realFetch = globalThis.fetch;
+  const signals = [];
+  globalThis.fetch = async (url, init) => {
+    signals.push(init?.signal);
+    return { ok: false, status: 503 };
+  };
+  try {
+    const api = new ApiClient("https://api.invalid");
+    await assert.rejects(
+      api.findPath({ token_in_address: "a", token_out_address: "b", amount: "1" }, true),
+      AquariusError,
+    );
+    await assert.rejects(api.poolsByAddresses(["CPOOL"]), AquariusError);
+    await assert.rejects(api.userPools("GUSER"), AquariusError);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(signals.length, 3);
+  assert.ok(signals.every(s => s instanceof AbortSignal));
+});
+
+test("toClassic on a contract-only asset raises the SDK's typed error", () => {
+  assert.throws(() => Asset.contract("CABC").toClassic(), AquariusError);
 });
 
 test("quote requires exactly one amount", async () => {
@@ -139,7 +166,19 @@ test("timeout resolution follows the signer type", async () => {
   );
 });
 
+test("contract.call decodes the result to a native value", async () => {
+  const { Keypair, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const client = new AquariusClient({ network: "testnet", signer: Keypair.random() });
+  client.engine.prepare = async () => "prepared";
+  client.engine.signAndSubmit = async () => ({
+    txHash: "h",
+    returnValue: nativeToScVal(123n, { type: "u128" }),
+  });
+  assert.equal(await client.contract.call("some_fn"), 123n);
+});
+
 test("swap retries re-quote on slippage", async () => {
+  AquariusClient._requoteDelaysMs = [0, 1]; // keep the test fast
   const client = new AquariusClient({ network: "testnet" });
   let attempts = 0;
   client.quote = async () => ({
@@ -159,6 +198,41 @@ test("swap retries re-quote on slippage", async () => {
   assert.equal(attempts, 2);
 });
 
+test("swap backs off between re-quote attempts, first retry immediate", async () => {
+  // Asserts on the delays the client requests, not on wall-clock gaps —
+  // measured timings flake on busy CI runners (mirrors the Python test,
+  // which patches time.sleep the same way).
+  AquariusClient._requoteDelaysMs = [0, 40];
+  const client = new AquariusClient({ network: "testnet" });
+  let quotes = 0;
+  client.quote = async () => {
+    quotes += 1;
+    return {
+      execute: async () => {
+        throw new SlippageErrorDirect("guard breached");
+      },
+    };
+  };
+  const slept = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms) => {
+    slept.push(ms);
+    return realSetTimeout(fn, 0);
+  };
+  try {
+    await assert.rejects(
+      client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 2 }),
+      SlippageErrorDirect,
+    );
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  assert.equal(quotes, 3); // initial attempt + 2 retries, each freshly quoted
+  // No pause before the first retry, one escalated pause before the second;
+  // nothing sleeps after the final attempt.
+  assert.deepEqual(slept, [40]);
+});
+
 test("buffer import present for diagnostics", () => {
   assert.ok(Buffer.isBuffer(Buffer.from("dGVzdA==", "base64")));
 });
@@ -175,4 +249,75 @@ test("handled probe errors do not drive the diagnosis", () => {
   // The footprint fixture contains a handled trustline probe before the
   // fatal storage error - the diagnosis must report the storage failure.
   assert.ok(errorFromDiagnostics(footprintFixture.events_xdr) instanceof StaleSimulationError);
+});
+
+test("swap operation carries bounded client-built authorization", async () => {
+  const { Keypair, scValToNative, xdr } = await import("@stellar/stellar-sdk");
+  const client = new AquariusClient({ network: "testnet", signer: Keypair.random() });
+  const tokenIn = XLM.contractId(TESTNET_PASSPHRASE);
+
+  const build = exactInput => {
+    const parsed = parseFindPathResponse(fixture, {
+      amountIn: exactInput ? 100_000_000n : undefined,
+      amountOut: exactInput ? undefined : 100_000_000n,
+      slippageBps: 100,
+      pairLabel: "XLM -> AQUA",
+    });
+    return { op: client.buildSwapOperation(parsed, exactInput, tokenIn), parsed };
+  };
+
+  {
+    const { op, parsed } = build(true);
+    const [entry] = op.body().invokeHostFunctionOp().auth();
+    assert.equal(
+      entry.credentials().switch(),
+      xdr.SorobanCredentialsType.sorobanCredentialsSourceAccount(),
+    );
+    const root = entry.rootInvocation();
+    assert.equal(root.function().contractFn().functionName().toString(), "swap_chained");
+    const [transfer] = root.subInvocations();
+    const t = transfer.function().contractFn();
+    assert.equal(t.functionName().toString(), "transfer");
+    assert.equal(scValToNative(t.args()[2]), parsed.amountIn); // bounded: exactly what is spent
+  }
+  {
+    const { op, parsed } = build(false);
+    const [entry] = op.body().invokeHostFunctionOp().auth();
+    const root = entry.rootInvocation();
+    assert.equal(
+      root.function().contractFn().functionName().toString(),
+      "swap_chained_strict_receive",
+    );
+    const [transfer] = root.subInvocations();
+    // max-in: the contract pulls at most the guard and refunds the difference
+    assert.equal(scValToNative(transfer.function().contractFn().args()[2]), parsed.guard);
+  }
+});
+
+test("positions resolves pools concurrently and filters empty ones", async () => {
+  const client = new AquariusClient({ network: "testnet" });
+  client.api.userPools = async () => [
+    { index: "00", address: "A", tokens_addresses: [] },
+    { index: "01", address: "B", tokens_addresses: [] },
+    { index: "02", address: "C", tokens_addresses: [] },
+  ];
+  const balances = { A: 5n, B: 0n, C: 7n };
+  let inFlight = 0;
+  let peak = 0;
+  client.makePool = async (hash, address) => ({
+    address,
+    shareBalance: async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      inFlight -= 1;
+      return balances[address];
+    },
+  });
+  const positions = await client.positions("GHOLDER");
+  assert.deepEqual(
+    positions.map(p => [p.pool.address, p.shares]),
+    [["A", 5n], ["C", 7n]], // input order kept, empty position dropped
+  );
+  assert.ok(peak > 1); // the per-pool read chains overlapped
 });

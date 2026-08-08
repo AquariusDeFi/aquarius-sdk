@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 import requests
-from stellar_sdk import Asset as StellarAsset, SorobanServer, scval
+from stellar_sdk import SorobanServer, scval
 from stellar_sdk.xdr import SCVal
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
+from .authorization import authorized_invocation, source_account_entry
 from .assets import Asset
 from .errors import AquariusError, SlippageError
 from .pool import Pool, Position, parse_pools_map, sort_token_ids
@@ -78,6 +80,15 @@ class Quote:
 
 
 class AquariusClient:
+    # Pauses before re-quotes in swap(), indexed by retry attempt (the last
+    # entry repeats). The find-path API prices from an indexer that can lag the
+    # chain — after your own swap moves a pool, a too-early re-quote reprices
+    # from pre-swap reserves and breaches the guard again. The first retry is
+    # immediate (an on-chain guard breach already burned enough wall-clock for
+    # the indexer to catch up); later ones wait for the lag window to close.
+    # Class attribute so tests can shrink it.
+    _requote_delays_s: tuple = (0.0, 1.5, 3.0)
+
     def __init__(
         self,
         network: str = "mainnet",
@@ -189,8 +200,9 @@ class AquariusClient:
         """quote() + execute() in one call, for bots.
 
         retries: how many times to re-quote and retry after a SlippageError.
-        Each attempt starts from a fresh quote. Default 0 — fail on the first
-        guard breach.
+        Each attempt starts from a fresh quote; the first retry is immediate
+        and later ones back off briefly so the pricing indexer can catch up
+        with the chain. Default 0 — fail on the first guard breach.
         """
         if retries < 0:
             raise AquariusError("retries must be >= 0")
@@ -200,6 +212,10 @@ class AquariusClient:
             except SlippageError:
                 if attempt == retries:
                     raise
+                delays = self._requote_delays_s
+                delay = delays[min(attempt, len(delays) - 1)]
+                if delay:
+                    time.sleep(delay)
         raise AquariusError("unreachable: the retry loop always returns or raises")
 
     # -- Stellar quirks, absorbed --------------------------------------------------
@@ -208,6 +224,7 @@ class AquariusClient:
         """Create the trustline if the signer's account doesn't hold one. No-op for native."""
         if asset.is_native:
             return
+        classic = asset.to_classic()  # rejects contract-only assets before any network call
         signer = self._require_signer()
         source = signer_public_key(signer)
         account = self._fetch_horizon_account(source)
@@ -216,7 +233,7 @@ class AquariusClient:
                 return
         tx = self.engine.build_transaction(
             source,
-            lambda b: b.append_change_trust_op(asset=StellarAsset(asset.code, asset.issuer)),
+            lambda b: b.append_change_trust_op(asset=classic),
         )
         self.engine.sign_and_submit(tx, signer)
 
@@ -234,7 +251,7 @@ class AquariusClient:
     # -- escape hatches ---------------------------------------------------------------
 
     def contract_call(self, fn: str, *args: SCVal):
-        """Raw router invocation. Arguments are SCVal values; the raw return SCVal comes back."""
+        """Raw router invocation. Arguments are SCVal values; the result is decoded."""
         signer = self._require_signer()
         source = signer_public_key(signer)
         tx = self.engine.prepare(
@@ -245,7 +262,7 @@ class AquariusClient:
             signer,
         )
         result = self.engine.sign_and_submit(tx, signer)
-        return result.return_value
+        return scval.to_native(result.return_value) if result.return_value is not None else None
 
     # -- pools & positions ---------------------------------------------------------------
 
@@ -347,10 +364,15 @@ class AquariusClient:
         source = signer_public_key(signer)
         if with_user:
             args = [scval.to_address(source)] + args
+        return self._submit_contract(self.network.router, fn, args)
+
+    def _submit_contract(self, contract_id: str, fn: str, args: list[SCVal], auth=None):
+        signer = self._require_signer()
+        source = signer_public_key(signer)
         tx = self.engine.prepare(
             source,
             lambda b: b.append_invoke_contract_function_op(
-                contract_id=self.network.router, function_name=fn, parameters=args
+                contract_id=contract_id, function_name=fn, parameters=args, auth=auth
             ),
             signer,
         )
@@ -359,27 +381,54 @@ class AquariusClient:
     # -- internals ---------------------------------------------------------------------
 
     def _swap_append(self, quote: Quote):
+        """The swap invocation with explicit, client-built authorization.
+
+        Mirrors the transaction shape of the Aquarius web app and the JS SDK:
+        the router call and its token-transfer sub-invocation are authorized
+        with exact amounts, so wallets present a bounded approval and the
+        authorization content never depends on what simulation echoes back
+        (assembly keeps pre-built auth and only fills in resources). For
+        strict-receive the authorized transfer is max-in — the contract pulls
+        the maximum and refunds the difference.
+        """
+        user = signer_public_key(self._require_signer())
         token_in = quote._params["from_"].contract_id(self.network.passphrase)
-        provider_fee = quote._params["provider_fee"]
-        contract_id = self.network.router if provider_fee is None else provider_fee.contract_id
+        provider_fee = quote._params.get("provider_fee")
+        # With a provider fee the collector is the invoked contract: it pulls
+        # the tokens from the user, takes its cut, and drives the router as
+        # itself — so both the call and the bounded transfer target it.
+        target = self.network.router if provider_fee is None else provider_fee.contract_id
         fn = "swap_chained" if quote.is_exact_input else "swap_chained_strict_receive"
         amount = quote.amount_in if quote.is_exact_input else quote.amount_out
-        parameters = [scval.to_address(signer_public_key(self._require_signer()))]
+        transfer_amount = quote.amount_in if quote.is_exact_input else quote.guard
+
+        args = [scval.to_address(user)]
         if provider_fee is not None and provider_fee.recipient is not None:
             fn += "_to"
-            parameters.append(scval.to_address(provider_fee.recipient))
-        parameters.extend([
+            args.append(scval.to_address(provider_fee.recipient))
+        args.extend([
             SCVal.from_xdr(quote._parsed.swap_chain_xdr),
             scval.to_address(token_in),
             scval.to_uint128(amount),
             scval.to_uint128(quote.guard),
         ])
         if provider_fee is not None:
-            parameters.append(scval.to_uint32(provider_fee.fee_fraction))
+            args.append(scval.to_uint32(provider_fee.fee_fraction))
+
+        transfer_invocation = authorized_invocation(token_in, "transfer", [
+            scval.to_address(user),
+            scval.to_address(target),
+            scval.to_int128(transfer_amount),
+        ])
+        root_entry = source_account_entry(
+            authorized_invocation(target, fn, args, [transfer_invocation])
+        )
+
         return lambda b: b.append_invoke_contract_function_op(
-            contract_id=contract_id,
+            contract_id=target,
             function_name=fn,
-            parameters=parameters,
+            parameters=args,
+            auth=[root_entry],
         )
 
     def _build_unsigned(self, quote: Quote) -> str:

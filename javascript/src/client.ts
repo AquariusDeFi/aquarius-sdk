@@ -2,8 +2,9 @@ import { Buffer } from "buffer";
 
 import { Address, Asset as StellarAsset, Operation, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 
-import { ApiClient, parseFindPathResponse, ParsedRoute } from "./api.js";
+import { ApiClient, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
+import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { AquariusError, SlippageError } from "./errors.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
@@ -114,7 +115,20 @@ function grossBeforeProviderFee(net: bigint, config: ProviderFeeConfig): bigint 
   return (net * denominator + divisor - 1n) / divisor;
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export class AquariusClient {
+  /**
+   * Pauses before re-quotes in swap(), indexed by retry attempt (the last
+   * entry repeats). The find-path API prices from an indexer that can lag the
+   * chain — after your own swap moves a pool, a too-early re-quote reprices
+   * from pre-swap reserves and breaches the guard again. The first retry is
+   * immediate (an on-chain guard breach already burned enough wall-clock for
+   * the indexer to catch up); later ones wait for the lag window to close.
+   * Static so tests can shrink it.
+   */
+  static _requoteDelaysMs = [0, 1_500, 3_000];
+
   readonly network: NetworkConfig;
   /** Typed client for the public backend API — the raw escape hatch. */
   readonly api: ApiClient;
@@ -202,8 +216,9 @@ export class AquariusClient {
    * quote() + execute() in one call, for bots.
    *
    * retries: how many times to re-quote and retry after a SlippageError.
-   * Each attempt starts from a fresh quote. Default 0 — fail on the first
-   * guard breach.
+   * Each attempt starts from a fresh quote; the first retry is immediate and
+   * later ones back off briefly so the pricing indexer can catch up with the
+   * chain. Default 0 — fail on the first guard breach.
    */
   async swap(params: QuoteParams & { retries?: number }): Promise<Receipt> {
     const { retries = 0, ...quoteParams } = params;
@@ -213,6 +228,9 @@ export class AquariusClient {
         return await (await this.quote(quoteParams as QuoteParams)).execute();
       } catch (error) {
         if (!(error instanceof SlippageError) || attempt >= retries) throw error;
+        const delays = AquariusClient._requoteDelaysMs;
+        const delay = delays[Math.min(attempt, delays.length - 1)];
+        if (delay) await sleep(delay);
       }
     }
   }
@@ -241,7 +259,9 @@ export class AquariusClient {
       throw new AquariusError("Friendbot funds testnet accounts only");
     }
     const signer = this.requireSigner();
-    const response = await fetch(`${FRIENDBOT_URL}?addr=${signer.publicKey()}`);
+    const response = await fetch(`${FRIENDBOT_URL}?addr=${signer.publicKey()}`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!response.ok) {
       throw new AquariusError(`Friendbot funding failed: HTTP ${response.status}`);
     }
@@ -301,18 +321,21 @@ export class AquariusClient {
    */
   async positions(address?: string): Promise<Position[]> {
     const holder = address ?? this.readSource(true);
-    const positions: Position[] = [];
-    for (const entry of await this.api.userPools(holder)) {
-      const pool = await this.makePool(
-        Buffer.from(entry.index, "hex"),
-        entry.address,
-        entry.tokens_addresses,
-        entry,
-      );
-      const shares = await pool.shareBalance(holder);
-      if (shares > 0n) positions.push({ pool, shares });
-    }
-    return positions;
+    const entries = await this.api.userPools(holder);
+    // Each pool needs its own share_id -> balance read chain; the chains are
+    // independent of each other, so they run concurrently.
+    const held = await Promise.all(
+      entries.map(async entry => {
+        const pool = await this.makePool(
+          Buffer.from(entry.index, "hex"),
+          entry.address,
+          entry.tokens_addresses,
+          entry,
+        );
+        return { pool, shares: await pool.shareBalance(holder) };
+      }),
+    );
+    return held.filter(p => p.shares > 0n);
   }
 
   private async makePool(
@@ -340,10 +363,13 @@ export class AquariusClient {
     }
     return new Pool(address, poolHash, parsed.type, parsed.feeBps, [...tokens], parsed.labels, {
       passphrase: this.network.passphrase,
+      router: this.network.router,
       readSource: (requireSigner?: boolean) => this.readSource(requireSigner),
       readRouter: (fn, args) => this.readRouter(fn, args),
       readContract: (contractId, fn, args) => this.readContract(contractId, fn, args),
       submitRouter: (fn, args, withUser) => this.submitRouter(fn, args, withUser),
+      submitContract: (contractId, fn, args, auth) =>
+        this.submitContract(contractId, fn, args, auth),
     });
   }
 
@@ -376,14 +402,19 @@ export class AquariusClient {
   ): Promise<ConfirmedTx> {
     const signer = this.requireSigner();
     const finalArgs = withUser ? [new Address(signer.publicKey()).toScVal(), ...args] : args;
+    return this.submitContract(this.network.router, fn, finalArgs);
+  }
+
+  private async submitContract(
+    contractId: string,
+    fn: string,
+    args: xdr.ScVal[],
+    auth?: xdr.SorobanAuthorizationEntry[],
+  ): Promise<ConfirmedTx> {
+    const signer = this.requireSigner();
     const tx = await this.engine.prepare(
       signer.publicKey(),
-      () =>
-        Operation.invokeContractFunction({
-          contract: this.network.router,
-          function: fn,
-          args: finalArgs,
-        }),
+      () => Operation.invokeContractFunction({ contract: contractId, function: fn, args, auth }),
       signer,
     );
     return this.engine.signAndSubmit(tx, signer);
@@ -472,47 +503,31 @@ export class AquariusClient {
       args.push(nativeToScVal(providerFee.feeFraction, { type: "u32" }));
     }
 
-    const transferInvocation = new xdr.SorobanAuthorizedInvocation({
-      function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
-        new xdr.InvokeContractArgs({
-          contractAddress: new Address(tokenIn).toScAddress(),
-          functionName: "transfer",
-          args: [
-            new Address(user).toScVal(),
-            new Address(contractId).toScVal(),
-            nativeToScVal(transferAmount, { type: "i128" }),
-          ],
-        }),
-      ),
-      subInvocations: [],
-    });
-
-    const rootInvocation = new xdr.SorobanAuthorizationEntry({
-      credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
-      rootInvocation: new xdr.SorobanAuthorizedInvocation({
-        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
-          new xdr.InvokeContractArgs({
-            contractAddress: new Address(contractId).toScAddress(),
-            functionName: fn,
-            args,
-          }),
-        ),
-        subInvocations: [transferInvocation],
-      }),
-    });
+    // With a provider fee the collector is the invoked contract: it pulls
+    // the tokens from the user, takes its cut, and drives the router as
+    // itself — so both the call and the bounded transfer target it.
+    const transferInvocation = authorizedInvocation(tokenIn, "transfer", [
+      new Address(user).toScVal(),
+      new Address(contractId).toScVal(),
+      nativeToScVal(transferAmount, { type: "i128" }),
+    ]);
 
     return Operation.invokeContractFunction({
       contract: contractId,
       function: fn,
       args,
-      auth: [rootInvocation],
+      auth: [
+        sourceAccountEntry(authorizedInvocation(contractId, fn, args, [transferInvocation])),
+      ],
     });
   }
 
   private async fetchHorizonAccount(
     publicKey: string,
   ): Promise<{ balances: { asset_code?: string; asset_issuer?: string }[] }> {
-    const response = await fetch(`${this.network.horizonUrl}/accounts/${publicKey}`);
+    const response = await fetch(`${this.network.horizonUrl}/accounts/${publicKey}`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!response.ok) {
       throw new AquariusError(`Account lookup failed: HTTP ${response.status}`);
     }

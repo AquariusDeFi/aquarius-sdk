@@ -1,4 +1,5 @@
 import {
+  Account,
   Operation,
   TimeoutInfinite,
   Transaction,
@@ -62,8 +63,13 @@ export class SubmitEngine {
     private readonly timeoutSeconds: number | null = null,
   ) {}
 
+  private readonly simulationAccounts = new Map<string, Promise<Account>>();
+
   async buildTransaction(source: string, operation: xdr.Operation): Promise<Transaction> {
-    const account = await this.server.getAccount(source);
+    return this.build(await this.server.getAccount(source), operation);
+  }
+
+  private build(account: Account, operation: xdr.Operation): Transaction {
     return new TransactionBuilder(account, {
       fee: this.baseFee,
       networkPassphrase: this.passphrase,
@@ -71,6 +77,21 @@ export class SubmitEngine {
       .addOperation(operation)
       .setTimeout(this.timeoutSeconds ?? TimeoutInfinite)
       .build();
+  }
+
+  private simulationAccount(source: string): Promise<Account> {
+    // Simulation ignores sequence numbers, so one fetch per source serves
+    // every read — concurrent reads share the in-flight request. Writes keep
+    // loading fresh accounts via buildTransaction.
+    let account = this.simulationAccounts.get(source);
+    if (!account) {
+      account = this.server.getAccount(source).catch((error: unknown) => {
+        this.simulationAccounts.delete(source); // a failed fetch must not poison later reads
+        throw error;
+      });
+      this.simulationAccounts.set(source, account);
+    }
+    return account;
   }
 
   /**
@@ -133,12 +154,12 @@ export class SubmitEngine {
     buildOperation: () => xdr.Operation,
     signer?: Signer,
   ): Promise<xdr.ScVal> {
-    let tx = await this.buildTransaction(source, buildOperation());
+    let tx = this.build(await this.simulationAccount(source), buildOperation());
     let simulation = await this.server.simulateTransaction(tx);
 
     if (rpc.Api.isSimulationRestore(simulation) && signer) {
       await this.restore(source, simulation, signer);
-      tx = await this.buildTransaction(source, buildOperation());
+      tx = this.build(await this.simulationAccount(source), buildOperation());
       simulation = await this.server.simulateTransaction(tx);
     }
 

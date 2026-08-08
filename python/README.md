@@ -2,7 +2,50 @@
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.3.x — swaps, provider-fee collectors, and the liquidity lifecycle are available.** Concentrated liquidity position management is not covered yet. The API may still change before 1.0.
+**Status: 0.3.x — swaps (including provider-fee collectors) and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+
+## Swap through a specific pool
+
+`client.quote()`/`swap()` route through the path-finding API. To pin a swap to
+one pool you trust — your own routing, API independence — quote and swap on the
+pool itself; the estimate comes from the router's on-chain `estimate_swap`:
+
+```python
+pool = next(p for p in client.pools_for_pair(XLM, AQUA) if p.fee_bps == 10)
+
+quote = pool.quote(XLM, AQUA, amount_in=100_0000000)   # no signer needed
+receipt = quote.execute()                              # swaps in this pool only
+# or: pool.swap(XLM, AQUA, amount_in=100_0000000, retries=3)
+```
+
+Exact input only — the router has no single-pool strict-receive; for exact
+output use `client.quote(..., amount_out=...)`.
+
+## Concentrated liquidity positions (beta)
+
+A position is the key `(owner, tick_lower, tick_upper)` on the pool contract — no
+NFTs, merged on re-deposit, at most 20 ranges per account. Quotes come from the
+contract's own estimators; `execute`/`withdraw_position` derive real slippage
+guards from them:
+
+```python
+pool = next(p for p in aqua.pools_for_pair(XLM, AQUA) if p.type == "concentrated")
+
+est = pool.estimate_position_deposit(
+    {XLM: 10_0000000, AQUA: 100_0000000},
+    price_range=("0.9", "1.1"),   # snaps to tick spacing; or tick_range=(lower, upper)
+)
+opened = est.execute(slippage=0.01)          # min-liquidity guard from the estimate
+
+pool.position_ranges()                        # all of the signer's ranges
+pool.position_range_status(est.tick_lower, est.tick_upper)  # in_range / below / above
+pool.position_value(est.tick_lower, est.tick_upper)  # principal / fees / total, split
+pool.claim_position_fees(est.tick_lower, est.tick_upper)
+pool.withdraw_position(est.tick_lower, est.tick_upper)  # full close, auto-claims fees
+```
+
+`tick_from_price`, `price_at_tick`, and `snap_tick` are exported for range math —
+integer-exact and identical across both language packages.
 
 ```bash
 pip install aquarius-sdk

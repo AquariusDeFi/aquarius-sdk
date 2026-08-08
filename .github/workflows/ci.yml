@@ -27,3 +27,5 @@ jobs:
         working-directory: javascript
       - run: npm run typecheck
         working-directory: javascript
+      - run: npm test
+        working-directory: javascript

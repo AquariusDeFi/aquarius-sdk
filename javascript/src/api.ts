@@ -1,4 +1,7 @@
-import { NoRouteError } from "./errors.js";
+import { AquariusError, NoRouteError } from "./errors.js";
+
+/** @internal Bound on every HTTP request (matches the Python SDK's 30s) — a dead connection must fail, not hang. */
+export const HTTP_TIMEOUT_MS = 30_000;
 
 export interface FindPathRequest {
   token_in_address: string;
@@ -28,20 +31,21 @@ export class ApiClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!response.ok) {
-      throw new Error(`Find-path request failed: HTTP ${response.status}`);
+      throw new AquariusError(`Find-path request failed: HTTP ${response.status}`);
     }
     return (await response.json()) as FindPathResponse;
   }
 
   /** Indexed metadata for the given pool addresses (type, fee, token labels). */
   async poolsByAddresses(addresses: string[]): Promise<PoolMeta[]> {
-    const response = await fetch(
-      `${this.baseUrl}/pools/?address__in=${addresses.join(",")}`,
-    );
+    const response = await fetch(`${this.baseUrl}/pools/?address__in=${addresses.join(",")}`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!response.ok) {
-      throw new Error(`Pools request failed: HTTP ${response.status}`);
+      throw new AquariusError(`Pools request failed: HTTP ${response.status}`);
     }
     const data = (await response.json()) as { results?: PoolMeta[] };
     return data.results ?? [];
@@ -49,10 +53,12 @@ export class ApiClient {
 
   /** Pools where the address holds a position. Empty when it holds none. */
   async userPools(address: string): Promise<PoolMeta[]> {
-    const response = await fetch(`${this.baseUrl}/pools/user/${address}/`);
+    const response = await fetch(`${this.baseUrl}/pools/user/${address}/`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (response.status === 404) return [];
     if (!response.ok) {
-      throw new Error(`User pools request failed: HTTP ${response.status}`);
+      throw new AquariusError(`User pools request failed: HTTP ${response.status}`);
     }
     const data = (await response.json()) as PoolMeta[] | { results?: PoolMeta[] };
     return Array.isArray(data) ? data : (data.results ?? []);

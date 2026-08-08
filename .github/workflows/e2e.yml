@@ -1,0 +1,80 @@
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  # One job, strictly sequential, and a cross-run mutex: concurrent testnet
+  # lifecycles trade against each other in the same tiny pools and breach
+  # each other's slippage guards (observed between the py and js jobs of a
+  # single run).
+  testnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: testnet-e2e
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e ./python
+      - run: python e2e/testnet_lifecycle.py
+      - run: npm install
+        working-directory: javascript
+      - run: npm run build
+        working-directory: javascript
+      - run: node javascript/e2e/testnet_lifecycle.mjs
+
+  mainnet-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e ./python
+      - run: python e2e/mainnet_readonly.py
+      - run: npm install
+        working-directory: javascript
+      - run: npm run build
+        working-directory: javascript
+      - run: node javascript/e2e/mainnet_readonly.mjs
+
+  # Real funds, pull requests included — deliberately. A testnet pass proves
+  # nothing about the production contracts (the two networks can run
+  # different versions), so every PR must carry a live mainnet write proof;
+  # that is the default gate for write-path changes, not an afterthought.
+  # Safe on PRs because GitHub withholds secrets from fork PRs (the script
+  # then self-skips), and the global non-cancelling concurrency group keeps
+  # two runs from trading against each other. Post-merge pushes are excluded:
+  # the PR already proved the exact commits, and the nightly covers drift.
+  mainnet-lifecycle:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: mainnet-e2e
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ./python
+      - run: python e2e/mainnet_lifecycle.py
+        env:
+          MAINNET_E2E_SECRET: ${{ secrets.MAINNET_E2E_SECRET }}

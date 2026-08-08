@@ -36,6 +36,13 @@ def test_asset_forms_resolve_to_known_contract_ids():
     assert Asset.contract("CABC").contract_id(TESTNET_PASSPHRASE) == "CABC"
 
 
+def test_to_classic_covers_native_and_issued_but_rejects_contract_only():
+    assert XLM.to_classic().is_native()
+    assert AQUA.to_classic().code == "AQUA"
+    with pytest.raises(AquariusError, match="contract ID"):
+        Asset.contract("CABC").to_classic()
+
+
 def test_golden_fixture_parses_into_exact_input_quote():
     parsed = parse_find_path_response(
         FIXTURE, amount_in=100_000_000, slippage_bps=100, pair_label="XLM -> AQUA"
@@ -126,7 +133,23 @@ def test_timeout_resolution():
     assert infinite.engine.timeout is None
 
 
-def test_swap_retries_requote_on_slippage():
+def test_contract_call_decodes_the_result(monkeypatch):
+    from stellar_sdk import Keypair, scval
+
+    from aquarius.submit import ConfirmedTx
+
+    client = AquariusClient(network="testnet", signer=Keypair.random())
+    monkeypatch.setattr(client.engine, "prepare", lambda *a, **k: "prepared")
+    monkeypatch.setattr(
+        client.engine,
+        "sign_and_submit",
+        lambda tx, signer: ConfirmedTx(tx_hash="h", return_value=scval.to_uint128(123)),
+    )
+    assert client.contract_call("some_fn") == 123  # native int, not a raw SCVal
+
+
+def test_swap_retries_requote_on_slippage(monkeypatch):
+    monkeypatch.setattr(AquariusClient, "_requote_delays_s", (0, 0))
     client = AquariusClient(network="testnet")
     attempts = []
 
@@ -148,6 +171,32 @@ def test_swap_retries_requote_on_slippage():
     assert len(attempts) == 2
 
 
+def test_swap_backs_off_between_requote_attempts(monkeypatch):
+    client = AquariusClient(network="testnet")
+    quotes = []
+
+    class AlwaysBreached:
+        def execute(self):
+            raise SlippageError("guard breached")
+
+    monkeypatch.setattr(
+        client, "quote", lambda *args, **kwargs: quotes.append(1) or AlwaysBreached()
+    )
+    sleeps = []
+    monkeypatch.setattr("aquarius.client.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    with pytest.raises(SlippageError):
+        client.swap(XLM, AQUA, amount_in=1, retries=3)
+
+    assert len(quotes) == 4  # initial attempt + 3 retries, each freshly quoted
+    # First retry is immediate (0 -> no sleep call), later ones escalate;
+    # nothing sleeps after the final attempt.
+    assert sleeps == [
+        AquariusClient._requote_delays_s[1],
+        AquariusClient._requote_delays_s[2],
+    ]
+
+
 FOOTPRINT_FIXTURE = json.loads(
     (TESTDATA / "diagnostic_events_footprint_withdraw.json").read_text()
 )
@@ -158,3 +207,62 @@ def test_handled_probe_errors_do_not_drive_the_diagnosis():
     fatal storage error - the diagnosis must report the storage failure."""
     error = error_from_diagnostics(FOOTPRINT_FIXTURE["events_xdr"])
     assert isinstance(error, StaleSimulationError)
+
+
+def test_swap_operation_carries_bounded_client_built_authorization():
+    from stellar_sdk import Account, Keypair, TransactionBuilder, scval
+    from stellar_sdk.xdr import SorobanCredentialsType
+
+    from aquarius.client import Quote
+
+    signer = Keypair.random()
+    client = AquariusClient(network="testnet", signer=signer)
+    token_in = XLM.contract_id(TESTNET_PASSPHRASE)
+
+    def build_op(exact_input):
+        parsed = parse_find_path_response(
+            FIXTURE,
+            amount_in=100_000_000 if exact_input else None,
+            amount_out=None if exact_input else 100_000_000,
+            slippage_bps=100,
+            pair_label="XLM -> AQUA",
+        )
+        quote = Quote(
+            amount_in=parsed.amount_in,
+            amount_out=parsed.amount_out,
+            guard=parsed.guard,
+            route=parsed.route,
+            is_exact_input=exact_input,
+            _client=client,
+            _parsed=parsed,
+            _params=dict(from_=XLM, to=AQUA, amount_in=None, amount_out=None, slippage=0.01),
+        )
+        builder = TransactionBuilder(
+            Account(signer.public_key, 1), network_passphrase=TESTNET_PASSPHRASE, base_fee=100
+        )
+        return client._swap_append(quote)(builder).operations[0], quote
+
+    from stellar_sdk import Address
+
+    op, quote = build_op(exact_input=True)
+    [entry] = op.auth  # auth is client-built, not left for simulation to fill
+    assert entry.credentials.type == SorobanCredentialsType.SOROBAN_CREDENTIALS_SOURCE_ACCOUNT
+    root = entry.root_invocation
+    assert root.function.contract_fn.function_name.sc_symbol == b"swap_chained"
+    assert (
+        Address.from_xdr_sc_address(root.function.contract_fn.contract_address).address
+        == client.network.router
+    )
+    [transfer] = root.sub_invocations
+    t = transfer.function.contract_fn
+    assert t.function_name.sc_symbol == b"transfer"
+    assert Address.from_xdr_sc_address(t.contract_address).address == token_in
+    assert scval.from_int128(t.args[2]) == quote.amount_in  # bounded: exactly what is spent
+
+    op, quote = build_op(exact_input=False)
+    [entry] = op.auth
+    root = entry.root_invocation
+    assert root.function.contract_fn.function_name.sc_symbol == b"swap_chained_strict_receive"
+    [transfer] = root.sub_invocations
+    # max-in: the contract pulls at most the guard and refunds the difference
+    assert scval.from_int128(transfer.function.contract_fn.args[2]) == quote.guard

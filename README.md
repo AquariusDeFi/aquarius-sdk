@@ -2,7 +2,11 @@
 
 Official SDKs for building on [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar, in Python and TypeScript.
 
+<<<<<<< HEAD
 **Status: 0.3.x.** Swaps (quote → execute in both modes), provider-fee collectors, and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are available in both languages. Concentrated liquidity position management is not covered yet: pools are discovered and readable, and deposits into them are refused with an explanatory error.
+=======
+**Status: 0.3.x.** Swaps (quote → execute in both modes) and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are complete in both languages, each verified end to end with real testnet transactions. Concentrated liquidity position management (range deposits, withdrawals, fee claims, position reads) is available as a **beta** surface: the concentrated contracts are under an ongoing external audit, and router deposits into concentrated pools remain refused — ranges are managed through the pool contract directly.
+>>>>>>> origin/master
 
 ## Layout
 

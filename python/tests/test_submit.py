@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 import pytest
-from stellar_sdk import Account, Keypair, Network
+from stellar_sdk import Account, Keypair, Network, scval
 from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
 from stellar_sdk.xdr import (
     Int64,
@@ -98,3 +98,34 @@ def test_other_rejections_are_not_retried():
     with pytest.raises(AquariusError, match="txINSUFFICIENT_BALANCE"):
         submit_through(server)
     assert len(server.submitted) == 1
+
+
+def test_read_with_no_result_raises_typed_error():
+    server = FakeServer([])
+    server.simulate_transaction = lambda tx: SimpleNamespace(
+        restore_preamble=None, error=None, results=[]
+    )
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    with pytest.raises(AquariusError, match="no result"):
+        engine.read(KEYPAIR.public_key, lambda b: b.append_manage_data_op("test", "1"))
+
+
+def test_reads_share_one_account_fetch():
+    server = FakeServer([])
+    server.simulate_transaction = lambda tx: SimpleNamespace(
+        restore_preamble=None, error=None,
+        results=[SimpleNamespace(xdr=scval.to_uint32(7).to_xdr())],
+    )
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    for _ in range(3):
+        value = engine.read(KEYPAIR.public_key, lambda b: b.append_manage_data_op("t", "1"))
+    assert scval.from_uint32(value) == 7
+    assert server.loads == 1  # sequence numbers are irrelevant to simulation
+
+
+def test_write_builds_always_load_a_fresh_account():
+    server = FakeServer([])
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    engine.build_transaction(KEYPAIR.public_key, lambda b: b.append_manage_data_op("t", "1"))
+    engine.build_transaction(KEYPAIR.public_key, lambda b: b.append_manage_data_op("t", "1"))
+    assert server.loads == 2  # writes must never reuse a cached sequence
