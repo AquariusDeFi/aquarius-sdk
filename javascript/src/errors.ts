@@ -70,6 +70,19 @@ export function isUserRejection(error: unknown): boolean {
 const PAUSED_CODES = new Set([205, 206, 207, 2139]);
 const SLIPPAGE_CODES = new Set([2005, 2006, 2020]);
 
+// Known contract error codes without a dedicated error class — the code alone
+// is opaque, so attach what it means (concentrated position management).
+const CONTRACT_MESSAGES: Record<number, string> = {
+  212: "position not found",
+  213: "insufficient liquidity",
+  2107: "tick out of bounds",
+  2109: "tick not aligned to the pool's tick spacing",
+  2110: "tick_lower must be below tick_upper",
+  2114: "amount must be greater than zero",
+  2119: "too many positions for this account",
+  2120: "liquidity amount too large",
+};
+
 // The token contract reports a missing trustline in its diagnostic output.
 // Checked before contract codes: the same situation surfaces under different
 // codes depending on where in the chain the payout fails.
@@ -91,6 +104,10 @@ export function classifyContractCode(code: number, txHash?: string): AquariusErr
       `Operations are paused for this pool (contract error #${code}) — not an integration bug`,
       txHash,
     );
+  }
+  const detail = CONTRACT_MESSAGES[code];
+  if (detail) {
+    return new AquariusError(`Contract error #${code}: ${detail}`, txHash);
   }
   return new AquariusError(`Contract error #${code}`, txHash);
 }

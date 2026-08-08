@@ -4,6 +4,7 @@ import { Address, Asset as StellarAsset, Operation, nativeToScVal, scValToNative
 
 import { ApiClient, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
+import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { AquariusError, SlippageError } from "./errors.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
@@ -300,6 +301,8 @@ export class AquariusClient {
       readRouter: (fn, args) => this.readRouter(fn, args),
       readContract: (contractId, fn, args) => this.readContract(contractId, fn, args),
       submitRouter: (fn, args, withUser) => this.submitRouter(fn, args, withUser),
+      submitContract: (contractId, fn, args, auth) =>
+        this.submitContract(contractId, fn, args, auth),
     });
   }
 
@@ -332,14 +335,19 @@ export class AquariusClient {
   ): Promise<ConfirmedTx> {
     const signer = this.requireSigner();
     const finalArgs = withUser ? [new Address(signer.publicKey()).toScVal(), ...args] : args;
+    return this.submitContract(this.network.router, fn, finalArgs);
+  }
+
+  private async submitContract(
+    contractId: string,
+    fn: string,
+    args: xdr.ScVal[],
+    auth?: xdr.SorobanAuthorizationEntry[],
+  ): Promise<ConfirmedTx> {
+    const signer = this.requireSigner();
     const tx = await this.engine.prepare(
       signer.publicKey(),
-      () =>
-        Operation.invokeContractFunction({
-          contract: this.network.router,
-          function: fn,
-          args: finalArgs,
-        }),
+      () => Operation.invokeContractFunction({ contract: contractId, function: fn, args, auth }),
       signer,
     );
     return this.engine.signAndSubmit(tx, signer);
@@ -410,40 +418,21 @@ export class AquariusClient {
       nativeToScVal(parsed.guard, { type: "u128" }),
     ];
 
-    const transferInvocation = new xdr.SorobanAuthorizedInvocation({
-      function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
-        new xdr.InvokeContractArgs({
-          contractAddress: new Address(tokenIn).toScAddress(),
-          functionName: "transfer",
-          args: [
-            new Address(user).toScVal(),
-            new Address(this.network.router).toScVal(),
-            nativeToScVal(transferAmount, { type: "i128" }),
-          ],
-        }),
-      ),
-      subInvocations: [],
-    });
-
-    const rootInvocation = new xdr.SorobanAuthorizationEntry({
-      credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
-      rootInvocation: new xdr.SorobanAuthorizedInvocation({
-        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
-          new xdr.InvokeContractArgs({
-            contractAddress: new Address(this.network.router).toScAddress(),
-            functionName: fn,
-            args,
-          }),
-        ),
-        subInvocations: [transferInvocation],
-      }),
-    });
+    const transferInvocation = authorizedInvocation(tokenIn, "transfer", [
+      new Address(user).toScVal(),
+      new Address(this.network.router).toScVal(),
+      nativeToScVal(transferAmount, { type: "i128" }),
+    ]);
 
     return Operation.invokeContractFunction({
       contract: this.network.router,
       function: fn,
       args,
-      auth: [rootInvocation],
+      auth: [
+        sourceAccountEntry(
+          authorizedInvocation(this.network.router, fn, args, [transferInvocation]),
+        ),
+      ],
     });
   }
 

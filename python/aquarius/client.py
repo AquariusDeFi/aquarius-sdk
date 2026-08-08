@@ -4,20 +4,11 @@ import time
 from dataclasses import dataclass, field
 
 import requests
-from stellar_sdk import Address, SorobanServer, scval
-from stellar_sdk.xdr import (
-    InvokeContractArgs,
-    SCSymbol,
-    SCVal,
-    SorobanAuthorizationEntry,
-    SorobanAuthorizedFunction,
-    SorobanAuthorizedFunctionType,
-    SorobanAuthorizedInvocation,
-    SorobanCredentials,
-    SorobanCredentialsType,
-)
+from stellar_sdk import SorobanServer, scval
+from stellar_sdk.xdr import SCVal
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
+from .authorization import authorized_invocation, source_account_entry
 from .assets import Asset
 from .errors import AquariusError, SlippageError
 from .pool import Pool, Position, parse_pools_map, sort_token_ids
@@ -324,10 +315,15 @@ class AquariusClient:
         source = signer_public_key(signer)
         if with_user:
             args = [scval.to_address(source)] + args
+        return self._submit_contract(self.network.router, fn, args)
+
+    def _submit_contract(self, contract_id: str, fn: str, args: list[SCVal], auth=None):
+        signer = self._require_signer()
+        source = signer_public_key(signer)
         tx = self.engine.prepare(
             source,
             lambda b: b.append_invoke_contract_function_op(
-                contract_id=self.network.router, function_name=fn, parameters=args
+                contract_id=contract_id, function_name=fn, parameters=args, auth=auth
             ),
             signer,
         )
@@ -360,32 +356,13 @@ class AquariusClient:
             scval.to_uint128(quote.guard),
         ]
 
-        def authorized_contract_fn(contract_id: str, name: str, fn_args: list[SCVal]):
-            return SorobanAuthorizedFunction(
-                type=SorobanAuthorizedFunctionType.SOROBAN_AUTHORIZED_FUNCTION_TYPE_CONTRACT_FN,
-                contract_fn=InvokeContractArgs(
-                    contract_address=Address(contract_id).to_xdr_sc_address(),
-                    function_name=SCSymbol(name.encode()),
-                    args=fn_args,
-                ),
-            )
-
-        transfer_invocation = SorobanAuthorizedInvocation(
-            function=authorized_contract_fn(token_in, "transfer", [
-                scval.to_address(user),
-                scval.to_address(self.network.router),
-                scval.to_int128(transfer_amount),
-            ]),
-            sub_invocations=[],
-        )
-        root_entry = SorobanAuthorizationEntry(
-            credentials=SorobanCredentials(
-                type=SorobanCredentialsType.SOROBAN_CREDENTIALS_SOURCE_ACCOUNT
-            ),
-            root_invocation=SorobanAuthorizedInvocation(
-                function=authorized_contract_fn(self.network.router, fn, args),
-                sub_invocations=[transfer_invocation],
-            ),
+        transfer_invocation = authorized_invocation(token_in, "transfer", [
+            scval.to_address(user),
+            scval.to_address(self.network.router),
+            scval.to_int128(transfer_amount),
+        ])
+        root_entry = source_account_entry(
+            authorized_invocation(self.network.router, fn, args, [transfer_invocation])
         )
 
         return lambda b: b.append_invoke_contract_function_op(

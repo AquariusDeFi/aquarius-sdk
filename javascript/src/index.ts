@@ -18,6 +18,7 @@ export { ApiClient, parseFindPathResponse } from "./api.js";
 export type { FindPathRequest, FindPathResponse, ParsedRoute } from "./api.js";
 export { NETWORKS, type NetworkConfig } from "./networks.js";
 export {
+  ConcentratedDepositEstimate,
   Pool,
   sortTokenIds,
   type ClaimResult,
@@ -27,6 +28,19 @@ export {
   type Position,
   type WithdrawResult,
 } from "./pool.js";
+export {
+  MAX_TICK,
+  MIN_TICK,
+  priceAtTick,
+  snapTick,
+  tickFromPrice,
+  type ClaimFeesResult,
+  type ConcentratedDepositResult,
+  type ConcentratedPosition,
+  type ConcentratedWithdrawResult,
+  type PositionValue,
+  type Slot0,
+} from "./concentrated.js";
 export {
   AquariusError,
   NoRouteError,

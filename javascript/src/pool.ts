@@ -3,6 +3,19 @@ import { Buffer } from "buffer";
 import { Address, StrKey, nativeToScVal, scValToNative, xdr } from "@stellar/stellar-sdk";
 
 import { Asset } from "./assets.js";
+import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
+import {
+  ClaimFeesResult,
+  ConcentratedDepositResult,
+  ConcentratedPosition,
+  ConcentratedWithdrawResult,
+  MAX_TICK,
+  MIN_TICK,
+  PositionValue,
+  Slot0,
+  snapTick,
+  tickFromPrice,
+} from "./concentrated.js";
 import { AquariusError } from "./errors.js";
 import { ConfirmedTx } from "./submit.js";
 
@@ -50,6 +63,12 @@ export interface PoolContext {
   readRouter(fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal>;
   readContract(contractId: string, fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal>;
   submitRouter(fn: string, args: xdr.ScVal[], withUser: boolean): Promise<ConfirmedTx>;
+  submitContract(
+    contractId: string,
+    fn: string,
+    args: xdr.ScVal[],
+    auth?: xdr.SorobanAuthorizationEntry[],
+  ): Promise<ConfirmedTx>;
 }
 
 // --- helpers shared with the client ------------------------------------------------
@@ -241,6 +260,234 @@ export class Pool {
     };
   }
 
+  // -- concentrated positions (beta; direct pool-contract calls) ----------------------
+  //
+  // Range positions live on the pool contract itself, not the router: a
+  // position is the key (owner, tickLower, tickUpper), merged on re-deposit,
+  // max 20 ranges per account. Amounts are always quoted via the contract's
+  // own estimate_* functions; withdrawal auto-claims that position's fees.
+  // The concentrated surface is beta: the contracts are under an ongoing
+  // external audit.
+
+  private tickSpacing_?: number;
+
+  private requireConcentrated(): void {
+    if (this.type !== "concentrated") {
+      throw new AquariusError(
+        `This operation needs a concentrated pool; this pool is ${this.type}`,
+      );
+    }
+  }
+
+  private async readPool(fn: string, args: xdr.ScVal[]): Promise<unknown> {
+    this.requireConcentrated();
+    return scValToNative(await this.ctx.readContract(this.address, fn, args));
+  }
+
+  /** The pool's tick spacing (set by its fee tier). */
+  async tickSpacing(): Promise<number> {
+    if (this.tickSpacing_ === undefined) {
+      this.tickSpacing_ = Number(await this.readPool("get_tick_spacing", []));
+    }
+    return this.tickSpacing_;
+  }
+
+  /** Current price state: sqrt price (Q64.96) and current tick. */
+  async slot0(): Promise<Slot0> {
+    const data = (await this.readPool("get_slot0", [])) as {
+      sqrt_price_x96: bigint;
+      tick: number | bigint;
+    };
+    return { sqrtPriceX96: BigInt(data.sqrt_price_x96), tick: Number(data.tick) };
+  }
+
+  async currentTick(): Promise<number> {
+    return (await this.slot0()).tick;
+  }
+
+  /** All [tickLower, tickUpper] ranges the address holds (default: signer). */
+  async positionRanges(address?: string): Promise<Array<[number, number]>> {
+    const holder = address ?? this.ctx.readSource(true);
+    const snapshot = (await this.readPool("get_user_position_snapshot", [
+      new Address(holder).toScVal(),
+    ])) as { ranges?: Array<{ tick_lower: number | bigint; tick_upper: number | bigint }> };
+    return (snapshot.ranges ?? []).map(r => [Number(r.tick_lower), Number(r.tick_upper)]);
+  }
+
+  async position(
+    tickLower: number,
+    tickUpper: number,
+    address?: string,
+  ): Promise<ConcentratedPosition> {
+    const holder = address ?? this.ctx.readSource(true);
+    const data = (await this.readPool("get_position", [
+      new Address(holder).toScVal(),
+      xdr.ScVal.scvI32(tickLower),
+      xdr.ScVal.scvI32(tickUpper),
+    ])) as { liquidity?: bigint; L?: bigint };
+    return { tickLower, tickUpper, liquidity: BigInt(data.liquidity ?? data.L ?? 0n) };
+  }
+
+  /** Accrued, unclaimed swap fees for one position, in sorted-token order. */
+  async positionFees(tickLower: number, tickUpper: number, address?: string): Promise<bigint[]> {
+    const holder = address ?? this.ctx.readSource(true);
+    return (await this.readPool("get_position_fees", [
+      new Address(holder).toScVal(),
+      xdr.ScVal.scvI32(tickLower),
+      xdr.ScVal.scvI32(tickUpper),
+    ])) as bigint[];
+  }
+
+  /** Accrued fees across all of the address's positions in this pool. */
+  async allPositionFees(address?: string): Promise<bigint[]> {
+    const holder = address ?? this.ctx.readSource(true);
+    return (await this.readPool("get_all_position_fees", [
+      new Address(holder).toScVal(),
+    ])) as bigint[];
+  }
+
+  /**
+   * The position's worth, split into principal / fees / total. `total` is
+   * what a full withdrawal returns right now (withdrawal auto-claims fees),
+   * `fees` is the unclaimed accrual, `principal` the difference floored at zero.
+   */
+  async positionValue(
+    tickLower: number,
+    tickUpper: number,
+    address?: string,
+  ): Promise<PositionValue> {
+    const holder = address ?? this.ctx.readSource(true);
+    const pos = await this.position(tickLower, tickUpper, holder);
+    const total = (await this.readPool("estimate_withdraw_position", [
+      new Address(holder).toScVal(),
+      xdr.ScVal.scvI32(tickLower),
+      xdr.ScVal.scvI32(tickUpper),
+      u128(pos.liquidity),
+    ])) as bigint[];
+    const fees = await this.positionFees(tickLower, tickUpper, holder);
+    const principal = total.map((t, i) => (t - (fees[i] ?? 0n) > 0n ? t - (fees[i] ?? 0n) : 0n));
+    return { total, fees, principal };
+  }
+
+  // -- concentrated writes ------------------------------------------------------------
+
+  /**
+   * Quote a range deposit. Pass tickRange: [lower, upper] or priceRange:
+   * [low, high] in raw token1/token0 prices — prices snap to the pool's tick
+   * spacing (lower floors, upper ceils). The returned estimate's
+   * execute({slippage}) performs the deposit with min-liquidity derived from
+   * this quote.
+   */
+  async estimatePositionDeposit(params: {
+    amounts: DepositAmounts;
+    tickRange?: [number, number];
+    priceRange?: [number | string, number | string];
+  }): Promise<ConcentratedDepositEstimate> {
+    this.requireConcentrated();
+    if ((params.tickRange === undefined) === (params.priceRange === undefined)) {
+      throw new AquariusError("Pass exactly one of tickRange / priceRange");
+    }
+    const spacing = await this.tickSpacing();
+    let lower: number;
+    let upper: number;
+    if (params.priceRange) {
+      lower = snapTick(tickFromPrice(params.priceRange[0]), spacing);
+      upper = snapTick(tickFromPrice(params.priceRange[1]), spacing, { up: true });
+    } else {
+      [lower, upper] = params.tickRange!;
+      if (lower % spacing !== 0 || upper % spacing !== 0) {
+        throw new AquariusError(
+          `ticks must be multiples of the pool's tick spacing (${spacing})`,
+        );
+      }
+    }
+    if (!(MIN_TICK <= lower && lower < upper && upper <= MAX_TICK)) {
+      throw new AquariusError("tickLower must be below tickUpper, both within tick bounds");
+    }
+    const desired = resolveAmounts(params.amounts, this.tokens, this.ctx.passphrase);
+    const [amounts, liquidity] = (await this.readPool("estimate_deposit_position", [
+      xdr.ScVal.scvI32(lower),
+      xdr.ScVal.scvI32(upper),
+      xdr.ScVal.scvVec(desired.map(u128)),
+    ])) as [bigint[], bigint];
+    return new ConcentratedDepositEstimate(this, this.ctx, lower, upper, desired, amounts, liquidity);
+  }
+
+  /**
+   * Remove liquidity from a range (default: the whole position). Withdrawal
+   * auto-claims the position's fees; per-token minimums come from a
+   * simulation of this exact withdrawal, reduced by `slippage` (default 1%).
+   */
+  async withdrawPosition(params: {
+    tickLower: number;
+    tickUpper: number;
+    liquidity?: bigint;
+    slippage?: number;
+  }): Promise<ConcentratedWithdrawResult> {
+    this.requireConcentrated();
+    const owner = this.ctx.readSource(true);
+    const liquidity =
+      params.liquidity ??
+      (await this.position(params.tickLower, params.tickUpper, owner)).liquidity;
+    const estimated = (await this.readPool("estimate_withdraw_position", [
+      new Address(owner).toScVal(),
+      xdr.ScVal.scvI32(params.tickLower),
+      xdr.ScVal.scvI32(params.tickUpper),
+      u128(liquidity),
+    ])) as bigint[];
+    const factor = BigInt(Math.round((1 - (params.slippage ?? 0.01)) * 10_000));
+    const minimums = estimated.map(a => (a * factor) / 10_000n);
+    const args = [
+      new Address(owner).toScVal(),
+      xdr.ScVal.scvI32(params.tickLower),
+      xdr.ScVal.scvI32(params.tickUpper),
+      u128(liquidity),
+      xdr.ScVal.scvVec(minimums.map(u128)),
+    ];
+    const confirmed = await this.ctx.submitContract(this.address, "withdraw_position", args, [
+      sourceAccountEntry(authorizedInvocation(this.address, "withdraw_position", args)),
+    ]);
+    return {
+      txHash: confirmed.txHash,
+      amounts: scValToNative(confirmed.returnValue!) as bigint[],
+    };
+  }
+
+  /** Collect one position's accrued swap fees. */
+  async claimPositionFees(tickLower: number, tickUpper: number): Promise<ClaimFeesResult> {
+    this.requireConcentrated();
+    const owner = this.ctx.readSource(true);
+    const args = [
+      new Address(owner).toScVal(),
+      xdr.ScVal.scvI32(tickLower),
+      xdr.ScVal.scvI32(tickUpper),
+    ];
+    const confirmed = await this.ctx.submitContract(this.address, "claim_position_fees", args, [
+      sourceAccountEntry(authorizedInvocation(this.address, "claim_position_fees", args)),
+    ]);
+    return {
+      txHash: confirmed.txHash,
+      amounts: scValToNative(confirmed.returnValue!) as bigint[],
+    };
+  }
+
+  /** Collect accrued swap fees across all of the signer's positions. */
+  async claimAllPositionFees(): Promise<ClaimFeesResult> {
+    this.requireConcentrated();
+    const owner = this.ctx.readSource(true);
+    const args = [new Address(owner).toScVal()];
+    const confirmed = await this.ctx.submitContract(
+      this.address,
+      "claim_all_position_fees",
+      args,
+      [sourceAccountEntry(authorizedInvocation(this.address, "claim_all_position_fees", args))],
+    );
+    return {
+      txHash: confirmed.txHash,
+      amounts: scValToNative(confirmed.returnValue!) as bigint[],
+    };
+  }
+
   // -- internals ---------------------------------------------------------------------
 
   private baseArgs(): xdr.ScVal[] {
@@ -265,5 +512,51 @@ export class Pool {
   private simulateWrite(fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
     const user = new Address(this.ctx.readSource(true)).toScVal();
     return this.ctx.readRouter(fn, [user, ...args]);
+  }
+}
+
+/** A quoted range deposit: execute() performs it with a min-liquidity guard. */
+export class ConcentratedDepositEstimate {
+  constructor(
+    private readonly pool: Pool,
+    private readonly ctx: PoolContext,
+    readonly tickLower: number,
+    readonly tickUpper: number,
+    /** What will be authorized for transfer, in sorted-token order. */
+    readonly desired: bigint[],
+    /** Estimated base units the pool will actually use. */
+    readonly amounts: bigint[],
+    /** Estimated raw liquidity to be minted. */
+    readonly liquidity: bigint,
+  ) {}
+
+  async execute(options?: { slippage?: number }): Promise<ConcentratedDepositResult> {
+    const owner = this.ctx.readSource(true);
+    const factor = BigInt(Math.round((1 - (options?.slippage ?? 0.01)) * 10_000));
+    const minLiquidity = (this.liquidity * factor) / 10_000n;
+    const args = [
+      new Address(owner).toScVal(),
+      xdr.ScVal.scvI32(this.tickLower),
+      xdr.ScVal.scvI32(this.tickUpper),
+      xdr.ScVal.scvVec(this.desired.map(u128)),
+      u128(minLiquidity),
+    ];
+    // Mirror the web app's transaction shape: authorize a transfer of the
+    // full desired amount per token — the contract pulls exactly those
+    // amounts and refunds whatever the range doesn't need.
+    const transfers = this.pool.tokens.map((token, i) =>
+      authorizedInvocation(token, "transfer", [
+        new Address(owner).toScVal(),
+        new Address(this.pool.address).toScVal(),
+        nativeToScVal(this.desired[i], { type: "i128" }),
+      ]),
+    );
+    const confirmed = await this.ctx.submitContract(this.pool.address, "deposit_position", args, [
+      sourceAccountEntry(
+        authorizedInvocation(this.pool.address, "deposit_position", args, transfers),
+      ),
+    ]);
+    const [used, minted] = scValToNative(confirmed.returnValue!) as [bigint[], bigint];
+    return { txHash: confirmed.txHash, amounts: used, liquidity: minted };
   }
 }

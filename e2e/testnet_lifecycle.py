@@ -9,7 +9,7 @@ import time
 
 from stellar_sdk import Keypair, TransactionEnvelope
 
-from aquarius import AquariusClient, AquariusError, Asset, StaleSimulationError, XLM
+from aquarius import AquariusClient, AquariusError, Asset, StaleSimulationError, XLM, snap_tick
 
 AQUA = Asset.classic("AQUA", "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER")
 EXPLORER = "https://stellar.expert/explorer/testnet/tx/"
@@ -92,5 +92,43 @@ if concentrated is not None:
         raise SystemExit("concentrated deposit was not refused")
     except AquariusError:
         print("concentrated deposit refused as designed")
+
+    # full range-position lifecycle on the concentrated pool (beta surface)
+    fuel = client.swap(XLM, AQUA, amount_in=2_0000000, retries=3, slippage=0.05)
+    spacing = concentrated.tick_spacing()
+    tick = concentrated.current_tick()
+    lower = snap_tick(tick - 10 * spacing, spacing)
+    upper = snap_tick(tick + 10 * spacing, spacing, up=True)
+
+    def open_position():
+        est = concentrated.estimate_position_deposit(
+            {XLM: 1_0000000, AQUA: fuel.amount_out // 2}, tick_range=(lower, upper)
+        )
+        assert est.liquidity > 0, "estimate quoted no liquidity"
+        return est.execute(slippage=0.05)
+
+    position = retry_stale(open_position)
+    assert position.liquidity > 0, "deposit minted no liquidity"
+    print(f"opened position [{lower}, {upper}] -> {position.liquidity} liquidity  "
+          f"{EXPLORER}{position.tx_hash}")
+    assert (lower, upper) in concentrated.position_ranges(), "position missing from snapshot"
+
+    value = concentrated.position_value(lower, upper)
+    assert len(value.total) == 2, "position value arity mismatch"
+    print(f"position value: total {[fmt(a) for a in value.total]}, "
+          f"fees {[fmt(a) for a in value.fees]}")
+
+    half = retry_stale(lambda: concentrated.withdraw_position(
+        lower, upper, position.liquidity // 2, slippage=0.05))
+    print(f"withdrew half: {[fmt(a) for a in half.amounts]}  {EXPLORER}{half.tx_hash}")
+
+    fees = retry_stale(lambda: concentrated.claim_position_fees(lower, upper))
+    print(f"claimed position fees: {[fmt(a) for a in fees.amounts]}  {EXPLORER}{fees.tx_hash}")
+
+    rest = retry_stale(lambda: concentrated.withdraw_position(lower, upper, slippage=0.05))
+    print(f"closed position: {[fmt(a) for a in rest.amounts]}  {EXPLORER}{rest.tx_hash}")
+    assert (lower, upper) not in concentrated.position_ranges(), "position not cleaned up"
+else:
+    print("no concentrated XLM/AQUA pool on testnet — concentrated segment skipped")
 
 print("\ntestnet lifecycle: all checks passed")
