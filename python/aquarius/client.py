@@ -4,12 +4,13 @@ import time
 from dataclasses import dataclass, field
 
 import requests
-from stellar_sdk import SorobanServer, scval
+from stellar_sdk import Address, SorobanServer, scval
 from stellar_sdk.xdr import SCVal
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .authorization import authorized_invocation, source_account_entry
 from .assets import Asset
+from .collector import FeeCollector
 from .errors import AquariusError, SlippageError
 from .pool import Pool, Position, parse_pools_map, sort_token_ids
 from .networks import NETWORKS, NetworkConfig
@@ -217,6 +218,47 @@ class AquariusClient:
                 if delay:
                     time.sleep(delay)
         raise AquariusError("unreachable: the retry loop always returns or raises")
+
+    # -- provider-fee collectors ---------------------------------------------------
+
+    def fee_collector(self, address: str) -> FeeCollector:
+        """Attach to a deployed provider-fee collector contract."""
+        return FeeCollector(address=address, _client=self)
+
+    def deploy_fee_collector(
+        self,
+        *,
+        max_fee_fraction: int,
+        fee_denominator: int = 10_000,
+        fee_destination: str | None = None,
+        factory: str | None = None,
+    ) -> FeeCollector:
+        """Deploy a new provider-fee collector through the factory.
+
+        The signer becomes the collector's operator; ``fee_destination``
+        defaults to the operator. ``factory`` overrides the network's known
+        factory — required on networks without one.
+        """
+        factory_id = factory or self.network.collector_factory
+        if factory_id is None:
+            raise AquariusError(
+                "No collector factory known for this network — pass factory=..."
+            )
+        operator = self._read_source(require_signer=True)
+        args = [
+            scval.to_address(operator),
+            scval.to_address(fee_destination or operator),
+            scval.to_uint32(max_fee_fraction),
+            scval.to_uint32(fee_denominator),
+        ]
+        confirmed = self._submit_contract(
+            factory_id, "deploy_swap_fee_contract", args,
+            auth=[source_account_entry(
+                authorized_invocation(factory_id, "deploy_swap_fee_contract", args)
+            )],
+        )
+        address = Address.from_xdr_sc_address(confirmed.return_value.address).address
+        return FeeCollector(address=address, _client=self)
 
     # -- Stellar quirks, absorbed --------------------------------------------------
 

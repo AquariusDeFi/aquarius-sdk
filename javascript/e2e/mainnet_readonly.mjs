@@ -57,6 +57,16 @@ console.log(
   `estimate [${est.amounts.map(fmt)}] -> ${est.liquidity} liquidity`,
 );
 
+// Provider-fee collector reads against a live production collector (the
+// LOBSTR frontend's) — proves the collector ABI without funds or signer.
+const collector = aqua.feeCollector("CCPGFQUTSEHDIQODRE3GJDNE64A35HZ32L7LPDN7GXOCIYNBJSMS6V6B");
+const dest = await collector.feeDestination();
+const maxFee = await collector.maxFeeFraction();
+assert.ok(dest.startsWith("G") && maxFee > 0);
+const accrued = await collector.balance(AQUA);
+assert.ok(accrued >= 0n);
+console.log(`collector: destination ${dest.slice(0, 8)}…, max fee ${maxFee}, accrued AQUA ${fmt(accrued)}`);
+
 await assert.rejects(quote.execute(), AquariusError, "execute() without a signer was not refused");
 console.log("signer-less execute() refused cleanly");
 
