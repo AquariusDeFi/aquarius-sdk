@@ -90,6 +90,17 @@ if (concentrated) {
   );
   console.log("concentrated deposit refused as designed");
 
+  // Close positions a previous crashed run left behind. The contract caps
+  // an account at 20 ranges, so leftovers would eventually brick this
+  // wallet — and the final cleanup assert below only means something when
+  // the run starts from zero.
+  for (const [staleLower, staleUpper] of await concentrated.positionRanges()) {
+    await retryStale(() =>
+      concentrated.withdrawPosition({ tickLower: staleLower, tickUpper: staleUpper, slippage: 0.05 }),
+    );
+    console.log(`swept leftover position [${staleLower}, ${staleUpper})`);
+  }
+
   // full range-position lifecycle on the concentrated pool (beta surface)
   const fuel = await aqua.swap({ from: XLM, to: AQUA, amountIn: 20_000_000n, retries: 3, slippage: 0.05 });
   const spacing = await concentrated.tickSpacing();
