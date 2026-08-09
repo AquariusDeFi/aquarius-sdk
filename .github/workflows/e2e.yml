@@ -74,7 +74,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: pip install -e ./python
       - run: python e2e/mainnet_lifecycle.py
+        env:
+          MAINNET_E2E_SECRET: ${{ secrets.MAINNET_E2E_SECRET }}
+      # The JS mirror runs second in the same job: both share the wallet, and
+      # each starts from the flat state the other leaves behind.
+      - run: npm install
+        working-directory: javascript
+      - run: npm run build
+        working-directory: javascript
+      - run: node javascript/e2e/mainnet_lifecycle.mjs
         env:
           MAINNET_E2E_SECRET: ${{ secrets.MAINNET_E2E_SECRET }}
