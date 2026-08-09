@@ -71,10 +71,20 @@ export class FeeCollector {
 
   /** Accrued, unclaimed fees in the given token, in base units. */
   async balance(asset: Asset | string): Promise<bigint> {
-    const value = await this.ctx.readContract(this.tokenId(asset), "balance", [
-      new Address(this.address).toScVal(),
-    ]);
-    return scValToNative(value) as bigint;
+    // A token the collector has never held has no balance entry, so its
+    // contract fails simulation with `Storage, MissingValue` — semantically
+    // an empty balance, not an error.
+    try {
+      const value = await this.ctx.readContract(this.tokenId(asset), "balance", [
+        new Address(this.address).toScVal(),
+      ]);
+      return scValToNative(value) as bigint;
+    } catch (error) {
+      if (error instanceof AquariusError && error.message.includes("MissingValue")) {
+        return 0n;
+      }
+      throw error;
+    }
   }
 
   /**

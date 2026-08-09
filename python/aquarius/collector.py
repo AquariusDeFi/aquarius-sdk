@@ -49,11 +49,21 @@ class FeeCollector:
         return value.u32.uint32
 
     def balance(self, asset) -> int:
-        """Accrued, unclaimed fees in the given token, in base units."""
+        """Accrued, unclaimed fees in the given token, in base units.
+
+        Returns 0 for a token the collector has never held: a token contract
+        with no balance entry for this address fails simulation with
+        ``Storage, MissingValue`` — semantically an empty balance, not an error.
+        """
         token = self._token_id(asset)
-        value = self._client._read_contract(
-            token, "balance", [scval.to_address(self.address)]
-        )
+        try:
+            value = self._client._read_contract(
+                token, "balance", [scval.to_address(self.address)]
+            )
+        except AquariusError as error:
+            if "MissingValue" in str(error):
+                return 0
+            raise
         return scval.from_int128(value)
 
     def fee_config(self, fee_fraction: int, *, recipient: str | None = None,

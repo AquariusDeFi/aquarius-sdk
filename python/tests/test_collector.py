@@ -110,6 +110,27 @@ def test_claim_and_swap_quotes_the_balance_and_guards_the_swap():
     assert claimed.amount_in == 1000 and claimed.amount_out == 950
 
 
+def test_balance_returns_zero_for_a_never_held_token():
+    client = FakeClient()
+
+    def raise_missing(contract_id, fn, args):
+        raise AquariusError("HostError: Error(Storage, MissingValue)")
+
+    client._read_contract = raise_missing
+    assert collector(client).balance(TOKEN) == 0
+
+
+def test_balance_reraises_other_read_errors():
+    client = FakeClient()
+
+    def raise_other(contract_id, fn, args):
+        raise AquariusError("HostError: Error(Contract, #205)")
+
+    client._read_contract = raise_other
+    with pytest.raises(AquariusError, match="205"):
+        collector(client).balance(TOKEN)
+
+
 def test_claim_and_swap_refuses_an_empty_balance():
     client = FakeClient(reads={"balance": scval.to_int128(0)})
     with pytest.raises(AquariusError, match="Nothing to claim"):

@@ -103,6 +103,22 @@ test("claimAndSwap quotes the balance and guards the swap", async () => {
   assert.equal(claimed.amountOut, 950n);
 });
 
+test("balance returns zero for a never-held token", async () => {
+  const ctx = fakeContext();
+  ctx.readContract = async () => {
+    throw new AquariusError("HostError: Error(Storage, MissingValue)");
+  };
+  assert.equal(await new FeeCollector(COLLECTOR, ctx).balance(TOKEN), 0n);
+});
+
+test("balance re-raises other read errors", async () => {
+  const ctx = fakeContext();
+  ctx.readContract = async () => {
+    throw new AquariusError("HostError: Error(Contract, #205)");
+  };
+  await assert.rejects(new FeeCollector(COLLECTOR, ctx).balance(TOKEN), /205/);
+});
+
 test("claimAndSwap refuses an empty balance", async () => {
   const ctx = fakeContext({ balance: nativeToScVal(0n, { type: "i128" }) });
   await assert.rejects(
