@@ -74,8 +74,22 @@ async function balances() {
   return [xlm, aquaHeld];
 }
 
+// Balance gates: below the floor the lifecycle refuses to run (a failed
+// guard mid-run is worse than not starting); below the warning line it
+// still runs but flags the run so the wallet gets topped up in time.
+const MIN_BALANCE = 50_000_000n;
+const TOP_UP_WARNING = 100_000_000n;
+
 let [xlmStart, aquaHave] = await balances();
-assert.ok(xlmStart >= 50_000_000n, `wallet too low for the lifecycle: ${fmt(xlmStart)} XLM`);
+if (xlmStart < MIN_BALANCE) {
+  console.log(`::error title=E2E wallet needs a top-up::${keypair.publicKey()} holds `
+    + `${fmt(xlmStart)} XLM, below the ${fmt(MIN_BALANCE)} floor — send XLM to it and re-run.`);
+  process.exit(1);
+}
+if (xlmStart < TOP_UP_WARNING) {
+  console.log(`::warning title=E2E wallet running low::${keypair.publicKey()} holds `
+    + `${fmt(xlmStart)} XLM — top up soon; runs stop below ${fmt(MIN_BALANCE)}.`);
+}
 await aqua.ensureTrustline(AQUA);
 
 if (aquaHave < 1_000_000_000n) {
