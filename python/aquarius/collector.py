@@ -60,9 +60,13 @@ class FeeCollector:
                    denominator: int = 10_000):
         """A ProviderFeeConfig routing swaps through this collector.
 
-        `denominator` must match the value the collector was deployed with
-        (the contract exposes no getter for it; 10_000 is the documented
-        convention).
+        The fee is the fraction ``fee_fraction / denominator`` of each
+        swap's output: ``fee_config(10)`` is 10/10_000 = **0.1%**,
+        ``fee_config(30)`` is 0.3%. ``denominator`` must match the value
+        the collector was deployed with — there is no getter for it, and
+        deployments differ (the docs use 10_000; LOBSTR's production
+        collector uses 100_000, where 0.1% is ``fee_config(100,
+        denominator=100_000)``).
         """
         from .client import ProviderFeeConfig
 

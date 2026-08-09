@@ -79,7 +79,7 @@ const quote = await aqua.quote({
   slippage: 0.005,
   providerFee: {
     contractId: "C...",
-    feeFraction: 30,
+    feeFraction: 30,   // 30 / feeDenominator=10000 -> 0.3% of the output
     feeDenominator: 10_000,
     recipient: "G...",
   },

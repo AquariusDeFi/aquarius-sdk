@@ -76,7 +76,7 @@ from aquarius import ProviderFeeConfig
 
 provider_fee = ProviderFeeConfig(
     contract_id="C...",
-    fee_fraction=30,
+    fee_fraction=30,   # 30 / fee_denominator=10_000 -> 0.3% of the output
     fee_denominator=10_000,
     recipient="G...",
 )

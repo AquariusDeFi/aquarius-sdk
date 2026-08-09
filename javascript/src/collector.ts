@@ -78,9 +78,12 @@ export class FeeCollector {
   }
 
   /**
-   * A ProviderFeeConfig routing swaps through this collector. `denominator`
-   * must match the value the collector was deployed with (the contract
-   * exposes no getter; 10000 is the documented convention).
+   * A ProviderFeeConfig routing swaps through this collector. The fee is
+   * `feeFraction / denominator` of each swap's output: `feeConfig(10)` is
+   * 10/10000 = **0.1%**, `feeConfig(30)` is 0.3%. `denominator` must match
+   * the value the collector was deployed with — there is no getter, and
+   * deployments differ (the docs use 10000; LOBSTR's production collector
+   * uses 100000, where 0.1% is `feeConfig(100, { denominator: 100000 })`).
    */
   feeConfig(feeFraction: number, options?: { recipient?: string; denominator?: number }): ProviderFeeConfig {
     return {
