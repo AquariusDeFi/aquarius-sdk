@@ -9,11 +9,13 @@ export { Asset, XLM } from "./assets.js";
 export {
   AquariusClient,
   type AquariusConfig,
+  type ProviderFeeConfig,
   type Quote,
   type QuoteParams,
   type Receipt,
 } from "./client.js";
 export type { Signer } from "./signer.js";
+export { FeeCollector, type ClaimedFees } from "./collector.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
 export type { FindPathRequest, FindPathResponse, ParsedRoute } from "./api.js";
 export { NETWORKS, type NetworkConfig } from "./networks.js";

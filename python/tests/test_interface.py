@@ -99,6 +99,8 @@ DIAG_FIXTURE = json.loads((TESTDATA / "diagnostic_events_missing_trustline.json"
 def test_diagnostics_detect_missing_trustline():
     error = error_from_diagnostics(DIAG_FIXTURE["events_xdr"])
     assert isinstance(error, NoTrustlineError)
+    assert "output recipient" in str(error)
+    assert "ensure_trustline" not in str(error)
 
 
 def test_diagnostics_fall_back_to_contract_code():

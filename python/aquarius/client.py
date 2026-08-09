@@ -4,12 +4,13 @@ import time
 from dataclasses import dataclass, field
 
 import requests
-from stellar_sdk import SorobanServer, scval
+from stellar_sdk import Address, SorobanServer, scval
 from stellar_sdk.xdr import SCVal
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .authorization import authorized_invocation, source_account_entry
 from .assets import Asset
+from .collector import FeeCollector
 from .errors import AquariusError, SlippageError
 from .pool import Pool, Position, parse_pools_map, sort_token_ids
 from .networks import NETWORKS, NetworkConfig
@@ -17,6 +18,39 @@ from .signer import signer_public_key
 from .submit import SubmitEngine
 
 _FRIENDBOT_URL = "https://friendbot.stellar.org"
+_U32_MAX = 2**32 - 1
+
+
+@dataclass(frozen=True)
+class ProviderFeeConfig:
+    """Configuration for a swap through a provider-fee collector contract."""
+
+    contract_id: str
+    fee_fraction: int
+    fee_denominator: int
+    recipient: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.contract_id, str) or not self.contract_id:
+            raise AquariusError("provider fee contract_id must be a non-empty address")
+        if self.recipient is not None and (
+            not isinstance(self.recipient, str) or not self.recipient
+        ):
+            raise AquariusError("provider fee recipient must be a non-empty address")
+        if type(self.fee_fraction) is not int or not 0 <= self.fee_fraction <= _U32_MAX:
+            raise AquariusError("provider fee_fraction must be a u32")
+        if type(self.fee_denominator) is not int or not 1 <= self.fee_denominator <= _U32_MAX:
+            raise AquariusError("provider fee_denominator must be a positive u32")
+        if self.fee_fraction >= self.fee_denominator:
+            raise AquariusError("provider fee_fraction must be smaller than fee_denominator")
+
+    def _net_amount(self, gross: int) -> int:
+        fee = (gross * self.fee_fraction + self.fee_denominator - 1) // self.fee_denominator
+        return gross - fee
+
+    def _gross_amount(self, net: int) -> int:
+        divisor = self.fee_denominator - self.fee_fraction
+        return (net * self.fee_denominator + divisor - 1) // divisor
 
 
 @dataclass
@@ -107,6 +141,7 @@ class AquariusClient:
         amount_in: int | None = None,
         amount_out: int | None = None,
         slippage: float = 0.01,
+        provider_fee: ProviderFeeConfig | None = None,
     ) -> Quote:
         """Best route for a swap. Pass amount_in (exact input) or amount_out (exact output)."""
         if (amount_in is None) == (amount_out is None):
@@ -116,23 +151,38 @@ class AquariusClient:
         token_in = from_.contract_id(self.network.passphrase)
         token_out = to.contract_id(self.network.passphrase)
 
+        route_amount = amount_in if exact_input else amount_out
+        if provider_fee is not None and not exact_input:
+            route_amount = provider_fee._gross_amount(amount_out)
+
         response = self.api.find_path(
             {
                 "token_in_address": token_in,
                 "token_out_address": token_out,
-                "amount": str(amount_in if exact_input else amount_out),
+                "amount": str(route_amount),
             },
             exact_input,
         )
         parsed = parse_find_path_response(
             response,
             amount_in=amount_in,
-            amount_out=amount_out,
+            amount_out=None if exact_input else route_amount,
             slippage_bps=slippage_bps,
             pair_label=f"{from_} -> {to}",
         )
+        if provider_fee is not None:
+            if exact_input:
+                parsed.amount_out = provider_fee._net_amount(parsed.amount_out)
+                parsed.guard = provider_fee._net_amount(parsed.guard)
+            else:
+                parsed.amount_out = amount_out
         params = dict(
-            from_=from_, to=to, amount_in=amount_in, amount_out=amount_out, slippage=slippage
+            from_=from_,
+            to=to,
+            amount_in=amount_in,
+            amount_out=amount_out,
+            slippage=slippage,
+            provider_fee=provider_fee,
         )
         return Quote(
             amount_in=parsed.amount_in,
@@ -168,6 +218,47 @@ class AquariusClient:
                 if delay:
                     time.sleep(delay)
         raise AquariusError("unreachable: the retry loop always returns or raises")
+
+    # -- provider-fee collectors ---------------------------------------------------
+
+    def fee_collector(self, address: str) -> FeeCollector:
+        """Attach to a deployed provider-fee collector contract."""
+        return FeeCollector(address=address, _client=self)
+
+    def deploy_fee_collector(
+        self,
+        *,
+        max_fee_fraction: int,
+        fee_denominator: int = 10_000,
+        fee_destination: str | None = None,
+        factory: str | None = None,
+    ) -> FeeCollector:
+        """Deploy a new provider-fee collector through the factory.
+
+        The signer becomes the collector's operator; ``fee_destination``
+        defaults to the operator. ``factory`` overrides the network's known
+        factory — required on networks without one.
+        """
+        factory_id = factory or self.network.collector_factory
+        if factory_id is None:
+            raise AquariusError(
+                "No collector factory known for this network — pass factory=..."
+            )
+        operator = self._read_source(require_signer=True)
+        args = [
+            scval.to_address(operator),
+            scval.to_address(fee_destination or operator),
+            scval.to_uint32(max_fee_fraction),
+            scval.to_uint32(fee_denominator),
+        ]
+        confirmed = self._submit_contract(
+            factory_id, "deploy_swap_fee_contract", args,
+            auth=[source_account_entry(
+                authorized_invocation(factory_id, "deploy_swap_fee_contract", args)
+            )],
+        )
+        address = Address.from_xdr_sc_address(confirmed.return_value.address).address
+        return FeeCollector(address=address, _client=self)
 
     # -- Stellar quirks, absorbed --------------------------------------------------
 
@@ -344,29 +435,39 @@ class AquariusClient:
         """
         user = signer_public_key(self._require_signer())
         token_in = quote._params["from_"].contract_id(self.network.passphrase)
+        provider_fee = quote._params.get("provider_fee")
+        # With a provider fee the collector is the invoked contract: it pulls
+        # the tokens from the user, takes its cut, and drives the router as
+        # itself — so both the call and the bounded transfer target it.
+        target = self.network.router if provider_fee is None else provider_fee.contract_id
         fn = "swap_chained" if quote.is_exact_input else "swap_chained_strict_receive"
         amount = quote.amount_in if quote.is_exact_input else quote.amount_out
         transfer_amount = quote.amount_in if quote.is_exact_input else quote.guard
 
-        args = [
-            scval.to_address(user),
+        args = [scval.to_address(user)]
+        if provider_fee is not None and provider_fee.recipient is not None:
+            fn += "_to"
+            args.append(scval.to_address(provider_fee.recipient))
+        args.extend([
             SCVal.from_xdr(quote._parsed.swap_chain_xdr),
             scval.to_address(token_in),
             scval.to_uint128(amount),
             scval.to_uint128(quote.guard),
-        ]
+        ])
+        if provider_fee is not None:
+            args.append(scval.to_uint32(provider_fee.fee_fraction))
 
         transfer_invocation = authorized_invocation(token_in, "transfer", [
             scval.to_address(user),
-            scval.to_address(self.network.router),
+            scval.to_address(target),
             scval.to_int128(transfer_amount),
         ])
         root_entry = source_account_entry(
-            authorized_invocation(self.network.router, fn, args, [transfer_invocation])
+            authorized_invocation(target, fn, args, [transfer_invocation])
         )
 
         return lambda b: b.append_invoke_contract_function_op(
-            contract_id=self.network.router,
+            contract_id=target,
             function_name=fn,
             parameters=args,
             auth=[root_entry],
@@ -394,6 +495,7 @@ class AquariusClient:
                 amount_in=quote._params["amount_in"],
                 amount_out=quote._params["amount_out"],
                 slippage=quote._params["slippage"],
+                provider_fee=quote._params["provider_fee"],
             ))
             raise
 

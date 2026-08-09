@@ -12,6 +12,8 @@ export interface NetworkConfig {
    * convention the documentation examples use).
    */
   readSource: string;
+  /** Provider-fee collector factory; absent where not deployed (testnet). */
+  collectorFactory?: string;
 }
 
 export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
@@ -24,6 +26,7 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     horizonUrl: "https://horizon.stellar.org",
     passphrase: Networks.PUBLIC,
     readSource: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+    collectorFactory: "CA4Q2T6FRAFYJYSMDJV7F6B7RL5PS6QS2UOZHBMCT2KSMGQRAAKP2MKO",
   },
   testnet: {
     router: "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
