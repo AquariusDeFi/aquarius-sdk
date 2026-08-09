@@ -89,6 +89,10 @@ def is_user_rejection(error: object) -> bool:
 # Checked before contract codes: the same situation surfaces under different
 # codes depending on where in the chain the payout fails.
 _TRUSTLINE_MARKER = "trustline entry is missing"
+_NO_TRUSTLINE_MESSAGE = (
+    "The output recipient holds no trustline for the output asset — "
+    "create the trustline on that recipient before retrying"
+)
 
 
 def classify_contract_code(code: int, tx_hash: str | None = None) -> AquariusError:
@@ -115,11 +119,7 @@ def classify_contract_error(message: str, tx_hash: str | None = None) -> Aquariu
     Contract failures surface as substrings like ``Error(Contract, #2006)``.
     """
     if _TRUSTLINE_MARKER in message:
-        return NoTrustlineError(
-            "The receiving account holds no trustline for the output asset — "
-            "create it first (ensure_trustline)",
-            tx_hash,
-        )
+        return NoTrustlineError(_NO_TRUSTLINE_MESSAGE, tx_hash)
     match = _CONTRACT_ERROR_RE.search(message)
     if match:
         return classify_contract_code(int(match.group(1)), tx_hash)
@@ -172,11 +172,7 @@ def error_from_diagnostics(
     storage = False
     for raw, event in cascade:
         if _TRUSTLINE_MARKER.encode() in base64.b64decode(raw):
-            return NoTrustlineError(
-                "The receiving account holds no trustline for the output asset — "
-                "create it first (ensure_trustline)",
-                tx_hash,
-            )
+            return NoTrustlineError(_NO_TRUSTLINE_MESSAGE, tx_hash)
         for topic in event.event.body.v0.topics:
             if topic.type != SCValType.SCV_ERROR:
                 continue

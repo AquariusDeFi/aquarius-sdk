@@ -16,6 +16,9 @@ class NetworkConfig:
     # reads (simulations need an existing source account; the AQUA issuer is the
     # convention the documentation examples use).
     read_source: str
+    # Provider-fee collector factory; None where not deployed (testnet) — pass
+    # factory= explicitly to deploy_fee_collector there.
+    collector_factory: str | None = None
 
 
 NETWORKS: dict[str, NetworkConfig] = {
@@ -28,6 +31,7 @@ NETWORKS: dict[str, NetworkConfig] = {
         horizon_url="https://horizon.stellar.org",
         passphrase=Network.PUBLIC_NETWORK_PASSPHRASE,
         read_source="GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+        collector_factory="CA4Q2T6FRAFYJYSMDJV7F6B7RL5PS6QS2UOZHBMCT2KSMGQRAAKP2MKO",
     ),
     "testnet": NetworkConfig(
         router="CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
