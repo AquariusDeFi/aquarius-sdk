@@ -58,8 +58,8 @@ print(f"concentrated: tick {slot.tick}, spacing {spacing}, "
       f"{len(ranges)} e2e-wallet position(s), estimate "
       f"{[fmt(a) for a in est.amounts]} -> {est.liquidity} liquidity")
 
-# Provider-fee collector reads against a live production collector (the
-# LOBSTR frontend's) — proves the collector ABI without funds or signer.
+# Provider-fee collector reads against a live production collector —
+# proves the collector ABI without funds or signer.
 collector = client.fee_collector("CCPGFQUTSEHDIQODRE3GJDNE64A35HZ32L7LPDN7GXOCIYNBJSMS6V6B")
 dest = collector.fee_destination()
 assert dest.startswith("G") and collector.max_fee_fraction() > 0

@@ -57,8 +57,8 @@ console.log(
   `estimate [${est.amounts.map(fmt)}] -> ${est.liquidity} liquidity`,
 );
 
-// Provider-fee collector reads against a live production collector (the
-// LOBSTR frontend's) — proves the collector ABI without funds or signer.
+// Provider-fee collector reads against a live production collector —
+// proves the collector ABI without funds or signer.
 const collector = aqua.feeCollector("CCPGFQUTSEHDIQODRE3GJDNE64A35HZ32L7LPDN7GXOCIYNBJSMS6V6B");
 const dest = await collector.feeDestination();
 const maxFee = await collector.maxFeeFraction();
