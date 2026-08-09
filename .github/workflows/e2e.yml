@@ -35,7 +35,7 @@ jobs:
         working-directory: javascript
       - run: node javascript/e2e/testnet_lifecycle.mjs
 
-  mainnet-readonly:
+  mainnet-readonly-python:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -43,11 +43,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: pip install -e ./python
+      - run: python e2e/mainnet_readonly.py
+
+  mainnet-readonly-javascript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pip install -e ./python
-      - run: python e2e/mainnet_readonly.py
       - run: npm install
         working-directory: javascript
       - run: npm run build
@@ -59,10 +65,11 @@ jobs:
   # different versions), so every PR must carry a live mainnet write proof;
   # that is the default gate for write-path changes, not an afterthought.
   # Safe on PRs because GitHub withholds secrets from fork PRs (the script
-  # then self-skips), and the global non-cancelling concurrency group keeps
-  # two runs from trading against each other. Post-merge pushes are excluded:
+  # then self-skips), and the shared non-cancelling concurrency group keeps
+  # any two lifecycle jobs — within a run or across runs — from trading
+  # against each other on the shared wallet. Post-merge pushes are excluded:
   # the PR already proved the exact commits, and the nightly covers drift.
-  mainnet-lifecycle:
+  mainnet-lifecycle-python:
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -76,5 +83,28 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ./python
       - run: python e2e/mainnet_lifecycle.py
+        env:
+          MAINNET_E2E_SECRET: ${{ secrets.MAINNET_E2E_SECRET }}
+
+  # Runs after the Python lifecycle: both share the wallet, and each starts
+  # from the flat state the other leaves behind.
+  mainnet-lifecycle-javascript:
+    if: github.event_name != 'push'
+    needs: mainnet-lifecycle-python
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: mainnet-e2e
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+        working-directory: javascript
+      - run: npm run build
+        working-directory: javascript
+      - run: node javascript/e2e/mainnet_lifecycle.mjs
         env:
           MAINNET_E2E_SECRET: ${{ secrets.MAINNET_E2E_SECRET }}

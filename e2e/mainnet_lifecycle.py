@@ -71,8 +71,21 @@ def balances() -> tuple[int, int]:
     return xlm, aqua
 
 
+# Balance gates: below the floor the lifecycle refuses to run (a failed
+# guard mid-run is worse than not starting); below the warning line it
+# still runs but flags the run so the wallet gets topped up in time.
+MIN_BALANCE = 5_0000000
+TOP_UP_WARNING = 10_0000000
+
 xlm_start, aqua_have = balances()
-assert xlm_start >= 5_0000000, f"wallet too low for the lifecycle: {fmt(xlm_start)} XLM"
+if xlm_start < MIN_BALANCE:
+    print(f"::error title=E2E wallet needs a top-up::{keypair.public_key} holds "
+          f"{fmt(xlm_start)} XLM, below the {fmt(MIN_BALANCE)} floor — "
+          f"send XLM to it and re-run.")
+    sys.exit(1)
+if xlm_start < TOP_UP_WARNING:
+    print(f"::warning title=E2E wallet running low::{keypair.public_key} holds "
+          f"{fmt(xlm_start)} XLM — top up soon; runs stop below {fmt(MIN_BALANCE)}.")
 client.ensure_trustline(AQUA)
 
 if aqua_have < 100_0000000:
