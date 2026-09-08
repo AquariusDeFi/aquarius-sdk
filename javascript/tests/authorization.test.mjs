@@ -41,6 +41,7 @@ function poolContext(type) {
       if (fn === "share_id" && type !== "concentrated") return new Address(SHARE_TOKEN).toScVal();
       throw new Error(`Unexpected read: ${fn}`);
     },
+    submitRouter: (fn, args, auth) => ctx.submitContract(ROUTER, fn, args, auth),
     submitContract: async (contract, fn, args, auth) => {
       ctx.submitted.push({ contract, fn, args, auth });
       const returnValue = fn === "deposit"

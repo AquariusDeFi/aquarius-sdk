@@ -66,6 +66,11 @@ export interface PoolContext {
   readSource(requireSigner?: boolean): string;
   readRouter(fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal>;
   readContract(contractId: string, fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal>;
+  submitRouter(
+    fn: string,
+    args: xdr.ScVal[],
+    auth: xdr.SorobanAuthorizationEntry[],
+  ): Promise<ConfirmedTx>;
   submitContract(
     contractId: string,
     fn: string,
@@ -234,7 +239,7 @@ export class Pool {
         ]),
       ],
     );
-    const confirmed = await this.ctx.submitContract(this.ctx.router, "deposit", args, [
+    const confirmed = await this.ctx.submitRouter("deposit", args, [
       sourceAccountEntry(authorizedInvocation(this.ctx.router, "deposit", args, [
         authorizedInvocation(this.address, "deposit", [
           user, xdr.ScVal.scvVec(desired.map(u128)), u128(minShares),
@@ -267,7 +272,7 @@ export class Pool {
         user, nativeToScVal(params.shares, { type: "i128" }),
       ]),
     ];
-    const confirmed = await this.ctx.submitContract(this.ctx.router, "withdraw", args, [
+    const confirmed = await this.ctx.submitRouter("withdraw", args, [
       sourceAccountEntry(authorizedInvocation(this.ctx.router, "withdraw", args, [
         authorizedInvocation(this.address, "withdraw", [
           user, u128(params.shares), xdr.ScVal.scvVec(minimums.map(u128)),
@@ -284,7 +289,7 @@ export class Pool {
   async claimRewards(): Promise<ClaimResult> {
     const user = new Address(this.ctx.readSource(true)).toScVal();
     const args = [user, ...this.baseArgs()];
-    const confirmed = await this.ctx.submitContract(this.ctx.router, "claim", args, [
+    const confirmed = await this.ctx.submitRouter("claim", args, [
       sourceAccountEntry(authorizedInvocation(this.ctx.router, "claim", args, [
         authorizedInvocation(this.address, "claim", [user]),
       ])),
@@ -706,7 +711,7 @@ export class PoolQuote {
       ]),
     );
     try {
-      const confirmed = await this.ctx.submitContract(this.ctx.router, "swap", args, [entry]);
+      const confirmed = await this.ctx.submitRouter("swap", args, [entry]);
       return {
         txHash: confirmed.txHash,
         amountIn: this.amountIn,

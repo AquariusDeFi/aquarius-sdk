@@ -581,7 +581,7 @@ class Pool:
         auth = [source_account_entry(authorized_invocation(
             self._client.network.router, fn, router_args, [pool_call],
         ))]
-        return self._client._submit_contract(self._client.network.router, fn, router_args, auth=auth)
+        return self._client._submit_router(fn, router_args, auth=auth)
 
 
 @dataclass
@@ -636,9 +636,7 @@ class PoolQuote:
         from .client import Receipt  # runtime import: client.py imports this module
 
         try:
-            confirmed = client._submit_contract(
-                client.network.router, "swap", args, auth=[entry]
-            )
+            confirmed = client._submit_router("swap", args, auth=[entry])
         except SlippageError as error:
             error.attach_requote(lambda: pool.quote(
                 self._token_in, self._token_out,

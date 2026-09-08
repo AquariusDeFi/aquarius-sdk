@@ -347,7 +347,7 @@ export class AquariusClient {
       args: xdr.ScVal[],
       auth: xdr.SorobanAuthorizationEntry[],
     ): Promise<unknown> => {
-      const result = await this.submitContract(this.network.router, fn, args, auth);
+      const result = await this.submitRouter(fn, args, auth);
       return result.returnValue ? scValToNative(result.returnValue) : undefined;
     },
   };
@@ -436,6 +436,7 @@ export class AquariusClient {
       readSource: (requireSigner?: boolean) => this.readSource(requireSigner),
       readRouter: (fn, args) => this.readRouter(fn, args),
       readContract: (contractId, fn, args) => this.readContract(contractId, fn, args),
+      submitRouter: (fn, args, auth) => this.submitRouter(fn, args, auth),
       submitContract: (contractId, fn, args, auth) =>
         this.submitContract(contractId, fn, args, auth),
     });
@@ -461,6 +462,14 @@ export class AquariusClient {
       () => Operation.invokeContractFunction({ contract: contractId, function: fn, args }),
       this.signer,
     );
+  }
+
+  private submitRouter(
+    fn: string,
+    args: xdr.ScVal[],
+    auth: xdr.SorobanAuthorizationEntry[],
+  ): Promise<ConfirmedTx> {
+    return this.submitContract(this.network.router, fn, args, auth);
   }
 
   private async submitContract(
