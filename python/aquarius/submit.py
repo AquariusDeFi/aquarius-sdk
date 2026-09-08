@@ -10,7 +10,6 @@ from stellar_sdk.xdr import SCVal, TransactionMeta, TransactionResult
 
 from .errors import (
     AquariusError,
-    SlippageError,
     TxTimeoutError,
     classify_contract_error,
     error_from_diagnostics,
@@ -230,12 +229,9 @@ class SubmitEngine:
             diagnosed = error_from_diagnostics(result.diagnostic_events_xdr, tx_hash)
             if diagnosed is not None:
                 raise diagnosed
-            # No recognizable cause in the diagnostics: simulation already
-            # passed, so pool state most likely moved past the guard between
-            # simulation and inclusion.
-            raise SlippageError(
-                "The transaction failed on-chain — pool state likely moved past your "
-                "guard between simulation and inclusion. Re-quote and retry.",
+            raise AquariusError(
+                "The transaction failed on-chain without recognized diagnostics. "
+                "Inspect the transaction hash before retrying.",
                 tx_hash,
             )
         raise TxTimeoutError("Transaction was not confirmed in time", tx_hash)

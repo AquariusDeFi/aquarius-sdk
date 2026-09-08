@@ -34,6 +34,14 @@ quote = aqua.quote(XLM, AQUA, amount_in=10_0000000)   # amount_out= for exact ou
 receipt = quote.execute()
 ```
 
+`fund_with_friendbot()` / `fundWithFriendbot()` waits up to 30 seconds after
+funding for the account to appear on the configured Horizon and RPC servers.
+Only account absence is retried; a readiness timeout does not mean funding failed.
+
+`swap(..., retries=...)` re-quotes only after a diagnosed slippage error. An
+on-chain failure without recognized diagnostics raises `AquariusError` with the
+transaction hash; inspect that transaction before deciding whether to retry.
+
 ## Design principles
 
 1. **Two-phase everything.** `quote()` → `Quote.execute()`. UIs show before they commit; the quote object carries everything needed to execute, so what you quoted is what you execute.

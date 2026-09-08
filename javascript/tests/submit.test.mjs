@@ -4,7 +4,8 @@ import { test } from "node:test";
 
 import { Account, Keypair, Networks, Operation, rpc, xdr } from "@stellar/stellar-sdk";
 
-import { AquariusError } from "../dist/errors.js";
+import { AquariusClient, XLM } from "../dist/index.js";
+import { AquariusError, SlippageError } from "../dist/errors.js";
 import { SubmitEngine } from "../dist/submit.js";
 
 const PASSPHRASE = Networks.TESTNET;
@@ -13,6 +14,7 @@ const STALE_SEQUENCE = "100"; // what the lagging replica serves on the first lo
 const CHAIN_SEQUENCE = "105"; // where the chain actually is
 
 SubmitEngine._badSeqDelaysMs = [1, 1]; // keep the tests fast
+AquariusClient._requoteDelaysMs = [0, 0];
 
 const rejected = name => ({
   status: "ERROR",
@@ -84,6 +86,49 @@ test("other rejections are not retried", async () => {
   );
   assert.equal(server.submitted.length, 1);
 });
+
+function diagnosticEvent(contractCode) {
+  const topics = [xdr.ScVal.scvSymbol("error")];
+  if (contractCode !== undefined) {
+    topics.push(xdr.ScVal.scvError(xdr.ScError.sceContract(contractCode)));
+  }
+  return new xdr.DiagnosticEvent({
+    inSuccessfulContractCall: false,
+    event: new xdr.ContractEvent({
+      ext: new xdr.ExtensionPoint(0), contractId: null,
+      type: xdr.ContractEventType.diagnostic(),
+      body: new xdr.ContractEventBody(0, new xdr.ContractEventV0({
+        topics, data: xdr.ScVal.scvVoid(),
+      })),
+    }),
+  });
+}
+
+for (const [label, events, errorType, attempts] of [
+  ["absent", undefined, AquariusError, 1],
+  ["empty", [], AquariusError, 1],
+  ["unrecognized", [diagnosticEvent()], AquariusError, 1],
+  ["confirmed slippage", [diagnosticEvent(2006)], SlippageError, 3],
+]) {
+  test(`swap retries FAILED only for diagnosed slippage: ${label} diagnostics`, async t => {
+    const client = new AquariusClient({ network: "testnet" });
+    const server = new FakeServer([]);
+    server.pollTransaction = async () => ({
+      status: rpc.Api.GetTransactionStatus.FAILED, diagnosticEventsXdr: events,
+    });
+    const engine = new SubmitEngine(server, PASSPHRASE, "100");
+    const quote = t.mock.method(client, "quote", async () => ({
+      execute: () => engine.poll("failed-hash"),
+    }));
+    await assert.rejects(client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 2 }), error => {
+      assert.equal(error.constructor, errorType);
+      assert.equal(error.txHash, "failed-hash");
+      if (errorType === AquariusError) assert.match(error.message, /without recognized diagnostics/);
+      return true;
+    });
+    assert.equal(quote.mock.callCount(), attempts);
+  });
+}
 
 test("reads share one account fetch, even concurrently", async () => {
   const server = new FakeServer([]);
