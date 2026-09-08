@@ -30,9 +30,7 @@ function fakeContext(estimate) {
     readContract: async () => {
       throw new Error("pool contract must not be read for router swaps");
     },
-    submitRouter: async () => {
-      throw new Error("swaps submit through submitContract with explicit auth");
-    },
+    submitRouter: (fn, args, auth) => ctx.submitContract(ROUTER, fn, args, auth),
     submitContract: async (contractId, fn, args, auth) => {
       ctx.submitted.push([contractId, fn, args, auth]);
       return { txHash: "h", returnValue: ctx.submitResult };

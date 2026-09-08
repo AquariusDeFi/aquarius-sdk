@@ -99,8 +99,8 @@ def liquidity_pool(pool_type, estimate, result):
         network=NETWORKS["testnet"],
         _read_source=lambda **kwargs: OWNER,
         _read_router=lambda fn, args: estimate,
-        _submit_contract=lambda contract, fn, args, *, auth: (
-            submissions.append((contract, fn, args, auth)) or ConfirmedTx("h", result)
+        _submit_router=lambda fn, args, *, auth: (
+            submissions.append((NETWORKS["testnet"].router, fn, args, auth)) or ConfirmedTx("h", result)
         ),
     )
     pool = Pool(POOL_ID, bytes(32), pool_type, 30, SORTED_PAIR, [], client)

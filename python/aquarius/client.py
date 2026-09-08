@@ -306,9 +306,7 @@ class AquariusClient:
             auth = [source_account_entry(
                 authorized_invocation(self.network.router, fn, parameters)
             )]
-        result = self._submit_contract(
-            self.network.router, fn, parameters, auth=auth,
-        )
+        result = self._submit_router(fn, parameters, auth=auth)
         return scval.to_native(result.return_value) if result.return_value is not None else None
 
     # -- pools & positions ---------------------------------------------------------------
@@ -405,6 +403,11 @@ class AquariusClient:
             ),
             self.signer,
         )
+
+    def _submit_router(
+        self, fn: str, args: list[SCVal], *, auth: list[SorobanAuthorizationEntry],
+    ):
+        return self._submit_contract(self.network.router, fn, args, auth=auth)
 
     def _submit_contract(
         self, contract_id: str, fn: str, args: list[SCVal],
