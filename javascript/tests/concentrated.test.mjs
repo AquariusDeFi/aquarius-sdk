@@ -163,6 +163,22 @@ test("estimate validates tick input", async () => {
   );
 });
 
+test("position deposit authorizes only positive desired transfers", async () => {
+  const ctx = fakeContext({
+    get_tick_spacing: u32(60),
+    estimate_deposit_position: vec([vec([u128(0n), u128(90n)]), u128(1000n)]),
+  });
+  ctx.submitResult = vec([vec([u128(0n), u128(90n)]), u128(1000n)]);
+  const estimate = await concentratedPool(ctx).estimatePositionDeposit({
+    amounts: [0n, 100n], tickRange: [-60, 60],
+  });
+  await estimate.execute();
+  const transfers = ctx.submitted[0][3][0].rootInvocation().subInvocations();
+  assert.equal(transfers.length, 1);
+  assert.equal(Address.fromScAddress(transfers[0].function().contractFn().contractAddress()).toString(), AQUA_ID);
+  assert.equal(scValToNative(transfers[0].function().contractFn().args()[2]), 100n);
+});
+
 test("withdraw derives min amounts and uses root-only auth", async () => {
   const ctx = fakeContext({
     get_position: xdr.ScVal.scvMap([

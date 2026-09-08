@@ -294,6 +294,34 @@ test("swap operation carries bounded client-built authorization", async () => {
   }
 });
 
+test("unsigned quote XDR enforces client auth and excludes authorization returned by RPC", async () => {
+  const { Account, Keypair, SorobanDataBuilder, Transaction, xdr } = await import("@stellar/stellar-sdk");
+  const { authorizedInvocation, sourceAccountEntry } = await import("../dist/index.js");
+  const signer = Keypair.random();
+  const client = new AquariusClient({ network: "testnet", signer });
+  client.api.findPath = async () => fixture;
+  client.server.getAccount = async source => new Account(source, "100");
+  let simulatedOperation;
+  client.server.simulateTransaction = async (tx, _resources, mode) => {
+    assert.equal(mode, "enforce");
+    simulatedOperation = tx.toEnvelope().v1().tx().operations()[0].toXDR("base64");
+    return {
+      _parsed: true, latestLedger: 100, events: [], minResourceFee: "0",
+      transactionData: new SorobanDataBuilder(),
+      result: {
+        auth: [sourceAccountEntry(authorizedInvocation(client.network.router, "unexpected_debit", []))],
+        retval: xdr.ScVal.scvVoid(),
+      },
+    };
+  };
+  client.engine.signAndSubmit = async () => { throw new Error("unsigned builds must not submit the swap"); };
+  const quote = await client.quote({ from: XLM, to: AQUA, amountIn: 100_000_000n });
+  const tx = new Transaction(await quote.buildTransaction(), TESTNET_PASSPHRASE);
+  assert.equal(tx.signatures.length, 0);
+  assert.equal(tx.toEnvelope().v1().tx().operations()[0].toXDR("base64"), simulatedOperation);
+  assert.equal(tx.operations[0].auth[0].rootInvocation().function().contractFn().functionName().toString(), "swap_chained");
+});
+
 test("positions resolves pools concurrently and filters empty ones", async () => {
   const client = new AquariusClient({ network: "testnet" });
   client.api.userPools = async () => [

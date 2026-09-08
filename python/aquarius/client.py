@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import requests
 from stellar_sdk import Address, SorobanServer, scval
-from stellar_sdk.xdr import SCVal
+from stellar_sdk.xdr import SCVal, SorobanAuthorizationEntry
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .authorization import authorized_invocation, source_account_entry
@@ -292,18 +292,23 @@ class AquariusClient:
 
     # -- escape hatches ---------------------------------------------------------------
 
-    def contract_call(self, fn: str, *args: SCVal):
-        """Raw router invocation. Arguments are SCVal values; the result is decoded."""
-        signer = self._require_signer()
-        source = signer_public_key(signer)
-        tx = self.engine.prepare(
-            source,
-            lambda b: b.append_invoke_contract_function_op(
-                contract_id=self.network.router, function_name=fn, parameters=list(args)
-            ),
-            signer,
+    def contract_call(
+        self, fn: str, *args: SCVal, auth: list[SorobanAuthorizationEntry] | None = None,
+    ):
+        """Raw router invocation with fixed auth; return a decoded result.
+
+        By default only the root call is authorized by the source account.
+        Supply ``auth`` for nested calls, or ``[]`` for a call requiring no
+        authorization. Missing permissions fail during enforced simulation.
+        """
+        parameters = list(args)
+        if auth is None:
+            auth = [source_account_entry(
+                authorized_invocation(self.network.router, fn, parameters)
+            )]
+        result = self._submit_contract(
+            self.network.router, fn, parameters, auth=auth,
         )
-        result = self.engine.sign_and_submit(tx, signer)
         return scval.to_native(result.return_value) if result.return_value is not None else None
 
     # -- pools & positions ---------------------------------------------------------------
@@ -401,14 +406,12 @@ class AquariusClient:
             self.signer,
         )
 
-    def _submit_router(self, fn: str, args: list[SCVal], with_user: bool = False):
-        signer = self._require_signer()
-        source = signer_public_key(signer)
-        if with_user:
-            args = [scval.to_address(source)] + args
-        return self._submit_contract(self.network.router, fn, args)
-
-    def _submit_contract(self, contract_id: str, fn: str, args: list[SCVal], auth=None):
+    def _submit_contract(
+        self, contract_id: str, fn: str, args: list[SCVal],
+        *, auth: list[SorobanAuthorizationEntry],
+    ):
+        if not isinstance(auth, list):
+            raise AquariusError("Contract submission requires an explicit authorization list")
         signer = self._require_signer()
         source = signer_public_key(signer)
         tx = self.engine.prepare(

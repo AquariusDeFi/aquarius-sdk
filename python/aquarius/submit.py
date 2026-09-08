@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Callable
 
-from stellar_sdk import Account, SorobanServer, TransactionBuilder, TransactionEnvelope
-from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk import Account, InvokeHostFunction, SorobanServer, TransactionBuilder, TransactionEnvelope
+from stellar_sdk.soroban_rpc import AuthMode, GetTransactionStatus, SendTransactionStatus
 from stellar_sdk.xdr import SCVal, TransactionMeta, TransactionResult
 
 from .errors import (
@@ -100,13 +101,15 @@ class SubmitEngine:
         append: Callable[[TransactionBuilder], TransactionBuilder],
         signer=None,
     ) -> TransactionEnvelope:
-        """Simulate and assemble a contract transaction.
+        """Enforce client-built authorization and assemble transaction resources.
 
         If simulation reports archived ledger entries, restore them first (one
         extra signed transaction), then rebuild and simulate again.
         """
         tx = self.build_transaction(source, append)
-        simulation = self.server.simulate_transaction(tx)
+        fixed_operations = deepcopy(tx.transaction.operations)
+        expected_operations = self._operation_xdr(tx)
+        simulation = self.server.simulate_transaction(tx, auth_mode=AuthMode.ENFORCE)
 
         if simulation.restore_preamble is not None:
             if signer is None:
@@ -115,13 +118,39 @@ class SubmitEngine:
                     "which requires a signer"
                 )
             self._restore(source, simulation.restore_preamble, signer)
-            tx = self.build_transaction(source, append)
-            simulation = self.server.simulate_transaction(tx)
+
+            def append_fixed(builder):
+                for op in fixed_operations:
+                    builder.append_operation(deepcopy(op))
+                return builder
+
+            tx = self.build_transaction(source, append_fixed)
+            simulation = self.server.simulate_transaction(tx, auth_mode=AuthMode.ENFORCE)
 
         if simulation.error is not None:
             raise classify_contract_error(simulation.error) or AquariusError(simulation.error)
+        if simulation.restore_preamble is not None:
+            raise AquariusError("Ledger entries remain archived after restore")
+        if not simulation.results and any(
+            isinstance(op, InvokeHostFunction) for op in tx.transaction.operations
+        ):
+            raise AquariusError("Simulation returned no result")
 
-        return self.server.prepare_transaction(tx, simulation)
+        # stellar-sdk fills an empty op.auth from simulation.results[].auth.
+        # Strip that input even for an explicitly empty client list: RPC auth
+        # must never become part of an envelope prepared for signing.
+        resources = deepcopy(simulation)
+        for result in resources.results or []:
+            result.auth = []
+        prepared = self.server.prepare_transaction(tx, resources)
+        if self._operation_xdr(prepared) != expected_operations:
+            raise AquariusError("Transaction operation or authorization changed during preparation")
+        return prepared
+
+    @staticmethod
+    def _operation_xdr(tx: TransactionEnvelope) -> tuple[str, ...]:
+        """Freeze operations, including empty auth and arguments, before RPC."""
+        return tuple(op.to_xdr_object().to_xdr() for op in tx.transaction.operations)
 
     def _restore(self, source: str, preamble, signer) -> None:
         account = self.server.load_account(source)

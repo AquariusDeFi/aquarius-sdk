@@ -25,7 +25,7 @@ export interface CollectorContext {
     contractId: string,
     fn: string,
     args: xdr.ScVal[],
-    auth?: xdr.SorobanAuthorizationEntry[],
+    auth: xdr.SorobanAuthorizationEntry[],
   ): Promise<ConfirmedTx>;
   quoteSwapChain(
     from: Asset,

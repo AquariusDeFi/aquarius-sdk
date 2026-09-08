@@ -115,6 +115,7 @@ Deposit and withdrawal guards come from a simulation of the exact call, reduced 
 
 - **Routing** — quotes come from the find-path API; the swap chain XDR is passed through untouched.
 - **Transaction lifecycle** — simulation, assembly, submission with congestion retries (same-hash resubmission with backoff), and confirmation polling.
+- **Fixed authorization** — every contract write and unsigned transaction uses client-built authorization trees. Preparation simulates in `enforce` mode, uses the response for resources, and preserves the exact operation and auth through restore and sequence retries. RPC-returned auth is never added, including when the supplied list is empty.
 - **Archived state** — if simulation reports expired ledger entries, the SDK restores them (one extra signed transaction) and retries automatically.
 - **Typed errors** — `SlippageError` (with `requote()`), `PausedError` (kill switches — not your bug), `NoRouteError`, `UserRejectedError`, `TxTimeoutError`.
 
@@ -124,7 +125,38 @@ A stellar-sdk `Keypair` works as-is. Custom signers provide `public_key` plus `s
 
 ## Escape hatches
 
-`quote.build_transaction()` returns the simulated, unsigned envelope XDR for external signing flows. `client.contract_call(fn, *scvals)` invokes the router raw. `client.api` is the typed REST client.
+`quote.build_transaction()` returns the simulated, unsigned envelope XDR for external signing flows, with the same fixed authorization as `execute()`. `client.api` is the typed REST client.
+
+`client.contract_call(fn, *scvals)` invokes the router raw and authorizes only
+that exact root call with source-account credentials. Raw calls that previously
+relied on simulation to discover nested permissions must now provide those
+permissions explicitly with `auth=[...]`, or use the corresponding high-level
+method such as `pool.deposit()`. An incomplete tree fails during enforced
+simulation before the contract transaction is signed.
+
+For example, an explicit raw reward claim mirrors the router and pool calls:
+
+```python
+from stellar_sdk import scval
+from aquarius.authorization import authorized_invocation, source_account_entry
+
+user = scval.to_address(public_key)  # the transaction source account
+args = [
+    user,
+    scval.to_vec([scval.to_address(token) for token in pool.tokens]),
+    scval.to_bytes(pool.pool_hash),
+]
+entry = source_account_entry(authorized_invocation(
+    aqua.network.router, "claim", args,
+    [authorized_invocation(pool.address, "claim", [user])],
+))
+aqua.contract_call("claim", *args, auth=[entry])
+```
+
+Pass `auth=[]` when the call requires no authorization; the empty list remains
+empty after assembly. Reads and estimates can still use recording simulation,
+but their recorded auth never enters a transaction for signing. Archived-state
+restoration remains a separate footprint operation when a signer is available.
 
 ## Infrastructure
 

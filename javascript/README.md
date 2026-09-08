@@ -112,7 +112,7 @@ Deposit and withdrawal guards come from a simulation of the exact call, reduced 
 - **Routing** — quotes come from the find-path API; the swap chain XDR is passed through untouched.
 - **Transaction lifecycle** — simulation, assembly, submission with congestion retries (same-hash resubmission with backoff), and confirmation polling. Results come from the RPC return value; no transaction-meta parsing anywhere.
 - **Archived state** — if simulation reports expired ledger entries, the SDK restores them (one extra signed transaction) and retries automatically.
-- **Bounded approvals** — the router call and its token transfer are explicitly authorized with exact amounts, so wallets can display what the user is approving. For exact-output swaps the authorized transfer is the maximum input; the contract refunds the difference.
+- **Fixed authorization** — every contract submission and unsigned transaction build carries client-defined authorization, checked by simulation in `enforce` mode. Simulation supplies resources, never additional permissions. Deposit transfers authorize the desired amounts, withdrawals authorize the share-token burn where applicable, and claims authorize their call tree. Exact-output swaps authorize the maximum input; the contract refunds the difference.
 - **Typed errors** — `SlippageError` (with `requote()`), `PausedError` (kill switches — not your bug), `NoRouteError`, `UserRejectedError`, `TxTimeoutError`.
 
 ## Signers
@@ -121,7 +121,23 @@ Anything with `publicKey()` plus either `secret()` (a stellar-sdk `Keypair`) or 
 
 ## Escape hatches
 
-`quote.buildTransaction()` returns the simulated, unsigned envelope XDR for external signing flows (multisig, custom pipelines). `client.contract.call(fn, ...scVals)` invokes the router raw. `client.api` is the typed REST client.
+`quote.buildTransaction()` returns the simulated, unsigned envelope XDR with the same fixed authorization as `quote.execute()`, for external signing flows (multisig, custom pipelines). `client.api` is the typed REST client.
+
+`client.contract.call(fn, ...scVals)` invokes the router with source-account authorization for that exact root call. Raw calls that need nested authorization must migrate to `client.contract.callWithAuth(fn, args, auth)`, supplying the complete `xdr.SorobanAuthorizationEntry[]`. The SDK exports `authorizedInvocation` and `sourceAccountEntry` to construct it:
+
+```ts
+import { authorizedInvocation, sourceAccountEntry } from "@aquariusdefi/sdk";
+
+// fn, args and subInvocations describe the exact calls you intend to authorize.
+const auth = [sourceAccountEntry(
+  authorizedInvocation(aqua.network.router, fn, args, subInvocations),
+)];
+await aqua.contract.callWithAuth(fn, args, auth);
+```
+
+Pass `[]` explicitly for calls requiring no authorization; it stays empty through assembly. Missing or incomplete authorization fails during enforced simulation, with no fallback to recording auth. Existing signed address credentials, if supplied, must be valid for the call.
+
+Read and estimate calls may still use recording simulation to obtain return values; their simulated authorization is never reused in submitted calls. Archived state can still trigger a separately signed restore transaction when a signer is available.
 
 ## Infrastructure
 
