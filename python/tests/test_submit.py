@@ -2,8 +2,8 @@
 from types import SimpleNamespace
 
 import pytest
-from stellar_sdk import Account, Keypair, Network, scval
-from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk import Account, Keypair, Network, SorobanDataBuilder, SorobanServer, scval
+from stellar_sdk.soroban_rpc import AuthMode, GetTransactionStatus, SendTransactionStatus
 from stellar_sdk.xdr import (
     Int64,
     TransactionResult,
@@ -13,12 +13,14 @@ from stellar_sdk.xdr import (
 )
 
 from aquarius import AquariusError
+from aquarius.authorization import authorized_invocation, source_account_entry
 from aquarius.submit import SubmitEngine
 
 PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
 KEYPAIR = Keypair.random()
 STALE_SEQUENCE = 100  # what the lagging replica serves on the first load
 CHAIN_SEQUENCE = 105  # where the chain actually is
+CONTRACT = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 
 
 def rejection_xdr(code: TransactionResultCode) -> str:
@@ -129,3 +131,164 @@ def test_write_builds_always_load_a_fresh_account():
     engine.build_transaction(KEYPAIR.public_key, lambda b: b.append_manage_data_op("t", "1"))
     engine.build_transaction(KEYPAIR.public_key, lambda b: b.append_manage_data_op("t", "1"))
     assert server.loads == 2  # writes must never reuse a cached sequence
+
+
+class PreparingServer(FakeServer):
+    """Use stellar-sdk's real assembly, including its empty-auth fallback."""
+
+    def __init__(self, *, restore=False, error=None):
+        super().__init__([BAD_SEQ, PENDING])
+        self.restore = restore
+        self.error = error
+        self.simulations = []
+        self.operations = []
+        self.assembled = []
+        self.rpc_auth = source_account_entry(authorized_invocation(
+            CONTRACT, "unexpected_transfer", [scval.to_int128(999)]
+        )).to_xdr()
+
+    def simulate_transaction(self, tx, *, auth_mode=None):
+        self.simulations.append((auth_mode, [e.to_xdr() for e in tx.transaction.operations[0].auth]))
+        self.operations.append(tx.transaction.operations[0].to_xdr_object().to_xdr())
+        return SimpleNamespace(
+            restore_preamble=object() if self.restore and len(self.simulations) == 1 else None,
+            error=self.error,
+            min_resource_fee=17,
+            transaction_data=SorobanDataBuilder().build().to_xdr(),
+            results=[SimpleNamespace(auth=[self.rpc_auth], xdr=scval.to_uint32(7).to_xdr())],
+        )
+
+    def prepare_transaction(self, tx, simulation):
+        self.assembled.append(simulation)
+        return SorobanServer.prepare_transaction(self, tx, simulation)
+
+
+def contract_append(auth):
+    return lambda b: b.append_invoke_contract_function_op(
+        CONTRACT, "fixed", [scval.to_uint32(5)], auth=auth
+    )
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_prepare_enforces_and_preserves_auth_despite_rpc_auth(empty):
+    server = PreparingServer()
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    auth = [] if empty else [source_account_entry(authorized_invocation(
+        CONTRACT, "fixed", [scval.to_uint32(5)]
+    ))]
+    expected = [entry.to_xdr() for entry in auth]
+
+    tx = engine.prepare(KEYPAIR.public_key, contract_append(auth))
+
+    assert server.simulations == [(AuthMode.ENFORCE, expected)]
+    assert [entry.to_xdr() for entry in tx.transaction.operations[0].auth] == expected
+    assert tx.transaction.fee == 117  # resource assembly still runs
+
+
+def test_prepare_restores_then_enforces_the_same_auth(monkeypatch):
+    server = PreparingServer(restore=True)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    auth = [source_account_entry(authorized_invocation(CONTRACT, "fixed", [scval.to_uint32(5)]))]
+    expected = [entry.to_xdr() for entry in auth]
+    restores = []
+    monkeypatch.setattr(engine, "_restore", lambda *args: restores.append(args))
+
+    tx = engine.prepare(KEYPAIR.public_key, contract_append(auth), signer=object())
+
+    assert len(restores) == 1
+    assert server.simulations == [(AuthMode.ENFORCE, expected)] * 2
+    assert [entry.to_xdr() for entry in tx.transaction.operations[0].auth] == expected
+
+
+def test_restore_reuses_the_original_operation_without_rebuilding_auth(monkeypatch):
+    server = PreparingServer(restore=True)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    builds = []
+
+    def append(builder):
+        builds.append(True)
+        return builder.append_invoke_contract_function_op(
+            CONTRACT, "fixed", [scval.to_uint32(len(builds))], auth=[]
+        )
+
+    monkeypatch.setattr(engine, "_restore", lambda *args: None)
+    tx = engine.prepare(KEYPAIR.public_key, append, signer=object())
+
+    assert len(builds) == 1
+    assert server.operations[0] == server.operations[1]
+    assert tx.transaction.operations[0].to_xdr_object().to_xdr() == server.operations[0]
+
+
+def test_second_restore_preamble_stops_before_assembly(monkeypatch):
+    server = PreparingServer()
+    simulate = server.simulate_transaction
+
+    def archived(tx, *, auth_mode):
+        result = simulate(tx, auth_mode=auth_mode)
+        result.restore_preamble = object()
+        return result
+
+    server.simulate_transaction = archived
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    monkeypatch.setattr(engine, "_restore", lambda *args: None)
+    with pytest.raises(AquariusError, match="archived"):
+        engine.prepare(KEYPAIR.public_key, contract_append([]), signer=object())
+    assert server.assembled == []
+
+
+def test_prepare_with_no_result_stops_before_assembly():
+    server = PreparingServer()
+    simulate = server.simulate_transaction
+
+    def no_result(tx, *, auth_mode):
+        result = simulate(tx, auth_mode=auth_mode)
+        result.results = []
+        return result
+
+    server.simulate_transaction = no_result
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    with pytest.raises(AquariusError, match="no result"):
+        engine.prepare(KEYPAIR.public_key, contract_append([]))
+    assert server.assembled == []
+
+
+def test_prepare_fails_closed_if_assembly_changes_auth():
+    server = PreparingServer()
+    original_prepare = server.prepare_transaction
+
+    def changed_auth(tx, simulation):
+        assembled = original_prepare(tx, simulation)
+        assembled.transaction.operations[0].auth = [source_account_entry(
+            authorized_invocation(CONTRACT, "unexpected_transfer", [])
+        )]
+        return assembled
+
+    server.prepare_transaction = changed_auth
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    with pytest.raises(AquariusError, match="authorization"):
+        engine.prepare(KEYPAIR.public_key, contract_append([]))
+
+
+def test_enforcement_error_stops_before_assembly():
+    server = PreparingServer(error="Error(Auth, InvalidAction)")
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    with pytest.raises(AquariusError, match="Auth"):
+        engine.prepare(KEYPAIR.public_key, contract_append([]))
+    assert server.assembled == []
+
+
+def test_sequence_retry_keeps_prepared_auth(monkeypatch):
+    server = PreparingServer()
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    auth = [source_account_entry(authorized_invocation(CONTRACT, "fixed", [scval.to_uint32(5)]))]
+    expected = [entry.to_xdr() for entry in auth]
+    tx = engine.prepare(KEYPAIR.public_key, contract_append(auth))
+    # No real signing: exercise only the sequence-refresh and resubmit wiring.
+    monkeypatch.setattr("aquarius.submit.sign_transaction", lambda signer, tx, passphrase: tx)
+
+    engine.sign_and_submit(tx, object())
+
+    assert len(server.submitted) == 2
+    assert all([e.to_xdr() for e in tx.transaction.operations[0].auth] == expected
+               for tx in server.submitted)
+    assert len(server.simulations) == 1

@@ -42,6 +42,7 @@ receipt = quote.execute()
 4. **Protocol details are the SDK's problem.** `swaps_chain` encoding, token-vector sorting, pool hashes, transaction meta v3/v4, u128 conversion — none of these exist in the public surface.
 5. **Typed errors that encode what we know.** Guard failures raise `SlippageError` ("re-quote and retry"), kill switches raise `PausedError` ("not your bug"), missing routes raise `NoRouteError`.
 6. **Language parity is a feature.** Same names, same semantics in both packages, enforced by shared golden fixtures in `testdata/`. Feature releases move in lockstep minor versions (`py-v0.4.x` and `js-v0.4.x` have the same surface).
+7. **Authorization is fixed before submission.** Every contract write supplies client-built authorization and simulates in enforcement mode. Simulation supplies resources and fees, never the authorization to sign. Raw calls default to root-only source-account authorization; calls needing nested authorization must supply their complete tree (see the language READMEs). Read and quote simulations may still record authorization, which is never reused for submission.
 
 ## Scope of v1
 

@@ -95,7 +95,8 @@ export class SubmitEngine {
   }
 
   /**
-   * Simulate and assemble a contract transaction. If simulation reports
+   * Enforce client-built authorization and assemble a contract transaction.
+   * Simulation supplies resources, never authorization. If it reports
    * archived ledger entries, restore them first (one extra signed
    * transaction), then rebuild and simulate again.
    */
@@ -104,8 +105,12 @@ export class SubmitEngine {
     buildOperation: () => xdr.Operation,
     signer?: Signer,
   ): Promise<Transaction> {
-    let tx = await this.buildTransaction(source, buildOperation());
-    let simulation = await this.server.simulateTransaction(tx);
+    // Freeze the call and auth before awaiting RPC. Restoration must retry
+    // this same authorization even if a caller mutates its original arrays.
+    const operationXdr = buildOperation().toXDR();
+    const operation = () => xdr.Operation.fromXDR(operationXdr);
+    let tx = await this.buildTransaction(source, operation());
+    let simulation = await this.server.simulateTransaction(tx, undefined, "enforce");
 
     if (rpc.Api.isSimulationRestore(simulation)) {
       if (!signer) {
@@ -114,15 +119,29 @@ export class SubmitEngine {
         );
       }
       await this.restore(source, simulation, signer);
-      tx = await this.buildTransaction(source, buildOperation());
-      simulation = await this.server.simulateTransaction(tx);
+      tx = await this.buildTransaction(source, operation());
+      simulation = await this.server.simulateTransaction(tx, undefined, "enforce");
     }
 
     if (rpc.Api.isSimulationError(simulation)) {
       throw classifyContractError(simulation.error) ?? new AquariusError(simulation.error);
     }
 
-    return rpc.assembleTransaction(tx, simulation).build();
+    if (rpc.Api.isSimulationRestore(simulation)) {
+      throw new AquariusError("Ledger entries are still archived after restoration");
+    }
+    if (!rpc.Api.isSimulationSuccess(simulation) || !simulation.result) {
+      throw new AquariusError("Simulation returned no contract result");
+    }
+
+    // Stellar assembly fills an empty operation auth list from result.auth.
+    // Supply only client auth, including an intentionally empty list, and
+    // retain the original operation byte-for-byte in the prepared envelope.
+    const auth = operation().body().invokeHostFunctionOp().auth();
+    return rpc.assembleTransaction(tx, {
+      ...simulation,
+      result: { ...simulation.result, auth },
+    }).clearOperations().addOperation(operation()).build();
   }
 
   private async restore(
