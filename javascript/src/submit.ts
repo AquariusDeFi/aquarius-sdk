@@ -10,7 +10,6 @@ import {
 
 import {
   AquariusError,
-  SlippageError,
   TxTimeoutError,
   classifyContractError,
   errorFromDiagnostics,
@@ -275,11 +274,8 @@ export class SubmitEngine {
         hash,
       );
       if (diagnosed) throw diagnosed;
-      // No recognizable cause in the diagnostics: simulation already passed,
-      // so pool state most likely moved past the guard between simulation and
-      // inclusion.
-      throw new SlippageError(
-        "The transaction failed on-chain — pool state likely moved past your guard between simulation and inclusion. Re-quote and retry.",
+      throw new AquariusError(
+        "The transaction failed on-chain without recognized diagnostics. Inspect the transaction hash before retrying.",
         hash,
       );
     }

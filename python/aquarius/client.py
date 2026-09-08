@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 
 import requests
 from stellar_sdk import Address, SorobanServer, scval
+from stellar_sdk.client.requests_client import RequestsClient
+from stellar_sdk.exceptions import AccountNotFoundException
 from stellar_sdk.xdr import SCVal, SorobanAuthorizationEntry
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
@@ -280,15 +282,52 @@ class AquariusClient:
         self.engine.sign_and_submit(tx, signer)
 
     def fund_with_friendbot(self) -> None:
-        """Testnet only: fund the signer's account with 10,000 test XLM."""
+        """Fund with 10,000 test XLM, then wait up to 30s for Horizon and RPC visibility.
+
+        Testnet only. A readiness timeout does not mean funding failed.
+        """
         if self.network.passphrase != NETWORKS["testnet"].passphrase:
             raise AquariusError("Friendbot funds testnet accounts only")
         signer = self._require_signer()
+        source = signer_public_key(signer)
         response = requests.get(
-            _FRIENDBOT_URL, params={"addr": signer_public_key(signer)}, timeout=30
+            _FRIENDBOT_URL, params={"addr": source}, timeout=30
         )
         if not response.ok:
             raise AquariusError(f"Friendbot funding failed: HTTP {response.status_code}")
+        self._wait_for_account_ready(source)
+
+    def _wait_for_account_ready(self, public_key: str) -> None:
+        deadline = time.monotonic() + 30
+
+        def remaining() -> float:
+            seconds = deadline - time.monotonic()
+            if seconds <= 0:
+                raise AquariusError(
+                    "Timed out waiting for funded account visibility on Horizon and RPC"
+                )
+            return seconds
+
+        # Only account absence is retryable here. Keep this transport separate
+        # so HTTP retries/timeouts for transaction submission are unchanged.
+        rpc_client = RequestsClient(num_retries=0)
+        with SorobanServer(self.network.rpc_url, client=rpc_client) as server:
+            while True:
+                response = requests.get(
+                    f"{self.network.horizon_url}/accounts/{public_key}", timeout=remaining()
+                )
+                if not response.ok and response.status_code != 404:
+                    raise AquariusError(f"Account lookup failed: HTTP {response.status_code}")
+                if response.ok:
+                    rpc_client.post_timeout = remaining()
+                    try:
+                        server.load_account(public_key)
+                    except AccountNotFoundException:
+                        pass
+                    else:
+                        remaining()
+                        return
+                time.sleep(min(1, remaining()))
 
     # -- escape hatches ---------------------------------------------------------------
 
