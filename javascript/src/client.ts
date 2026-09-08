@@ -317,17 +317,58 @@ export class AquariusClient {
     await this.engine.signAndSubmit(tx, signer);
   }
 
-  /** Testnet only: fund the signer's account with 10,000 test XLM. */
+  /**
+   * Fund with 10,000 test XLM, then wait up to 30s for Horizon and RPC visibility.
+   * Testnet only. A readiness timeout does not mean funding failed.
+   */
   async fundWithFriendbot(): Promise<void> {
     if (this.network.passphrase !== NETWORKS.testnet.passphrase) {
       throw new AquariusError("Friendbot funds testnet accounts only");
     }
     const signer = this.requireSigner();
-    const response = await fetch(`${FRIENDBOT_URL}?addr=${signer.publicKey()}`, {
+    const source = signer.publicKey();
+    const response = await fetch(`${FRIENDBOT_URL}?addr=${source}`, {
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!response.ok) {
       throw new AquariusError(`Friendbot funding failed: HTTP ${response.status}`);
+    }
+    await this.waitForAccountReady(source);
+  }
+
+  private async waitForAccountReady(publicKey: string): Promise<void> {
+    const deadline = performance.now() + 30_000;
+    const remaining = () => {
+      const ms = deadline - performance.now();
+      if (ms <= 0) {
+        throw new AquariusError(
+          "Timed out waiting for funded account visibility on Horizon and RPC",
+        );
+      }
+      return Math.ceil(ms);
+    };
+    // A separate transport bounds readiness requests without changing the
+    // transaction client. getAccount masks RPC errors as account absence.
+    const server = new rpc.Server(this.network.rpcUrl);
+    const key = xdr.LedgerKey.account(new xdr.LedgerKeyAccount({
+      accountId: new Address(publicKey).toScAddress().accountId(),
+    }));
+    while (true) {
+      const response = await fetch(`${this.network.horizonUrl}/accounts/${publicKey}`, {
+        signal: AbortSignal.timeout(remaining()),
+      });
+      if (!response.ok && response.status !== 404) {
+        throw new AquariusError(`Account lookup failed: HTTP ${response.status}`);
+      }
+      if (response.ok) {
+        server.httpClient.defaults.timeout = remaining();
+        const result = await server.getLedgerEntries(key);
+        if (result.entries.length > 0) {
+          remaining();
+          return;
+        }
+      }
+      await sleep(Math.min(1_000, remaining()));
     }
   }
 
