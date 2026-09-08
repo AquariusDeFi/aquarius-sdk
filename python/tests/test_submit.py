@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 import pytest
-from stellar_sdk import Account, Keypair, Network, scval
+from stellar_sdk import Account, Keypair, Network, scval, xdr
 from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
 from stellar_sdk.xdr import (
     Int64,
@@ -12,7 +12,7 @@ from stellar_sdk.xdr import (
     TransactionResultResult,
 )
 
-from aquarius import AquariusError
+from aquarius import AquariusClient, AquariusError, SlippageError, XLM
 from aquarius.submit import SubmitEngine
 
 PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
@@ -98,6 +98,52 @@ def test_other_rejections_are_not_retried():
     with pytest.raises(AquariusError, match="txINSUFFICIENT_BALANCE"):
         submit_through(server)
     assert len(server.submitted) == 1
+
+
+def diagnostic_event(contract_code=None):
+    topics = [scval.to_symbol("error")]
+    if contract_code is not None:
+        topics.append(xdr.SCVal(
+            xdr.SCValType.SCV_ERROR,
+            error=xdr.SCError(xdr.SCErrorType.SCE_CONTRACT, contract_code=xdr.Uint32(contract_code)),
+        ))
+    return xdr.DiagnosticEvent(False, xdr.ContractEvent(
+        ext=xdr.ExtensionPoint(0), contract_id=None,
+        type=xdr.ContractEventType.DIAGNOSTIC,
+        body=xdr.ContractEventBody(0, xdr.ContractEventV0(topics, scval.to_void())),
+    )).to_xdr()
+
+
+@pytest.mark.parametrize("events, error_type, attempts", [
+    (None, AquariusError, 1),
+    ([], AquariusError, 1),
+    ([diagnostic_event()], AquariusError, 1),
+    ([diagnostic_event(2006)], SlippageError, 3),
+])
+def test_swap_retries_failed_transactions_only_for_diagnosed_slippage(
+    monkeypatch, events, error_type, attempts
+):
+    client = AquariusClient(network="testnet")
+    monkeypatch.setattr(AquariusClient, "_requote_delays_s", (0, 0))
+    server = FakeServer([])
+    server.poll_transaction = lambda *a, **k: SimpleNamespace(
+        status=GetTransactionStatus.FAILED, diagnostic_events_xdr=events,
+    )
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    quotes = []
+
+    def quote(*args, **kwargs):
+        quotes.append(1)
+        return SimpleNamespace(execute=lambda: engine._poll("failed-hash"))
+
+    monkeypatch.setattr(client, "quote", quote)
+    with pytest.raises(error_type) as caught:
+        client.swap(XLM, XLM, amount_in=1, retries=2)
+    assert type(caught.value) is error_type
+    assert caught.value.tx_hash == "failed-hash"
+    assert len(quotes) == attempts
+    if error_type is AquariusError:
+        assert "without recognized diagnostics" in str(caught.value)
 
 
 def test_read_with_no_result_raises_typed_error():
