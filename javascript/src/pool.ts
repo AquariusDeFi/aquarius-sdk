@@ -702,7 +702,7 @@ export class Pool {
    * from `calc_withdraw_one_coin`, reduced by `slippage` (default 1%).
    */
   async withdrawOneCoin(
-    params: { shares: bigint; token: Asset | string; slippage?: number } & WithdrawClaims,
+    params: { shares: bigint; token: Asset | string; slippage?: number; minimumAmount?: bigint } & WithdrawClaims,
   ): Promise<{ txHash: string; amount: bigint }> {
     const plan = await this.withdrawOneCoinPlan(params);
     const confirmed = await this.ctx.submitBatch(plan.calls, plan.auth, true);
@@ -722,14 +722,14 @@ export class Pool {
 
   /** The same single-token withdrawal, prepared but not signed. See `buildDeposit`. */
   async buildWithdrawOneCoin(
-    params: { shares: bigint; token: Asset | string; slippage?: number } & WithdrawClaims,
+    params: { shares: bigint; token: Asset | string; slippage?: number; minimumAmount?: bigint } & WithdrawClaims,
   ): Promise<string> {
     const plan = await this.withdrawOneCoinPlan(params);
     return this.ctx.buildBatch(plan.calls, plan.auth, true);
   }
 
   private async withdrawOneCoinPlan(
-    params: { shares: bigint; token: Asset | string; slippage?: number } & WithdrawClaims,
+    params: { shares: bigint; token: Asset | string; slippage?: number; minimumAmount?: bigint } & WithdrawClaims,
   ) {
     this.requireStable();
     const index = this.tokenIndex(params.token);
@@ -741,7 +741,9 @@ export class Pool {
         ]),
       ) as bigint,
     );
-    const [minimum] = this.applySlippage([estimated], params.slippage);
+    const [estimatedMinimum] = this.applySlippage([estimated], params.slippage);
+    const minimum = params.minimumAmount !== undefined && params.minimumAmount > estimatedMinimum
+      ? params.minimumAmount : estimatedMinimum;
     const args = [
       this.userArg(),
       u128(params.shares),
@@ -772,7 +774,7 @@ export class Pool {
    * share cap comes from a simulation, raised by `slippage` (default 1%).
    */
   async withdrawImbalanced(
-    params: { amounts: DepositAmounts; slippage?: number } & WithdrawClaims,
+    params: { amounts: DepositAmounts; slippage?: number; maximumShares?: bigint } & WithdrawClaims,
   ): Promise<{ txHash: string; shares: bigint }> {
     const plan = await this.withdrawImbalancedPlan(params);
     const confirmed = await this.ctx.submitBatch(plan.calls, plan.auth, true);
@@ -782,21 +784,25 @@ export class Pool {
 
   /** The same imbalanced withdrawal, prepared but not signed. See `buildDeposit`. */
   async buildWithdrawImbalanced(
-    params: { amounts: DepositAmounts; slippage?: number } & WithdrawClaims,
+    params: { amounts: DepositAmounts; slippage?: number; maximumShares?: bigint } & WithdrawClaims,
   ): Promise<string> {
     const plan = await this.withdrawImbalancedPlan(params);
     return this.ctx.buildBatch(plan.calls, plan.auth, true);
   }
 
   private async withdrawImbalancedPlan(
-    params: { amounts: DepositAmounts; slippage?: number } & WithdrawClaims,
+    params: { amounts: DepositAmounts; slippage?: number; maximumShares?: bigint } & WithdrawClaims,
   ) {
     this.requireStable();
     const desired = resolveAmounts(params.amounts, this.tokens, this.ctx.passphrase);
     const estimated = await this.estimateWithdrawImbalanced(desired);
     // the cap is a maximum: raise it, rounding up, never in the caller's favor
     const bps = BigInt(Math.round((params.slippage ?? 0.01) * 10_000));
-    const maxShares = (estimated * (10_000n + bps) + 9_999n) / 10_000n;
+    const estimatedMaximum = (estimated * (10_000n + bps) + 9_999n) / 10_000n;
+    const balance = await this.shareBalance();
+    const cap = params.maximumShares === undefined || params.maximumShares > balance
+      ? balance : params.maximumShares;
+    const maxShares = estimatedMaximum < cap ? estimatedMaximum : cap;
     const args = [this.userArg(), xdr.ScVal.scvVec(desired.map(u128)), u128(maxShares)];
     return this.poolWithdrawPlan("remove_liquidity_imbalance", args, maxShares, params);
   }
@@ -1125,6 +1131,7 @@ export class Pool {
     tickUpper: number;
     liquidity?: bigint;
     slippage?: number;
+    minimumAmounts?: DepositAmounts;
   }): Promise<ConcentratedWithdrawResult> {
     const args = await this.guardedWithdrawPositionArgs(params);
     const confirmed = await this.ctx.submitContract(
@@ -1145,6 +1152,7 @@ export class Pool {
     tickUpper: number;
     liquidity?: bigint;
     slippage?: number;
+    minimumAmounts?: DepositAmounts;
   }): Promise<string> {
     const args = await this.guardedWithdrawPositionArgs(params);
     return this.ctx.buildContract(
@@ -1160,6 +1168,7 @@ export class Pool {
     tickUpper: number;
     liquidity?: bigint;
     slippage?: number;
+    minimumAmounts?: DepositAmounts;
   }): Promise<xdr.ScVal[]> {
     this.requireConcentrated();
     const owner = this.ctx.readSource(true);
@@ -1173,7 +1182,13 @@ export class Pool {
       u128(liquidity),
     ])) as bigint[];
     const factor = BigInt(Math.round((1 - (params.slippage ?? 0.01)) * 10_000));
-    const minimums = estimated.map(a => (a * factor) / 10_000n);
+    const reviewed = params.minimumAmounts === undefined
+      ? this.tokens.map(() => 0n)
+      : resolveAmounts(params.minimumAmounts, this.tokens, this.ctx.passphrase);
+    const minimums = estimated.map((a, i) => {
+      const minimum = (a * factor) / 10_000n;
+      return reviewed[i] > minimum ? reviewed[i] : minimum;
+    });
     return [
       new Address(owner).toScVal(),
       xdr.ScVal.scvI32(params.tickLower),
@@ -1372,7 +1387,7 @@ export class ConcentratedDepositEstimate {
     readonly liquidity: bigint,
   ) {}
 
-  async execute(options?: { slippage?: number }): Promise<ConcentratedDepositResult> {
+  async execute(options?: { slippage?: number; minimumLiquidity?: bigint }): Promise<ConcentratedDepositResult> {
     const { args, auth } = this.plan(options);
     const confirmed = await this.ctx.submitContract(
       this.pool.address,
@@ -1385,18 +1400,20 @@ export class ConcentratedDepositEstimate {
   }
 
   /** The same range deposit, prepared but not signed. See `Pool.buildDeposit`. */
-  buildTransaction(options?: { slippage?: number }): Promise<string> {
+  buildTransaction(options?: { slippage?: number; minimumLiquidity?: bigint }): Promise<string> {
     const { args, auth } = this.plan(options);
     return this.ctx.buildContract(this.pool.address, "deposit_position", args, auth);
   }
 
-  private plan(options?: { slippage?: number }): {
+  private plan(options?: { slippage?: number; minimumLiquidity?: bigint }): {
     args: xdr.ScVal[];
     auth: xdr.SorobanAuthorizationEntry[];
   } {
     const owner = this.ctx.readSource(true);
     const factor = BigInt(Math.round((1 - (options?.slippage ?? 0.01)) * 10_000));
-    const minLiquidity = (this.liquidity * factor) / 10_000n;
+    const estimatedMinimum = (this.liquidity * factor) / 10_000n;
+    const minLiquidity = options?.minimumLiquidity !== undefined && options.minimumLiquidity > estimatedMinimum
+      ? options.minimumLiquidity : estimatedMinimum;
     const args = [
       new Address(owner).toScVal(),
       xdr.ScVal.scvI32(this.tickLower),

@@ -287,3 +287,20 @@ test("reads of archived entries return their values even with a configured signe
   assert.equal(counts.submissions, 0);
   assert.equal(counts.simulations, 2);
 });
+
+test("concentrated builders never weaken reviewed minimum amounts or liquidity", async () => {
+  const sdk = await import("@stellar/stellar-sdk");
+  const ctx = recordingContext({
+    estimate_withdraw_position: sdk.nativeToScVal([1000n, 2000n], { type: ["u128", "u128"] }),
+    get_tick_spacing: sdk.nativeToScVal(60, { type: "u32" }),
+    estimate_deposit_position: sdk.nativeToScVal([[1000n, 2000n], 900n], { type: ["u128", "u128"] }),
+  });
+  const pool = new Pool(POOL_ID, new Uint8Array(32), "concentrated", 30, SORTED_PAIR, [], ctx);
+  await pool.buildWithdrawPosition({ tickLower: -60, tickUpper: 60, liquidity: 500n, minimumAmounts: [999n, 0n] });
+  assert.deepEqual(scValToNative(ctx.built.at(-1)[2][4]), [999n, 1980n]);
+  const deposit = await pool.estimatePositionDeposit({ amounts: [1000n, 2000n], tickRange: [-60, 60] });
+  await deposit.buildTransaction({ minimumLiquidity: 899n });
+  assert.equal(scValToNative(ctx.built.at(-1)[2][4]), 899n);
+  await deposit.buildTransaction({ minimumLiquidity: 1n });
+  assert.equal(scValToNative(ctx.built.at(-1)[2][4]), 891n);
+});
