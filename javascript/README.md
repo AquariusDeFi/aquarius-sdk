@@ -2,7 +2,11 @@
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.5.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+**Status: 0.6.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
+
+Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.0.1)
+as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
+dependency; no global `Buffer` polyfill is required.
 
 ## Swap through a specific pool
 
@@ -95,6 +99,9 @@ Omit `recipient` to send output back to the signer through the collector's legac
 const pools = await aqua.pools.forPair(XLM, AQUA);   // discovered on-chain, sorted by type and fee
 const pool = pools[0];                                // type "volatile", feeBps 10, ...
 
+// hold an address rather than a pair? resolve it directly
+const byAddress = await aqua.pools.byAddress("CCSX...LWUVCRC");
+
 const result = await pool.deposit({ amounts: [[XLM, 50_0000000n], [AQUA, 2500_0000000n]] });
 console.log(result.shares);                           // pool share tokens minted
 
@@ -107,11 +114,168 @@ await aqua.positions();                               // every pool where the si
 
 Deposit and withdrawal guards come from a simulation of the exact call, reduced by `slippage` — quoted-versus-executed drift is bounded the same way as for swaps. Reads need no signer.
 
+`pools.byAddress` reads the pool's tokens, hash, type and fee from the indexer
+in one request. A pool the indexer has not picked up yet cannot be resolved
+from an address alone — pass the pair and it is discovered on-chain instead:
+`byAddress(address, { tokens: [XLM, AQUA] })`.
+
+### Withdrawing through the pool, with claims
+
+The router's `withdraw` is the plain path. `withdrawAndClaim` adds the pool's
+claims in the same transaction — one signature via the batch contract.
+Stable pools also support single-token and imbalanced withdrawals:
+
+```ts
+await pool.withdrawAndClaim({ shares, claimRewards: true, claimIncentives: true });
+await stablePool.withdrawOneCoin({ shares, token: AQUA });   // everything in one token
+await stablePool.withdrawImbalanced({ amounts: [[XLM, 10_0000000n], [AQUA, 0n]] }); // exact amounts out
+
+await pool.estimateWithdraw(shares);            // per token
+await stablePool.estimateWithdrawOneCoin(shares);     // per token, if taken alone
+await stablePool.estimateWithdrawImbalanced(amounts); // shares it would burn
+```
+
+Minimums (or the share cap, for imbalanced) come from the contract's own
+estimators reduced (or raised) by `slippage`; the share burn the wallet
+sees is bounded to exactly what the call may consume.
+
+### Rewards, boost and incentives
+
+```ts
+await pool.rewardsInfo();                // to_claim, tps, expiry, working balance/supply, ...
+await pool.rewardsEnabled();             // AQUA rewards opt-in state
+await pool.setRewardsEnabled(false);
+await pool.estimateWorkingBalance(shares);              // boost inputs for a share amount
+await pool.estimatePositionWorkingBalance(lo, hi, liq); // ...or a concentrated position
+
+await pool.incentives();                 // gauge incentives, with the signer's accrual
+await pool.claimIncentives();
+await pool.gauges();                     // reward token -> gauge contract
+await pool.gaugeFor(token);              // ...or where the router will deploy one for a new token
+await aqua.incentives.config();          // min duration / min daily amount for scheduling
+await pool.scheduleIncentive({ token: AQUA, tps, startAt, durationSeconds });
+```
+
+Scheduling funds `tps * duration` of the token upfront. Its authorization is
+built client-side down to that transfer — into the token's gauge on volatile
+and stable pools (derived the way the router deploys it when the token is
+new), into the incentives vault on concentrated pools — so the wallet shows
+exactly what is spent. The tree carries the pool's current working supply;
+a deposit landing between build and submit invalidates it, the call fails
+without spending, and can simply be rebuilt.
+
+Claims across pools go under one signature too, in any mix of kinds:
+
+```ts
+await aqua.claim([
+  { pool: a, kind: "rewards" },
+  { pool: b, kind: "incentives" },
+  { pool: c, kind: "positionFees" },
+]);
+```
+
+### Creating a pool
+
+A pool is created together with its first deposit — there is no way to
+create an empty one. The creation fee (`aqua.poolCreationFee()`), the
+pool init and the deposit are one atomic batch:
+
+```ts
+const { pool, txHash } = await aqua.pools.create({
+  type: "volatile",               // or "stable" (2+ tokens), or "concentrated"
+  tokens: [XLM, AQUA],
+  feeBps: 30,
+  amounts: [[XLM, 50_0000000n], [AQUA, 2500_0000000n]],
+  slippage: 0.01,                 // default: tolerate 1% fewer shares/liquidity
+  // concentrated only — the range, snapped to the fee tier's tick spacing:
+  // priceRange: ["0.9", "1.1"]  or  tickRange: [lower, upper]
+});
+```
+
+The pool's address is known before the transaction is signed (from a
+simulation of the init), so `buildCreate` returns both the envelope XDR
+and the `Pool` it will create. The SDK then simulates the entire `init +
+deposit` batch and derives a minimum share/liquidity amount from that result.
+The final invocation and its authorization both carry this guard. If init
+resolves an existing pool, the same guard applies to the deposit into it.
+`slippage` must be a finite fraction in `[0, 1)`; a positive estimate always
+keeps a minimum of at least one base unit.
+
+### Swapping into an asset you don't hold yet
+
+```ts
+await quote.execute({ addTrustline: true });          // trustline + swap, one signature
+await quote.buildTransaction({ addTrustline: true });
+```
+
+Classic assets only, and only when the issuer does not require
+authorization — the trustline is created by the asset contract's `trust`
+in the same batch as the swap.
+
+### Batch reads
+
+`aqua.batch.read(calls)` simulates many contract reads in one RPC
+round-trip, returning one value per call in order; a batch that overflows
+the simulation budget is split automatically.
+
+### Signing elsewhere
+
+Liquidity writes and routed quotes have a `build*` twin that returns the
+simulated, unsigned envelope XDR with its guards and auth tree. Builds and
+their preliminary reads never sign or submit transactions. This is the path
+for wallet adapters, hardware wallets and multisig,
+where the transaction has to be inspected — or fee-quoted — before a
+signature exists:
+
+```ts
+const xdr = await pool.buildDeposit({ amounts: [[XLM, 50_0000000n], [AQUA, 2500_0000000n]] });
+// ...show the fee, check balances, hand it to a wallet, submit it yourself
+
+await pool.buildWithdraw({ shares });
+await pool.buildClaimRewards();
+await pool.buildWithdrawPosition({ tickLower, tickUpper });
+await pool.buildClaimPositionFees(tickLower, tickUpper);
+await pool.buildClaimAllPositionFees();
+await (await pool.estimatePositionDeposit({ amounts, priceRange })).buildTransaction();
+
+await pool.buildWithdrawAndClaim({ shares, claimRewards: true });
+await pool.buildWithdrawOneCoin({ shares, token });
+await pool.buildWithdrawImbalanced({ amounts });
+await pool.buildSetRewardsEnabled(true);
+await pool.buildClaimIncentives();
+await pool.buildScheduleIncentive({ token, tps, startAt, durationSeconds });
+await aqua.buildClaim(items);
+await aqua.pools.buildCreate(params);          // -> { xdr, pool }
+await quote.buildTransaction({ addTrustline: true });
+```
+
+When a separate restore is required, a build throws `RestoreRequiredError`
+with an unsigned `restoreTransactionXdr`. Have the user review/sign it,
+submit it, wait for confirmation, and call the original `build*` again to
+get fresh sequence numbers and simulation data. Reads still return their
+simulated values when entries are archived; they do not restore anything.
+
+```ts
+import { RestoreRequiredError } from "@aquariusdefi/sdk";
+
+try {
+  const xdr = await pool.buildClaimRewards();
+  // ...review, sign and submit xdr through your wallet flow
+} catch (error) {
+  if (error instanceof RestoreRequiredError) {
+    const restoreXdr = error.restoreTransactionXdr;
+    // ...review, sign and submit restoreXdr; after confirmation, rebuild the claim
+  } else {
+    throw error;
+  }
+}
+```
+
 ## What the SDK handles for you
 
 - **Routing** — quotes come from the find-path API; the swap chain XDR is passed through untouched.
 - **Transaction lifecycle** — simulation, assembly, submission with congestion retries (same-hash resubmission with backoff), and confirmation polling. Results come from the RPC return value; no transaction-meta parsing anywhere.
-- **Archived state** — if simulation reports expired ledger entries, the SDK restores them (one extra signed transaction) and retries automatically.
+- **Archived state** — executing writes restore entries and retry when a separate restore is required. Builds return unsigned restore XDR in `RestoreRequiredError`; reads never sign or submit.
 - **Bounded approvals** — the router call and its token transfer are explicitly authorized with exact amounts, so wallets can display what the user is approving. For exact-output swaps the authorized transfer is the maximum input; the contract refunds the difference.
 - **Typed errors** — `SlippageError` (with `requote()`), `PausedError` (kill switches — not your bug), `NoRouteError`, `UserRejectedError`, `TxTimeoutError`.
 
@@ -121,13 +285,13 @@ Anything with `publicKey()` plus either `secret()` (a stellar-sdk `Keypair`) or 
 
 ## Escape hatches
 
-`quote.buildTransaction()` returns the simulated, unsigned envelope XDR for external signing flows (multisig, custom pipelines). `client.contract.call(fn, ...scVals)` invokes the router raw. `client.api` is the typed REST client.
+`quote.buildTransaction()` returns the simulated, unsigned envelope XDR for external signing flows (multisig, custom pipelines); every liquidity write has the same hatch under a `build*` name — see [Signing elsewhere](#signing-elsewhere). `client.contract.call(fn, ...scVals)` invokes the router raw. `client.api` is the typed REST client.
 
 ## Infrastructure
 
 Defaults point at the protocol's own endpoints: the mainnet RPC is
 `https://soroban-rpc.aqua.network` — the same node the Aquarius web app and
-backend use. Running your own infrastructure? Every endpoint is overridable:
+backend use. To use your own RPC or Horizon endpoint:
 
 ```ts
 const aqua = new AquariusClient({
