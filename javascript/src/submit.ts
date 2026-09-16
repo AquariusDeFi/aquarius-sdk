@@ -195,12 +195,14 @@ export class SubmitEngine {
 
   private async resignWithFreshSequence(signed: Transaction, signer: Signer): Promise<Transaction> {
     const account = await this.server.getAccount(signed.source);
-    const envelope = signed.toEnvelope();
-    envelope
-      .v1()
-      .tx()
-      .seqNum(xdr.Int64.fromString((BigInt(account.sequenceNumber()) + 1n).toString()));
-    envelope.v1().signatures([]);
+    // XDR values are immutable; edit the wire form and rebuild the envelope.
+    const wire = signed.toEnvelope().toXdrObject();
+    if (wire.type !== 2) {
+      throw new AquariusError("Only v1 transaction envelopes can be re-signed");
+    }
+    wire.v1.tx.seqNum = BigInt(account.sequenceNumber()) + 1n;
+    wire.v1.signatures = [];
+    const envelope = xdr.TransactionEnvelope.fromXdrObject(wire);
     return signTransaction(signer, new Transaction(envelope, this.passphrase), this.passphrase);
   }
 
@@ -228,7 +230,7 @@ export class SubmitEngine {
       case "PENDING":
         return this.poll(response.hash);
       default: {
-        const name = response.errorResult?.result().switch().name ?? "unknown";
+        const name = response.errorResult?.result.type ?? "unknown";
         const message = `Transaction rejected on submission: ${name}`;
         if (name.toUpperCase().includes("BADSEQ")) {
           throw new BadSeqRejection(message, response.hash);

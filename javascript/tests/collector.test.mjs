@@ -77,9 +77,9 @@ test("claim submits root-only operator auth", async () => {
   assert.equal(Address.fromScVal(args[0]).toString(), OWNER);
   assert.equal(Address.fromScVal(args[1]).toString(), TOKEN);
   const [entry] = auth;
-  const root = entry.rootInvocation();
-  assert.equal(root.function().contractFn().functionName().toString(), "claim_fees");
-  assert.deepEqual(root.subInvocations(), []); // the contract moves its own tokens
+  const root = entry.rootInvocation;
+  assert.equal(root.function.contractFn.functionName.toString(), "claim_fees");
+  assert.deepEqual(root.subInvocations, []); // the contract moves its own tokens
   assert.equal(claimed.amountIn, 777n);
   assert.equal(claimed.amountOut, 777n);
 });
@@ -98,7 +98,7 @@ test("claimAndSwap quotes the balance and guards the swap", async () => {
   assert.equal(fn, "claim_fees_and_swap");
   assert.equal(scValToNative(args[3]), (1000n * 99n) / 100n); // quote guard as out_min
   const [entry] = auth;
-  assert.deepEqual(entry.rootInvocation().subInvocations(), []);
+  assert.deepEqual(entry.rootInvocation.subInvocations, []);
   assert.equal(claimed.amountIn, 1000n);
   assert.equal(claimed.amountOut, 950n);
 });
