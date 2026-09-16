@@ -10,6 +10,7 @@ import {
 
 import {
   AquariusError,
+  RestoreRequiredError,
   TxTimeoutError,
   classifyContractError,
   errorFromDiagnostics,
@@ -95,8 +96,9 @@ export class SubmitEngine {
 
   /**
    * Simulate and assemble a contract transaction. If simulation reports
-   * archived ledger entries, restore them first (one extra signed
-   * transaction), then rebuild and simulate again.
+   * archived ledger entries and a signer is supplied, restore them first
+   * (one extra signed transaction), then rebuild and simulate again.
+   * Without a signer, return the unsigned restore via RestoreRequiredError.
    */
   async prepare(
     source: string,
@@ -106,15 +108,15 @@ export class SubmitEngine {
     let tx = await this.buildTransaction(source, buildOperation());
     let simulation = await this.server.simulateTransaction(tx);
 
-    if (rpc.Api.isSimulationRestore(simulation)) {
-      if (!signer) {
-        throw new AquariusError(
-          "Ledger entries for this call are archived and need a restore, which requires a signer",
-        );
-      }
+    if (rpc.Api.isSimulationRestore(simulation) && signer) {
       await this.restore(source, simulation, signer);
       tx = await this.buildTransaction(source, buildOperation());
       simulation = await this.server.simulateTransaction(tx);
+    }
+
+    if (rpc.Api.isSimulationRestore(simulation)) {
+      const restoreTx = await this.buildRestoreTransaction(source, simulation);
+      throw new RestoreRequiredError(restoreTx.toXDR());
     }
 
     if (rpc.Api.isSimulationError(simulation)) {
@@ -129,10 +131,19 @@ export class SubmitEngine {
     simulation: rpc.Api.SimulateTransactionRestoreResponse,
     signer: Signer,
   ): Promise<void> {
+    const restoreTx = await this.buildRestoreTransaction(source, simulation);
+    const signed = await signTransaction(signer, restoreTx, this.passphrase);
+    await this.submit(signed);
+  }
+
+  private async buildRestoreTransaction(
+    source: string,
+    simulation: rpc.Api.SimulateTransactionRestoreResponse,
+  ): Promise<Transaction> {
     const account = await this.server.getAccount(source);
     const fee =
       parseInt(this.baseFee, 10) + parseInt(simulation.restorePreamble.minResourceFee, 10);
-    const restoreTx = new TransactionBuilder(account, {
+    return new TransactionBuilder(account, {
       fee: fee.toString(),
       networkPassphrase: this.passphrase,
     })
@@ -140,27 +151,18 @@ export class SubmitEngine {
       .addOperation(Operation.restoreFootprint({}))
       .setTimeout(TimeoutInfinite)
       .build();
-    const signed = await signTransaction(signer, restoreTx, this.passphrase);
-    await this.submit(signed);
   }
 
   /**
-   * Execute a read through simulation — nothing is signed or submitted. If the
-   * entries are archived and a signer is available, restore them first.
+   * Execute a read through simulation — nothing is signed or submitted.
+   * Archived entries are readable: restorePreamble accompanies the result.
    */
   async read(
     source: string,
     buildOperation: () => xdr.Operation,
-    signer?: Signer,
   ): Promise<xdr.ScVal> {
-    let tx = this.build(await this.simulationAccount(source), buildOperation());
-    let simulation = await this.server.simulateTransaction(tx);
-
-    if (rpc.Api.isSimulationRestore(simulation) && signer) {
-      await this.restore(source, simulation, signer);
-      tx = this.build(await this.simulationAccount(source), buildOperation());
-      simulation = await this.server.simulateTransaction(tx);
-    }
+    const tx = this.build(await this.simulationAccount(source), buildOperation());
+    const simulation = await this.server.simulateTransaction(tx);
 
     if (rpc.Api.isSimulationError(simulation)) {
       throw classifyContractError(simulation.error) ?? new AquariusError(simulation.error);

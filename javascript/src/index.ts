@@ -52,6 +52,7 @@ export {
   NoRouteError,
   NoTrustlineError,
   PausedError,
+  RestoreRequiredError,
   SlippageError,
   StaleSimulationError,
   TxTimeoutError,

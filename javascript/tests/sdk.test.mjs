@@ -318,3 +318,17 @@ test("positions resolves pools concurrently and filters empty ones", async () =>
   );
   assert.ok(peak > 1); // the per-pool read chains overlapped
 });
+
+test("contract overrides point a network preset at another deployment", () => {
+  const staging = new AquariusClient({
+    network: "mainnet",
+    apiUrl: "https://staging.invalid/api",
+    contracts: { router: "CSTAGINGROUTER" },
+  });
+  const mainnet = new AquariusClient({ network: "mainnet" });
+  assert.equal(staging.network.router, "CSTAGINGROUTER");
+  assert.equal(staging.network.apiUrl, "https://staging.invalid/api");
+  assert.equal(staging.network.collectorFactory, mainnet.network.collectorFactory);
+  assert.equal(staging.network.passphrase, mainnet.network.passphrase);
+  assert.equal(mainnet.network.router, "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK");
+});

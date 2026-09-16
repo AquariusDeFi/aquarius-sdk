@@ -54,6 +54,15 @@ export class NoTrustlineError extends AquariusError {}
  */
 export class StaleSimulationError extends AquariusError {}
 
+/** A build needs a separate restore: sign/submit this XDR, confirm it, then rebuild the call. */
+export class RestoreRequiredError extends AquariusError {
+  constructor(readonly restoreTransactionXdr: string) {
+    super(
+      "Ledger entries need restoration. Sign and submit restoreTransactionXdr, wait for confirmation, then rebuild the original transaction.",
+    );
+  }
+}
+
 // Wallet-rejection messages across signers: Freighter, WalletConnect, Ledger.
 const USER_REJECTED_MESSAGES = [
   "the user rejected this request.",
