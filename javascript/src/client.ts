@@ -2,7 +2,7 @@ import { Buffer } from "buffer";
 
 import { Address, Asset as StellarAsset, Keypair, Operation, Transaction, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 
-import { ApiClient, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
+import { ApiClient, FindPathResponse, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { BatchCall, batchArgs, batchOperation, batchResults, isBudgetExceeded } from "./batch.js";
@@ -239,7 +239,6 @@ export class AquariusClient {
     }
     const exactInput = params.amountIn !== undefined;
     if (params.providerFee) validateProviderFee(params.providerFee);
-    const slippageBps = Math.round((params.slippage ?? 0.01) * 10_000);
     const tokenIn = params.from.contractId(this.network.passphrase);
     const tokenOut = params.to.contractId(this.network.passphrase);
     const requestedAmount = exactInput ? params.amountIn! : params.amountOut!;
@@ -255,6 +254,30 @@ export class AquariusClient {
       },
       exactInput,
     );
+    return this.quoteFromPath(params, response);
+  }
+
+  /** Build a quote from a previously fetched find-path response, preserving the reviewed route. */
+  quoteFromPath(params: QuoteParams, response: FindPathResponse): Quote {
+    params = {
+      ...params,
+      providerFee: params.providerFee ? Object.freeze({ ...params.providerFee }) : undefined,
+    } as QuoteParams;
+    if ((params.amountIn === undefined) === (params.amountOut === undefined)) {
+      throw new AquariusError("Pass exactly one of amountIn / amountOut");
+    }
+    if (params.providerFee) validateProviderFee(params.providerFee);
+    const slippage = params.slippage ?? 0.01;
+    if (!Number.isFinite(slippage) || slippage < 0 || slippage >= 1) {
+      throw new AquariusError("slippage must be a finite fraction in [0, 1)");
+    }
+    const slippageBps = Math.round(slippage * 10_000);
+    const exactInput = params.amountIn !== undefined;
+    const tokenIn = params.from.contractId(this.network.passphrase);
+    const requestedAmount = exactInput ? params.amountIn! : params.amountOut!;
+    const routeAmount = params.providerFee && !exactInput
+      ? grossBeforeProviderFee(requestedAmount, params.providerFee)
+      : requestedAmount;
     const parsed = parseFindPathResponse(response, {
       amountIn: params.amountIn,
       amountOut: exactInput ? undefined : routeAmount,

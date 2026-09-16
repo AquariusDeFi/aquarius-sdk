@@ -704,3 +704,50 @@ test("scheduleIncentive on a concentrated pool funds the incentives vault direct
     deployedContractId(GOLDEN.pool, addressSalt([GOLDEN.pool, AQUA_ID], "incentives"), PASSPHRASE),
   );
 });
+
+test("quotes from a reviewed path preserve the route and integer guards without fetching", async () => {
+  const client = new AquariusClient({ network: "testnet", signer: Keypair.random() });
+  client.api.findPath = async () => { throw new Error("must not re-quote"); };
+  const ops = [];
+  client.engine.prepare = async (_source, build) => {
+    ops.push(build());
+    return { toXDR: () => "XDR" };
+  };
+  for (const exactInput of [true, false]) {
+    const response = { ...fixture, amount: "9007199254740993" };
+    const quote = client.quoteFromPath({
+      from: XLM, to: AQUA, slippage: 0.01,
+      ...(exactInput ? { amountIn: 100n } : { amountOut: 100n }),
+    }, response);
+    response.swap_chain_xdr = "changed after review";
+    await quote.buildTransaction();
+    const args = ops.at(-1).body.invokeHostFunctionOp.hostFunction.invokeContract.args;
+    assert.equal(args[1].toXDR("base64"), fixture.swap_chain_xdr);
+    assert.equal(scValToNative(args[3]), 100n);
+    const expected = exactInput
+      ? (9007199254740993n * 9900n) / 10000n
+      : (9007199254740993n * 10100n + 9999n) / 10000n;
+    assert.equal(scValToNative(args[4]), expected);
+    assert.equal(quote.guard, expected);
+  }
+});
+
+test("withdrawal builders keep reviewed minimums and cap share burns to the balance", async () => {
+  const ctx = fakeContext({
+    share_id: new Address(SHARE_ID).toScVal(),
+    balance: i128(1_000n),
+    calc_withdraw_one_coin: u128(4_000n),
+    remove_liquidity_imbalance: u128(999n),
+  });
+  const p = pool(ctx, "stable");
+  for (const [reviewed, expected] of [[3990n, 3990n], [1n, 3960n]]) {
+    await p.buildWithdrawOneCoin({ shares: 100n, token: XLM, minimumAmount: reviewed });
+    assert.equal(scValToNative(ctx.built.at(-1).calls[0].args[3]), expected);
+  }
+  for (const [reviewed, expected] of [[undefined, 1000n], [995n, 995n], [2000n, 1000n]]) {
+    await p.buildWithdrawImbalanced({ amounts: [1n, 2n], maximumShares: reviewed });
+    const { calls, auth } = ctx.built.at(-1);
+    assert.equal(scValToNative(calls[0].args[2]), expected);
+    assert.equal(scValToNative(argsOf(auth[0].subInvocations[0])[1]), expected);
+  }
+});
