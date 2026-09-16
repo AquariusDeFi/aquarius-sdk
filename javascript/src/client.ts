@@ -1,6 +1,6 @@
 import { Buffer } from "buffer";
 
-import { Address, Asset as StellarAsset, Keypair, Operation, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
+import { Address, Asset as StellarAsset, Keypair, Operation, Transaction, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 
 import { ApiClient, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
@@ -25,6 +25,12 @@ export interface AquariusConfig {
   rpcUrl?: string;
   horizonUrl?: string;
   apiUrl?: string;
+  /**
+   * Contract address overrides — a staging deployment on the same network,
+   * for instance, is the network's preset with another router (and usually
+   * another `apiUrl`). Unspecified addresses keep the preset's values.
+   */
+  contracts?: Partial<Pick<NetworkConfig, "router" | "collectorFactory">>;
   /** Inclusion fee bid in stroops. Default 100000 (0.01 XLM). */
   baseFee?: string;
   /**
@@ -143,6 +149,8 @@ export class AquariusClient {
     if (!preset) throw new AquariusError(`Unknown network: ${config.network}`);
     this.network = {
       ...preset,
+      router: config.contracts?.router ?? preset.router,
+      collectorFactory: config.contracts?.collectorFactory ?? preset.collectorFactory,
       rpcUrl: config.rpcUrl ?? preset.rpcUrl,
       horizonUrl: config.horizonUrl ?? preset.horizonUrl,
       apiUrl: config.apiUrl ?? preset.apiUrl,
@@ -416,6 +424,38 @@ export class AquariusClient {
         (x, y) => (order[x.type] ?? 3) - (order[y.type] ?? 3) || x.feeBps - y.feeBps,
       );
     },
+
+    /**
+     * One pool by its contract address — for callers that hold an address and
+     * not a pair (a pool page, a stored position). Resolved through the
+     * indexer, which supplies the tokens, hash, type and fee in one request.
+     *
+     * A pool the indexer has not picked up yet is not resolvable from an
+     * address alone: pass `tokens` (the pair, in any order) and it is
+     * discovered on-chain via get_pools instead.
+     */
+    byAddress: async (address: string, options?: { tokens: [Asset, Asset] }): Promise<Pool> => {
+      if (options) {
+        const pools = await this.pools.forPair(options.tokens[0], options.tokens[1]);
+        const pool = pools.find(p => p.address === address);
+        if (!pool) {
+          throw new AquariusError(`Pool ${address} is not one of the pools for this pair`);
+        }
+        return pool;
+      }
+      const [meta] = await this.api.poolsByAddresses([address]);
+      if (!meta) {
+        throw new AquariusError(
+          `Pool ${address} was not found. A pool that is not indexed yet needs its token pair — pass { tokens }.`,
+        );
+      }
+      return this.makePool(
+        Uint8Array.from(Buffer.from(meta.index, "hex")),
+        meta.address,
+        sortTokenIds(meta.tokens_addresses),
+        meta,
+      );
+    },
   };
 
   /**
@@ -475,6 +515,9 @@ export class AquariusClient {
       submitRouter: (fn, args, withUser) => this.submitRouter(fn, args, withUser),
       submitContract: (contractId, fn, args, auth) =>
         this.submitContract(contractId, fn, args, auth),
+      buildRouter: (fn, args, withUser) => this.buildRouter(fn, args, withUser),
+      buildContract: (contractId, fn, args, auth) =>
+        this.buildContract(contractId, fn, args, auth),
     });
   }
 
@@ -496,7 +539,6 @@ export class AquariusClient {
     return this.engine.read(
       this.readSource(),
       () => Operation.invokeContractFunction({ contract: contractId, function: fn, args }),
-      this.signer,
     );
   }
 
@@ -516,13 +558,43 @@ export class AquariusClient {
     args: xdr.ScVal[],
     auth?: xdr.SorobanAuthorizationEntry[],
   ): Promise<ConfirmedTx> {
+    const tx = await this.prepareContract(contractId, fn, args, auth, this.requireSigner());
+    return this.engine.signAndSubmit(tx, this.requireSigner());
+  }
+
+  /**
+   * Simulate and assemble a contract call without signing it. The seam the
+   * build* escape hatches sit on. Only submitting paths pass a restore
+   * signer; builds report RestoreRequiredError with an unsigned restore.
+   */
+  private async prepareContract(
+    contractId: string,
+    fn: string,
+    args: xdr.ScVal[],
+    auth?: xdr.SorobanAuthorizationEntry[],
+    restoreSigner?: Signer,
+  ): Promise<Transaction> {
     const signer = this.requireSigner();
-    const tx = await this.engine.prepare(
+    return this.engine.prepare(
       signer.publicKey(),
       () => Operation.invokeContractFunction({ contract: contractId, function: fn, args, auth }),
-      signer,
+      restoreSigner,
     );
-    return this.engine.signAndSubmit(tx, signer);
+  }
+
+  private async buildContract(
+    contractId: string,
+    fn: string,
+    args: xdr.ScVal[],
+    auth?: xdr.SorobanAuthorizationEntry[],
+  ): Promise<string> {
+    return (await this.prepareContract(contractId, fn, args, auth)).toXDR();
+  }
+
+  private async buildRouter(fn: string, args: xdr.ScVal[], withUser: boolean): Promise<string> {
+    const signer = this.requireSigner();
+    const finalArgs = withUser ? [new Address(signer.publicKey()).toScVal(), ...args] : args;
+    return this.buildContract(this.network.router, fn, finalArgs);
   }
 
   // -- internals ---------------------------------------------------------------------
@@ -549,7 +621,7 @@ export class AquariusClient {
 
       buildTransaction: async () => {
         const source = this.requireSigner().publicKey();
-        const tx = await this.engine.prepare(source, buildOperation, this.signer);
+        const tx = await this.engine.prepare(source, buildOperation);
         return tx.toXDR();
       },
 

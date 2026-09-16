@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Account, Keypair, Networks, Operation, rpc, xdr } from "@stellar/stellar-sdk";
+import { Account, Keypair, Networks, Operation, SorobanDataBuilder, rpc, xdr } from "@stellar/stellar-sdk";
 
 import { AquariusClient, XLM } from "../dist/index.js";
 import { AquariusError, SlippageError } from "../dist/errors.js";
@@ -85,6 +85,37 @@ test("other rejections are not retried", async () => {
     error => error instanceof AquariusError && /txInsufficientBalance/.test(error.message),
   );
   assert.equal(server.submitted.length, 1);
+});
+
+test("an executing write still restores, re-simulates and signs the original call", async () => {
+  const server = new FakeServer([PENDING, PENDING]);
+  let simulations = 0;
+  server.simulateTransaction = async () => {
+    simulations++;
+    const result = {
+      _parsed: true,
+      transactionData: new SorobanDataBuilder(),
+      minResourceFee: "10",
+      result: { retval: xdr.ScVal.scvVoid(), auth: [] },
+    };
+    return simulations === 1
+      ? { ...result, restorePreamble: { minResourceFee: "500", transactionData: new SorobanDataBuilder() } }
+      : result;
+  };
+  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  const tx = await engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
+    contract: "CCSXYUVLYALKJGIIYMGYLZI447VS6TDWFTVDL43B4IKK2WERHLWUVCRC",
+    function: "claim",
+    args: [],
+  }), KEYPAIR);
+  assert.equal(simulations, 2);
+  assert.equal(server.submitted.length, 1);
+  assert.equal(server.submitted[0].operations[0].type, "restoreFootprint");
+  assert.equal(server.submitted[0].signatures.length, 1);
+  assert.equal(tx.signatures.length, 0);
+  await engine.signAndSubmit(tx, KEYPAIR);
+  assert.equal(server.submitted[1].operations[0].type, "invokeHostFunction");
+  assert.equal(server.submitted[1].signatures.length, 1);
 });
 
 function diagnosticEvent(contractCode) {

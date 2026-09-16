@@ -73,6 +73,13 @@ export interface PoolContext {
     args: xdr.ScVal[],
     auth?: xdr.SorobanAuthorizationEntry[],
   ): Promise<ConfirmedTx>;
+  buildRouter(fn: string, args: xdr.ScVal[], withUser: boolean): Promise<string>;
+  buildContract(
+    contractId: string,
+    fn: string,
+    args: xdr.ScVal[],
+    auth?: xdr.SorobanAuthorizationEntry[],
+  ): Promise<string>;
 }
 
 // --- helpers shared with the client ------------------------------------------------
@@ -209,6 +216,26 @@ export class Pool {
    * exact deposit, reduced by `slippage` (default 1%).
    */
   async deposit(params: { amounts: DepositAmounts; slippage?: number }): Promise<DepositResult> {
+    const args = await this.guardedDepositArgs(params);
+    const confirmed = await this.ctx.submitRouter("deposit", args, true);
+    const [amounts, shares] = scValToNative(confirmed.returnValue!) as [bigint[], bigint];
+    return { txHash: confirmed.txHash, amounts, shares };
+  }
+
+  /**
+   * The same deposit, prepared but not signed: the simulated, unsigned
+   * envelope XDR, guards already derived. For flows that own signing and
+   * submission themselves (wallet adapters, multisig, hardware).
+   */
+  async buildDeposit(params: { amounts: DepositAmounts; slippage?: number }): Promise<string> {
+    const args = await this.guardedDepositArgs(params);
+    return this.ctx.buildRouter("deposit", args, true);
+  }
+
+  private async guardedDepositArgs(params: {
+    amounts: DepositAmounts;
+    slippage?: number;
+  }): Promise<xdr.ScVal[]> {
     if (this.type === "concentrated") {
       throw new AquariusError(
         "Depositing into a concentrated pool through the router opens a full-range " +
@@ -223,14 +250,7 @@ export class Pool {
       await this.simulateWrite("deposit", this.depositArgs(desired, 0n)),
     ) as [bigint[], bigint];
     const minShares = (estimated[1] * factor) / 10_000n;
-
-    const confirmed = await this.ctx.submitRouter(
-      "deposit",
-      this.depositArgs(desired, minShares),
-      true,
-    );
-    const [amounts, shares] = scValToNative(confirmed.returnValue!) as [bigint[], bigint];
-    return { txHash: confirmed.txHash, amounts, shares };
+    return this.depositArgs(desired, minShares);
   }
 
   /**
@@ -238,23 +258,26 @@ export class Pool {
    * from a simulation of this exact withdrawal, reduced by `slippage` (default 1%).
    */
   async withdraw(params: { shares: bigint; slippage?: number }): Promise<WithdrawResult> {
-    const factor = BigInt(Math.round((1 - (params.slippage ?? 0.01)) * 10_000));
-    const zeros = this.tokens.map(() => 0n);
-
-    const estimated = scValToNative(
-      await this.simulateWrite("withdraw", this.withdrawArgs(params.shares, zeros)),
-    ) as bigint[];
-    const minimums = estimated.map(amount => (amount * factor) / 10_000n);
-
-    const confirmed = await this.ctx.submitRouter(
-      "withdraw",
-      this.withdrawArgs(params.shares, minimums),
-      true,
-    );
+    const args = await this.guardedWithdrawArgs(params);
+    const confirmed = await this.ctx.submitRouter("withdraw", args, true);
     return {
       txHash: confirmed.txHash,
       amounts: scValToNative(confirmed.returnValue!) as bigint[],
     };
+  }
+
+  /** The same withdrawal, prepared but not signed. See `buildDeposit`. */
+  async buildWithdraw(params: { shares: bigint; slippage?: number }): Promise<string> {
+    const args = await this.guardedWithdrawArgs(params);
+    return this.ctx.buildRouter("withdraw", args, true);
+  }
+
+  private async guardedWithdrawArgs(params: {
+    shares: bigint;
+    slippage?: number;
+  }): Promise<xdr.ScVal[]> {
+    const minimums = this.applySlippage(await this.estimateWithdraw(params.shares), params.slippage);
+    return this.withdrawArgs(params.shares, minimums);
   }
 
   /** Claim accrued AQUA rewards for the signer. */
@@ -264,6 +287,24 @@ export class Pool {
       txHash: confirmed.txHash,
       amount: scValToNative(confirmed.returnValue!) as bigint,
     };
+  }
+
+  /** The same reward claim, prepared but not signed. See `buildDeposit`. */
+  buildClaimRewards(): Promise<string> {
+    return this.ctx.buildRouter("claim", this.baseArgs(), true);
+  }
+
+  /** What burning `shares` returns per token, in sorted-token order. */
+  async estimateWithdraw(shares: bigint): Promise<bigint[]> {
+    const zeros = this.tokens.map(() => 0n);
+    return scValToNative(
+      await this.simulateWrite("withdraw", this.withdrawArgs(shares, zeros)),
+    ) as bigint[];
+  }
+
+  private applySlippage(amounts: bigint[], slippage?: number): bigint[] {
+    const factor = BigInt(Math.round((1 - (slippage ?? 0.01)) * 10_000));
+    return amounts.map(a => (a * factor) / 10_000n);
   }
 
   // -- single-pool swaps ---------------------------------------------------------
@@ -531,6 +572,41 @@ export class Pool {
     liquidity?: bigint;
     slippage?: number;
   }): Promise<ConcentratedWithdrawResult> {
+    const args = await this.guardedWithdrawPositionArgs(params);
+    const confirmed = await this.ctx.submitContract(
+      this.address,
+      "withdraw_position",
+      args,
+      this.selfAuth("withdraw_position", args),
+    );
+    return {
+      txHash: confirmed.txHash,
+      amounts: scValToNative(confirmed.returnValue!) as bigint[],
+    };
+  }
+
+  /** The same range withdrawal, prepared but not signed. See `buildDeposit`. */
+  async buildWithdrawPosition(params: {
+    tickLower: number;
+    tickUpper: number;
+    liquidity?: bigint;
+    slippage?: number;
+  }): Promise<string> {
+    const args = await this.guardedWithdrawPositionArgs(params);
+    return this.ctx.buildContract(
+      this.address,
+      "withdraw_position",
+      args,
+      this.selfAuth("withdraw_position", args),
+    );
+  }
+
+  private async guardedWithdrawPositionArgs(params: {
+    tickLower: number;
+    tickUpper: number;
+    liquidity?: bigint;
+    slippage?: number;
+  }): Promise<xdr.ScVal[]> {
     this.requireConcentrated();
     const owner = this.ctx.readSource(true);
     const liquidity =
@@ -544,50 +620,23 @@ export class Pool {
     ])) as bigint[];
     const factor = BigInt(Math.round((1 - (params.slippage ?? 0.01)) * 10_000));
     const minimums = estimated.map(a => (a * factor) / 10_000n);
-    const args = [
+    return [
       new Address(owner).toScVal(),
       xdr.ScVal.scvI32(params.tickLower),
       xdr.ScVal.scvI32(params.tickUpper),
       u128(liquidity),
       xdr.ScVal.scvVec(minimums.map(u128)),
     ];
-    const confirmed = await this.ctx.submitContract(this.address, "withdraw_position", args, [
-      sourceAccountEntry(authorizedInvocation(this.address, "withdraw_position", args)),
-    ]);
-    return {
-      txHash: confirmed.txHash,
-      amounts: scValToNative(confirmed.returnValue!) as bigint[],
-    };
   }
 
   /** Collect one position's accrued swap fees. */
   async claimPositionFees(tickLower: number, tickUpper: number): Promise<ClaimFeesResult> {
-    this.requireConcentrated();
-    const owner = this.ctx.readSource(true);
-    const args = [
-      new Address(owner).toScVal(),
-      xdr.ScVal.scvI32(tickLower),
-      xdr.ScVal.scvI32(tickUpper),
-    ];
-    const confirmed = await this.ctx.submitContract(this.address, "claim_position_fees", args, [
-      sourceAccountEntry(authorizedInvocation(this.address, "claim_position_fees", args)),
-    ]);
-    return {
-      txHash: confirmed.txHash,
-      amounts: scValToNative(confirmed.returnValue!) as bigint[],
-    };
-  }
-
-  /** Collect accrued swap fees across all of the signer's positions. */
-  async claimAllPositionFees(): Promise<ClaimFeesResult> {
-    this.requireConcentrated();
-    const owner = this.ctx.readSource(true);
-    const args = [new Address(owner).toScVal()];
+    const args = this.rangeArgs(tickLower, tickUpper);
     const confirmed = await this.ctx.submitContract(
       this.address,
-      "claim_all_position_fees",
+      "claim_position_fees",
       args,
-      [sourceAccountEntry(authorizedInvocation(this.address, "claim_all_position_fees", args))],
+      this.selfAuth("claim_position_fees", args),
     );
     return {
       txHash: confirmed.txHash,
@@ -595,7 +644,62 @@ export class Pool {
     };
   }
 
+  /** The same fee claim, prepared but not signed. See `buildDeposit`. */
+  buildClaimPositionFees(tickLower: number, tickUpper: number): Promise<string> {
+    const args = this.rangeArgs(tickLower, tickUpper);
+    return this.ctx.buildContract(
+      this.address,
+      "claim_position_fees",
+      args,
+      this.selfAuth("claim_position_fees", args),
+    );
+  }
+
+  /** Collect accrued swap fees across all of the signer's positions. */
+  async claimAllPositionFees(): Promise<ClaimFeesResult> {
+    const args = this.ownerArgs();
+    const confirmed = await this.ctx.submitContract(
+      this.address,
+      "claim_all_position_fees",
+      args,
+      this.selfAuth("claim_all_position_fees", args),
+    );
+    return {
+      txHash: confirmed.txHash,
+      amounts: scValToNative(confirmed.returnValue!) as bigint[],
+    };
+  }
+
+  /** The same fee claim, prepared but not signed. See `buildDeposit`. */
+  buildClaimAllPositionFees(): Promise<string> {
+    const args = this.ownerArgs();
+    return this.ctx.buildContract(
+      this.address,
+      "claim_all_position_fees",
+      args,
+      this.selfAuth("claim_all_position_fees", args),
+    );
+  }
+
   // -- internals ---------------------------------------------------------------------
+
+  /** Source-account auth for a call the signer makes on this pool directly. */
+  private selfAuth(fn: string, args: xdr.ScVal[]): xdr.SorobanAuthorizationEntry[] {
+    return [sourceAccountEntry(authorizedInvocation(this.address, fn, args))];
+  }
+
+  private ownerArgs(): xdr.ScVal[] {
+    this.requireConcentrated();
+    return [new Address(this.ctx.readSource(true)).toScVal()];
+  }
+
+  private rangeArgs(tickLower: number, tickUpper: number): xdr.ScVal[] {
+    return [
+      ...this.ownerArgs(),
+      xdr.ScVal.scvI32(tickLower),
+      xdr.ScVal.scvI32(tickUpper),
+    ];
+  }
 
   private baseArgs(): xdr.ScVal[] {
     return [
@@ -715,6 +819,27 @@ export class ConcentratedDepositEstimate {
   ) {}
 
   async execute(options?: { slippage?: number }): Promise<ConcentratedDepositResult> {
+    const { args, auth } = this.plan(options);
+    const confirmed = await this.ctx.submitContract(
+      this.pool.address,
+      "deposit_position",
+      args,
+      auth,
+    );
+    const [used, minted] = scValToNative(confirmed.returnValue!) as [bigint[], bigint];
+    return { txHash: confirmed.txHash, amounts: used, liquidity: minted };
+  }
+
+  /** The same range deposit, prepared but not signed. See `Pool.buildDeposit`. */
+  buildTransaction(options?: { slippage?: number }): Promise<string> {
+    const { args, auth } = this.plan(options);
+    return this.ctx.buildContract(this.pool.address, "deposit_position", args, auth);
+  }
+
+  private plan(options?: { slippage?: number }): {
+    args: xdr.ScVal[];
+    auth: xdr.SorobanAuthorizationEntry[];
+  } {
     const owner = this.ctx.readSource(true);
     const factor = BigInt(Math.round((1 - (options?.slippage ?? 0.01)) * 10_000));
     const minLiquidity = (this.liquidity * factor) / 10_000n;
@@ -735,12 +860,13 @@ export class ConcentratedDepositEstimate {
         nativeToScVal(this.desired[i], { type: "i128" }),
       ]),
     );
-    const confirmed = await this.ctx.submitContract(this.pool.address, "deposit_position", args, [
-      sourceAccountEntry(
-        authorizedInvocation(this.pool.address, "deposit_position", args, transfers),
-      ),
-    ]);
-    const [used, minted] = scValToNative(confirmed.returnValue!) as [bigint[], bigint];
-    return { txHash: confirmed.txHash, amounts: used, liquidity: minted };
+    return {
+      args,
+      auth: [
+        sourceAccountEntry(
+          authorizedInvocation(this.pool.address, "deposit_position", args, transfers),
+        ),
+      ],
+    };
   }
 }
