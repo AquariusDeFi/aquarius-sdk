@@ -113,6 +113,8 @@ export type CreatePoolParams = {
   feeBps: number;
   /** The first deposit — a pool is never created empty. */
   amounts: DepositAmounts;
+  /** Refuse a creation fee that differs from the one the user reviewed. */
+  expectedCreationFee?: { token: string; destination: string; amount: bigint };
   /** Fraction of the simulated shares/liquidity to tolerate losing. Default 0.01 (1%). */
   slippage?: number;
 } & (
@@ -612,6 +614,10 @@ export class AquariusClient {
       concentrated: "init_concentrated_pool",
     }[params.type];
     const feeAmount = fee[params.type];
+    const expected = params.expectedCreationFee;
+    if (expected && (expected.token !== fee.token || expected.destination !== fee.destination || expected.amount !== feeAmount)) {
+      throw new AquariusError("Pool creation fee changed. Review the fee and try again.");
+    }
     const initArgs = [
       new Address(user).toScVal(),
       xdr.ScVal.scvVec(tokens.map(t => new Address(t).toScVal())),

@@ -442,6 +442,19 @@ function creatingClient(minted = 1_000n) {
   return { client, signer };
 }
 
+test("creation refuses changes to the reviewed fee before simulating or authorizing init", async () => {
+  const { client } = creatingClient();
+  const params = { type: "volatile", tokens: [XLM, AQUA], feeBps: 30, amounts: [500n, 700n] };
+  const expected = { token: AQUA_ID, destination: OWNER, amount: 100n };
+  for (const changed of [{ amount: 99n }, { token: XLM_ID }, { destination: Keypair.random().publicKey() }]) {
+    await assert.rejects(client.pools.buildCreate({ ...params, expectedCreationFee: { ...expected, ...changed } }), /creation fee changed/);
+  }
+  assert.equal(client.simulated.length, 0);
+  assert.equal(client.batches.length, 0);
+  await client.pools.buildCreate({ ...params, expectedCreationFee: expected });
+  assert.equal(client.batches.length, 1);
+});
+
 test("pools.create is init + first deposit in one batch, fee and transfers authorized", async () => {
   const { client, signer } = creatingClient();
   const { pool: created } = await client.pools.create({
