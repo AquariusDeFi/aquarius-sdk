@@ -63,6 +63,9 @@ export class RestoreRequiredError extends AquariusError {
   }
 }
 
+/** The simulated call exceeded Soroban's resource budget. */
+export class ResourceLimitError extends AquariusError {}
+
 // Wallet-rejection messages across signers: Freighter, WalletConnect, Ledger.
 const USER_REJECTED_MESSAGES = [
   "the user rejected this request.",
@@ -134,7 +137,7 @@ export function classifyContractError(message: string, txHash?: string): Aquariu
     return classifyContractCode(Number(match[1]), txHash);
   }
   if (message.includes("Error(Budget, ExceededLimit)")) {
-    return new AquariusError(
+    return new ResourceLimitError(
       "The call exceeded Soroban resource limits — for swaps this usually means too many hops",
       txHash,
     );

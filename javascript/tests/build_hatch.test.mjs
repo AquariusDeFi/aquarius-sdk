@@ -221,8 +221,19 @@ async function archivedClient() {
   const u128 = value => nativeToScVal(value, { type: "u128" });
   const valuesFor = (fn, args) => {
     switch (fn) {
+      case "batch":
+        return xdr.ScVal.scvVec(args[1].map(([, method, params]) => valuesFor(method, params)));
+      case "get_init_pool_payment_token": return new Address(AQUA_ID).toScVal();
+      case "get_init_pool_payment_address": return new Address(OWNER).toScVal();
+      case "get_standard_pool_payment_amount":
+      case "get_stable_pool_payment_amount":
+      case "get_conc_pool_payment_amount": return u128(1n);
+      case "init_standard_pool":
+        return xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(entry.index, "hex")), new Address(entry.address).toScVal()]);
       case "deposit": return xdr.ScVal.scvVec([xdr.ScVal.scvVec([u128(10n), u128(20n)]), u128(1_000n)]);
       case "withdraw": return xdr.ScVal.scvVec([u128(10n), u128(20n)]);
+      case "get_gauges": return xdr.ScVal.scvMap([]);
+      case "get_rewards_info": return nativeToScVal({ working_supply: 1_000n }, { type: { working_supply: ["symbol", "i128"] } });
       default: return xdr.ScVal.scvVoid();
     }
   };
@@ -244,6 +255,10 @@ test("build paths return unsigned restore XDR without prompting the signer or se
     (client, pool) => pool.buildDeposit({ amounts: [10n, 20n] }),
     (client, pool) => pool.buildWithdraw({ shares: 1n }),
     (client, pool) => pool.buildClaimRewards(),
+    (client, pool) => pool.buildSetRewardsEnabled(true),
+    (client, pool) => pool.buildScheduleIncentive({ token: AQUA, tps: 1n, startAt: 1_900_000_000n, durationSeconds: 86_400n }),
+    (client, pool) => client.buildClaim([{ pool, kind: "rewards" }]),
+    client => client.pools.buildCreate({ type: "volatile", tokens: [XLM, AQUA], feeBps: 30, amounts: [10n, 20n] }),
     async client => (await client.quote({ from: XLM, to: AQUA, amountIn: 10n })).buildTransaction(),
   ];
   for (const build of builds) {
@@ -266,8 +281,9 @@ test("build paths return unsigned restore XDR without prompting the signer or se
 
 test("reads of archived entries return their values even with a configured signer", async () => {
   const { client, pool, counts } = await archivedClient();
-  assert.deepEqual(await pool.estimateWithdraw(1n), [10n, 20n]);
+  assert.equal((await pool.rewardsInfo()).workingSupply, 1_000n);
+  assert.equal((await client.poolCreationFee()).concentrated, 1n);
   assert.equal(counts.signatures, 0);
   assert.equal(counts.submissions, 0);
-  assert.equal(counts.simulations, 1);
+  assert.equal(counts.simulations, 2);
 });

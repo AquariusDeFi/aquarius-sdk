@@ -328,6 +328,7 @@ test("contract overrides point a network preset at another deployment", () => {
   const mainnet = new AquariusClient({ network: "mainnet" });
   assert.equal(staging.network.router, "CSTAGINGROUTER");
   assert.equal(staging.network.apiUrl, "https://staging.invalid/api");
+  assert.equal(staging.network.batch, mainnet.network.batch); // unspecified: preset kept
   assert.equal(staging.network.collectorFactory, mainnet.network.collectorFactory);
   assert.equal(staging.network.passphrase, mainnet.network.passphrase);
   assert.equal(mainnet.network.router, "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK");
