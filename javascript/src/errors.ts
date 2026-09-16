@@ -138,6 +138,10 @@ export function classifyContractError(message: string, txHash?: string): Aquariu
  * determinable. The trustline marker is checked on the raw event bytes;
  * contract error codes are read from `error` topics.
  */
+function topicsOf(event: xdr.DiagnosticEvent): xdr.ScVal[] {
+  return event.event.body.v0.topics;
+}
+
 export function errorFromDiagnostics(
   events: (xdr.DiagnosticEvent | string)[] | undefined,
   txHash?: string,
@@ -151,13 +155,8 @@ export function errorFromDiagnostics(
   for (const raw of events ?? []) {
     try {
       const event = typeof raw === "string" ? xdr.DiagnosticEvent.fromXDR(raw, "base64") : raw;
-      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : raw.toXDR();
-      const isError = event
-        .event()
-        .body()
-        .v0()
-        .topics()
-        .some(t => t.switch() === xdr.ScValType.scvSymbol() && t.sym().toString() === "error");
+      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : Buffer.from(raw.toXDR());
+      const isError = topicsOf(event).some(t => t.type === "scvSymbol" && t.sym.toString() === "error");
       decoded.push({ bytes, event, isError });
     } catch {
       // a single undecodable event never masks the rest
@@ -182,12 +181,12 @@ export function errorFromDiagnostics(
     if (bytes.includes(TRUSTLINE_MARKER)) {
       return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
     }
-    for (const topic of event.event().body().v0().topics()) {
-      if (topic.switch() !== xdr.ScValType.scvError()) continue;
-      const scError = topic.error();
-      if (scError.switch() === xdr.ScErrorType.sceContract() && code === null) {
-        code = scError.contractCode();
-      } else if (scError.switch() === xdr.ScErrorType.sceStorage()) {
+    for (const topic of topicsOf(event)) {
+      if (topic.type !== "scvError") continue;
+      const scError = topic.error;
+      if (scError.type === "sceContract" && code === null) {
+        code = scError.contractCode;
+      } else if (scError.type === "sceStorage") {
         storage = true;
       }
     }

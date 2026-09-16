@@ -132,10 +132,12 @@ export function parsePoolMeta(meta: { pool_type: string; fee: string; tokens_str
 /** @internal get_pools result: Map<BytesN<32>, Address> -> [pool hash, pool address]. */
 export function parsePoolsMap(value: xdr.ScVal): Array<[Uint8Array, string]> {
   const entries: Array<[Uint8Array, string]> = [];
-  for (const entry of value.map() ?? []) {
+  if (value.type !== "scvMap") return entries;
+  for (const entry of value.map ?? []) {
+    if (entry.key.type !== "scvBytes" || entry.val.type !== "scvAddress") continue;
     entries.push([
-      entry.key().bytes(),
-      Address.fromScAddress(entry.val().address()).toString(),
+      entry.key.bytes.toBytes(),
+      Address.fromScAddress(entry.val.address).toString(),
     ]);
   }
   return entries;
@@ -176,7 +178,7 @@ export class Pool {
   async shareToken(): Promise<string> {
     if (!this.shareToken_) {
       const value = await this.readRouter("share_id");
-      this.shareToken_ = Address.fromScAddress(value.address()).toString();
+      this.shareToken_ = scValToNative(value) as string;
     }
     return this.shareToken_;
   }

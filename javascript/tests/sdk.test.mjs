@@ -268,29 +268,26 @@ test("swap operation carries bounded client-built authorization", async () => {
 
   {
     const { op, parsed } = build(true);
-    const [entry] = op.body().invokeHostFunctionOp().auth();
-    assert.equal(
-      entry.credentials().switch(),
-      xdr.SorobanCredentialsType.sorobanCredentialsSourceAccount(),
-    );
-    const root = entry.rootInvocation();
-    assert.equal(root.function().contractFn().functionName().toString(), "swap_chained");
-    const [transfer] = root.subInvocations();
-    const t = transfer.function().contractFn();
-    assert.equal(t.functionName().toString(), "transfer");
-    assert.equal(scValToNative(t.args()[2]), parsed.amountIn); // bounded: exactly what is spent
+    const [entry] = op.body.invokeHostFunctionOp.auth;
+    assert.equal(entry.credentials.type, "sorobanCredentialsSourceAccount");
+    const root = entry.rootInvocation;
+    assert.equal(root.function.contractFn.functionName.toString(), "swap_chained");
+    const [transfer] = root.subInvocations;
+    const t = transfer.function.contractFn;
+    assert.equal(t.functionName.toString(), "transfer");
+    assert.equal(scValToNative(t.args[2]), parsed.amountIn); // bounded: exactly what is spent
   }
   {
     const { op, parsed } = build(false);
-    const [entry] = op.body().invokeHostFunctionOp().auth();
-    const root = entry.rootInvocation();
+    const [entry] = op.body.invokeHostFunctionOp.auth;
+    const root = entry.rootInvocation;
     assert.equal(
-      root.function().contractFn().functionName().toString(),
+      root.function.contractFn.functionName.toString(),
       "swap_chained_strict_receive",
     );
-    const [transfer] = root.subInvocations();
+    const [transfer] = root.subInvocations;
     // max-in: the contract pulls at most the guard and refunds the difference
-    assert.equal(scValToNative(transfer.function().contractFn().args()[2]), parsed.guard);
+    assert.equal(scValToNative(transfer.function.contractFn.args[2]), parsed.guard);
   }
 });
 

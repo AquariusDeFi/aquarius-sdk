@@ -35,7 +35,7 @@ function funding(t) {
   t.mock.method(rpc.Server.prototype, "getLedgerEntries", async function (key) {
     assert.equal(this.serverURL.toString(), "https://rpc.example/");
     assert.equal(Keypair.fromPublicKey(signer.publicKey()).xdrPublicKey().toXDR("base64"),
-      key.account().accountId().toXDR("base64"));
+      key.account.accountId.toXDR("base64"));
     assert.ok(this.httpClient.defaults.timeout > 0);
     assert.ok(this.httpClient.defaults.timeout <= 30_000 - state.now);
     state.rpcCalls += 1;

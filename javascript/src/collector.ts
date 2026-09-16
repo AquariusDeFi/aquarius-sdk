@@ -55,12 +55,12 @@ export class FeeCollector {
   /** Where every claim pays out — fixed at deploy time. */
   async feeDestination(): Promise<string> {
     const value = await this.ctx.readContract(this.address, "get_fee_destination", []);
-    return Address.fromScAddress(value.address()).toString();
+    return scValToNative(value) as string;
   }
 
   async router(): Promise<string> {
     const value = await this.ctx.readContract(this.address, "get_router", []);
-    return Address.fromScAddress(value.address()).toString();
+    return scValToNative(value) as string;
   }
 
   /** Upper bound for the per-swap feeFraction this collector accepts. */
