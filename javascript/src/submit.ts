@@ -29,6 +29,9 @@ class BadSeqRejection extends AquariusError {}
 const POLL_ATTEMPTS = 30;
 const POLL_INTERVAL_MS = 2_000;
 
+// How often waitForNextLedger polls the RPC's latest ledger.
+const NEXT_LEDGER_POLL_INTERVAL_MS = 1_000;
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
@@ -182,6 +185,9 @@ export class SubmitEngine {
    */
   static _badSeqDelaysMs = [500, 1_000, 2_000];
 
+  /** waitForNextLedger poll interval; static so tests can shrink it. */
+  static _nextLedgerPollIntervalMs = NEXT_LEDGER_POLL_INTERVAL_MS;
+
   constructor(
     private readonly server: rpc.Server,
     private readonly passphrase: string,
@@ -210,6 +216,12 @@ export class SubmitEngine {
   private readonly simulationAccounts = new Map<string, Promise<Account>>();
 
   private networkComputeCache?: { fetchedAt: number; value: Promise<NetworkCompute> };
+
+  /**
+   * Ledger of this engine's last transaction that made it on-chain (confirmed
+   * or failed); the default for waitForNextLedger.
+   */
+  private lastTxLedger?: number;
 
   private networkCompute(): Promise<NetworkCompute> {
     const now = Date.now();
@@ -251,6 +263,36 @@ export class SubmitEngine {
       this.simulationAccounts.set(source, account);
     }
     return account;
+  }
+
+  /**
+   * Wait until the RPC's latest ledger is greater than `ledger` and resolve
+   * to the latest ledger observed. `ledger` defaults to the ledger of this
+   * engine's last on-chain transaction (confirmed or failed), or, if there is
+   * none, to the RPC's current latest ledger. Polls `getHealth` about once a
+   * second and rejects with AquariusError after `timeoutMs`.
+   */
+  async waitForNextLedger(ledger?: number, timeoutMs = 30_000): Promise<number> {
+    if (ledger !== undefined && (!Number.isSafeInteger(ledger) || ledger < 0)) {
+      throw new AquariusError("ledger must be a non-negative integer");
+    }
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new AquariusError("timeoutMs must be a positive finite number");
+    }
+    const deadline = Date.now() + timeoutMs;
+    let latest = (await this.server.getHealth()).latestLedger;
+    const target = ledger ?? this.lastTxLedger ?? latest;
+    while (latest <= target) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new AquariusError(
+          `The RPC did not advance past ledger ${target} within ${timeoutMs / 1_000} s`,
+        );
+      }
+      await sleep(Math.min(SubmitEngine._nextLedgerPollIntervalMs, remaining));
+      latest = (await this.server.getHealth()).latestLedger;
+    }
+    return latest;
   }
 
   /**
@@ -447,6 +489,16 @@ export class SubmitEngine {
       attempts: POLL_ATTEMPTS,
       sleepStrategy: (iter: number) => Math.min(500 * Math.max(iter, 1), POLL_INTERVAL_MS),
     });
+
+    // A failed transaction also applied in its ledger (sequence number, fee),
+    // and what usually follows it is a retry that should simulate on the state
+    // after it, so its ledger is remembered as well.
+    if (
+      result.status === rpc.Api.GetTransactionStatus.SUCCESS ||
+      result.status === rpc.Api.GetTransactionStatus.FAILED
+    ) {
+      this.lastTxLedger = result.ledger ?? this.lastTxLedger;
+    }
 
     if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
       return { txHash: hash, returnValue: result.returnValue };
