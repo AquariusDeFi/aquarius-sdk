@@ -25,7 +25,7 @@ PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
 KEYPAIR = Keypair.random()
 CONTRACT = StrKey.encode_contract(bytes([1]) * 32)
 BASE_FEE = 100
-RESOURCE_FEE = 105_273  # simulated for a real swap on 2026-09-25
+RESOURCE_FEE = 105_273  # a production swap's declared fee (with 15% headroom), 2026-09-25
 
 
 def transaction_data(resource_fee: int) -> str:
@@ -44,7 +44,7 @@ def restore_needed(restore_fee: int) -> dict:
     return {
         **SUCCESS,
         "restorePreamble": {
-            "transactionData": transaction_data(restore_fee),
+            "transactionData": transaction_data(1),  # differs: min_resource_fee must win
             "minResourceFee": restore_fee,
         },
     }
@@ -114,9 +114,12 @@ def test_client_passes_resource_fee_headroom_to_the_engine():
     client = AquariusClient(network="testnet", resource_fee_headroom=0.25)
     assert client.engine.resource_fee_headroom == 0.25
     assert AquariusClient(network="testnet").engine.resource_fee_headroom == 0.5
+    none = AquariusClient(network="testnet", resource_fee_headroom=None)
+    assert none.engine.resource_fee_headroom == 0.5
+    assert SubmitEngine(FakeServer([]), PASSPHRASE, base_fee=100).resource_fee_headroom == 0.5
 
 
-@pytest.mark.parametrize("invalid", [-0.1, math.nan, math.inf, "0.5", None, True])
+@pytest.mark.parametrize("invalid", [-0.1, math.nan, math.inf, 10**400, "0.5", True])
 def test_invalid_headroom_is_rejected(invalid):
     with pytest.raises(AquariusError, match="resource_fee_headroom"):
         SubmitEngine(FakeServer([]), PASSPHRASE, base_fee=100, resource_fee_headroom=invalid)

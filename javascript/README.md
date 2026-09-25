@@ -156,6 +156,13 @@ short and fail the transaction on-chain with
 before signing (also to automatic restore transactions and to
 `quote.buildTransaction()`), so wallets see and sign the final fee.
 
+The source account must hold the full declared fee — inclusion fee plus
+resource fee plus headroom: it is debited before execution, and the unused part
+is refunded after apply. When spending the whole XLM balance, leave that margin.
+Re-preparing the XDR from `quote.buildTransaction()` with stellar-sdk's own
+`prepareTransaction` re-simulates and replaces the resource fee, which drops the
+headroom.
+
 ## Amounts
 
 All amounts are `bigint` in token base units (stroops for classic assets: 1 token = 10^7).

@@ -38,7 +38,9 @@ export interface AquariusConfig {
    * Fraction of the simulated Soroban resource fee added on top of it before
    * signing. Default 0.5 (50%); 0 disables. The declared resource fee is a
    * cap and unused fee is refunded, so headroom costs nothing unless the
-   * transaction needs it at apply time.
+   * transaction needs it at apply time. The source account must still hold
+   * the full declared fee (inclusion + resource + headroom): it is debited
+   * before execution and the unused part is refunded after apply.
    */
   resourceFeeHeadroom?: number;
 }

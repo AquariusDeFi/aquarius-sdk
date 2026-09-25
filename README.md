@@ -46,7 +46,12 @@ Soroban transactions declare the simulated resource fee plus a headroom —
 `resource_fee_headroom` / `resourceFeeHeadroom`, default `0.5` (+50%), `0`
 disables. The declared resource fee is a cap and the unused part is refunded,
 so the headroom costs nothing unless state changes between simulation and
-apply make the transaction need it.
+apply make the transaction need it. The source account must still hold the
+full declared fee (inclusion + resource + headroom): it is debited before
+execution and the unused part refunded after apply, so leave that margin when
+spending the whole XLM balance. Re-preparing the XDR from
+`build_transaction()` / `buildTransaction()` with stellar-sdk's own
+`prepare_transaction` / `prepareTransaction` drops the headroom.
 
 ## Design principles
 

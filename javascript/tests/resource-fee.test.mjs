@@ -21,7 +21,7 @@ const PASSPHRASE = Networks.TESTNET;
 const KEYPAIR = Keypair.random();
 const CONTRACT = StrKey.encodeContract(Buffer.alloc(32, 1));
 const BASE_FEE = 100;
-const RESOURCE_FEE = 105_273; // simulated for a real swap on 2026-09-25
+const RESOURCE_FEE = 105_273; // a production swap's declared fee (with 15% headroom), 2026-09-25
 
 const transactionData = resourceFee =>
   new SorobanDataBuilder().setResourceFee(resourceFee).build().toXDR("base64");
@@ -37,7 +37,7 @@ const success = {
 const restoreNeeded = restoreFee => ({
   ...success,
   restorePreamble: {
-    transactionData: transactionData(restoreFee),
+    transactionData: transactionData(1), // differs: minResourceFee must win
     minResourceFee: String(restoreFee),
   },
 });
@@ -104,6 +104,10 @@ test("the client passes resourceFeeHeadroom to the engine", () => {
   const client = new AquariusClient({ network: "testnet", resourceFeeHeadroom: 0.25 });
   assert.equal(client.engine.resourceFeeHeadroom, 0.25);
   assert.equal(new AquariusClient({ network: "testnet" }).engine.resourceFeeHeadroom, 0.5);
+  assert.equal(
+    new AquariusClient({ network: "testnet", resourceFeeHeadroom: undefined }).engine.resourceFeeHeadroom,
+    0.5,
+  );
 });
 
 for (const invalid of [-0.1, Number.NaN, Number.POSITIVE_INFINITY, "0.5", null]) {
