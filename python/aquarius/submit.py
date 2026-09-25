@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Callable
 
-from stellar_sdk import Account, SorobanServer, TransactionBuilder, TransactionEnvelope
+from stellar_sdk import (
+    Account,
+    SorobanDataBuilder,
+    SorobanServer,
+    TransactionBuilder,
+    TransactionEnvelope,
+)
 from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
-from stellar_sdk.xdr import SCVal, TransactionMeta, TransactionResult
+from stellar_sdk.xdr import Int64, SCVal, TransactionMeta, TransactionResult
 
 from .errors import (
     AquariusError,
@@ -27,6 +34,48 @@ class _BadSeqRejection(AquariusError):
 
 _POLL_ATTEMPTS = 30
 _POLL_INTERVAL_S = 2
+
+# Fraction of the simulated Soroban resource fee added on top of it. The
+# declared resource fee is a cap: the network charges the non-refundable part
+# plus the refundable part actually consumed (rent, events, return value) and
+# refunds the rest, so headroom costs nothing unless it is used. The refundable
+# part depends on ledger state at apply time, which can change between
+# simulation and apply; without headroom such a transaction fails on-chain with
+# INVOKE_HOST_FUNCTION_INSUFFICIENT_REFUNDABLE_FEE.
+DEFAULT_RESOURCE_FEE_HEADROOM = 0.5
+
+_UINT32_MAX = 4_294_967_295
+
+
+def validate_resource_fee_headroom(headroom) -> float:
+    """Raise unless ``headroom`` is a non-negative finite number."""
+    if (
+        isinstance(headroom, bool)
+        or not isinstance(headroom, (int, float))
+        or not math.isfinite(headroom)
+        or headroom < 0
+    ):
+        raise AquariusError("resource_fee_headroom must be a non-negative finite number")
+    return headroom
+
+
+def with_resource_fee_headroom(tx: TransactionEnvelope, headroom: float) -> TransactionEnvelope:
+    """Raise the declared Soroban resource fee by ceil(resource_fee * headroom)
+    and the total fee by the same amount, so the inclusion fee is unchanged.
+
+    The increase is capped so the total fee stays within uint32. Transactions
+    without Soroban data are returned as is. Mutates and returns ``tx``.
+    """
+    soroban_data = tx.transaction.soroban_data
+    if headroom == 0 or soroban_data is None:
+        return tx
+    resource_fee = soroban_data.resource_fee.int64
+    room = _UINT32_MAX - tx.transaction.fee
+    wanted = resource_fee * headroom
+    extra = room if wanted >= room else math.ceil(wanted)
+    soroban_data.resource_fee = Int64(resource_fee + extra)
+    tx.transaction.fee += extra
+    return tx
 
 
 @dataclass
@@ -58,6 +107,7 @@ class SubmitEngine:
         passphrase: str,
         base_fee: int,
         timeout: int | None = None,
+        resource_fee_headroom: float = DEFAULT_RESOURCE_FEE_HEADROOM,
     ):
         self.server = server
         self.passphrase = passphrase
@@ -66,6 +116,9 @@ class SubmitEngine:
         # right default when a human signs through a wallet, the wrong one for
         # bots, whose stale transactions should expire rather than execute).
         self.timeout = timeout
+        # Fraction of the simulated resource fee added on top of it before
+        # signing; 0 disables. See DEFAULT_RESOURCE_FEE_HEADROOM.
+        self.resource_fee_headroom = validate_resource_fee_headroom(resource_fee_headroom)
         self._simulation_accounts: dict[str, Account] = {}
 
     def build_transaction(
@@ -120,17 +173,25 @@ class SubmitEngine:
         if simulation.error is not None:
             raise classify_contract_error(simulation.error) or AquariusError(simulation.error)
 
-        return self.server.prepare_transaction(tx, simulation)
+        return with_resource_fee_headroom(
+            self.server.prepare_transaction(tx, simulation), self.resource_fee_headroom
+        )
 
     def _restore(self, source: str, preamble, signer) -> None:
         account = self.server.load_account(source)
-        fee = self.base_fee + int(preamble.min_resource_fee)
-        restore_tx = (
-            TransactionBuilder(account, network_passphrase=self.passphrase, base_fee=fee)
-            .append_restore_footprint_op()
-            .set_soroban_data(preamble.transaction_data)
-            .add_time_bounds(0, 0)
+        # The builder adds the Soroban resource fee to the inclusion fee.
+        soroban_data = (
+            SorobanDataBuilder.from_xdr(preamble.transaction_data)
+            .set_resource_fee(int(preamble.min_resource_fee))
             .build()
+        )
+        restore_tx = with_resource_fee_headroom(
+            TransactionBuilder(account, network_passphrase=self.passphrase, base_fee=self.base_fee)
+            .append_restore_footprint_op()
+            .set_soroban_data(soroban_data)
+            .add_time_bounds(0, 0)
+            .build(),
+            self.resource_fee_headroom,
         )
         signed = sign_transaction(signer, restore_tx, self.passphrase)
         self._submit(signed)

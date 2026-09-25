@@ -42,6 +42,12 @@ Only account absence is retried; a readiness timeout does not mean funding faile
 on-chain failure without recognized diagnostics raises `AquariusError` with the
 transaction hash; inspect that transaction before deciding whether to retry.
 
+Soroban transactions declare the simulated resource fee plus a headroom —
+`resource_fee_headroom` / `resourceFeeHeadroom`, default `0.5` (+50%), `0`
+disables. The declared resource fee is a cap and the unused part is refunded,
+so the headroom costs nothing unless state changes between simulation and
+apply make the transaction need it.
+
 ## Design principles
 
 1. **Two-phase everything.** `quote()` → `Quote.execute()`. UIs show before they commit; the quote object carries everything needed to execute, so what you quoted is what you execute.
