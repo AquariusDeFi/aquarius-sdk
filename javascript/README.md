@@ -4,7 +4,7 @@ The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, an
 
 **Status: 0.6.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
 
-Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.0.1)
+Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.1.0)
 as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
 dependency; no global `Buffer` polyfill is required.
 
