@@ -13,12 +13,14 @@ from stellar_sdk.xdr import (
 )
 
 from aquarius import AquariusClient, AquariusError, SlippageError, XLM
+from aquarius import submit
 from aquarius.submit import SubmitEngine
 
 PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
 KEYPAIR = Keypair.random()
 STALE_SEQUENCE = 100  # what the lagging replica serves on the first load
 CHAIN_SEQUENCE = 105  # where the chain actually is
+CONFIRMED_LEDGER = 1000  # the ledger that applies every submitted transaction
 
 
 def rejection_xdr(code: TransactionResultCode) -> str:
@@ -43,10 +45,12 @@ class FakeServer:
     """Scripted send_transaction responses; the first account load serves a
     stale sequence (lagging replica), later loads the converged one."""
 
-    def __init__(self, send_responses):
+    def __init__(self, send_responses, latest_ledgers=()):
         self.send_responses = list(send_responses)
         self.loads = 0
         self.submitted = []
+        self.latest_ledgers = list(latest_ledgers)  # the last one repeats
+        self.calls = []
 
     def load_account(self, account_id: str) -> Account:
         self.loads += 1
@@ -57,7 +61,25 @@ class FakeServer:
         return self.send_responses.pop(0)
 
     def poll_transaction(self, tx_hash, max_attempts, sleep_strategy):
-        return SimpleNamespace(status=GetTransactionStatus.SUCCESS, result_meta_xdr=None)
+        return SimpleNamespace(
+            status=GetTransactionStatus.SUCCESS, result_meta_xdr=None, ledger=CONFIRMED_LEDGER
+        )
+
+    def get_health(self):
+        self.calls.append("get_health")
+        latest = self.latest_ledgers[0]
+        if len(self.latest_ledgers) > 1:
+            self.latest_ledgers.pop(0)
+        return SimpleNamespace(latest_ledger=latest)
+
+    def simulate_transaction(self, tx):
+        self.calls.append("simulate")
+        return SimpleNamespace(restore_preamble=None, error=None, results=[
+            SimpleNamespace(xdr=scval.to_uint32(7).to_xdr())
+        ])
+
+    def prepare_transaction(self, tx, simulation):
+        return tx
 
 
 @pytest.fixture(autouse=True)
@@ -127,7 +149,7 @@ def test_swap_retries_failed_transactions_only_for_diagnosed_slippage(
     monkeypatch.setattr(AquariusClient, "_requote_delays_s", (0, 0))
     server = FakeServer([])
     server.poll_transaction = lambda *a, **k: SimpleNamespace(
-        status=GetTransactionStatus.FAILED, diagnostic_events_xdr=events,
+        status=GetTransactionStatus.FAILED, diagnostic_events_xdr=events, ledger=None,
     )
     engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
     quotes = []
@@ -175,3 +197,60 @@ def test_write_builds_always_load_a_fresh_account():
     engine.build_transaction(KEYPAIR.public_key, lambda b: b.append_manage_data_op("t", "1"))
     engine.build_transaction(KEYPAIR.public_key, lambda b: b.append_manage_data_op("t", "1"))
     assert server.loads == 2  # writes must never reuse a cached sequence
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    fake = FakeClock()
+    monkeypatch.setattr(submit, "time", fake)
+    return fake
+
+
+def manage_data(builder):
+    return builder.append_manage_data_op("t", "1")
+
+
+def write(engine):
+    tx = engine.prepare(KEYPAIR.public_key, manage_data, KEYPAIR)
+    return engine.sign_and_submit(tx, KEYPAIR)
+
+
+def test_simulation_after_a_transaction_waits_for_the_next_ledger(clock):
+    server = FakeServer(
+        [PENDING, PENDING], latest_ledgers=[CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]
+    )
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
+    write(engine)
+    assert server.calls == ["simulate"]  # nothing remembered yet: no ledger poll
+
+    write(engine)
+    assert server.calls == ["simulate", "get_health", "get_health", "get_health", "simulate"]
+    assert clock.sleeps == [1.0, 1.0]
+
+    server.calls.clear()  # the second write confirmed in CONFIRMED_LEDGER too
+    engine.read(KEYPAIR.public_key, manage_data)
+    engine.read(KEYPAIR.public_key, manage_data)
+    assert server.calls == ["get_health", "simulate", "simulate"]  # cleared once passed
+
+
+def test_no_next_ledger_within_the_timeout_raises_before_simulating(clock):
+    server = FakeServer([PENDING, PENDING], latest_ledgers=[CONFIRMED_LEDGER])
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
+    write(engine)
+    with pytest.raises(AquariusError, match=f"did not advance past ledger {CONFIRMED_LEDGER}"):
+        write(engine)
+    assert server.calls[1:] == ["get_health"] * 31  # at 0 s, 1 s, ..., 30 s
+    assert len(server.submitted) == 1

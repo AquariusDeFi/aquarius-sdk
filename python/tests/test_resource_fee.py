@@ -122,7 +122,9 @@ class FakeServer:
         return SimpleNamespace(status=SendTransactionStatus.PENDING, hash="restored")
 
     def poll_transaction(self, tx_hash, max_attempts, sleep_strategy):
-        return SimpleNamespace(status=GetTransactionStatus.SUCCESS, result_meta_xdr=None)
+        return SimpleNamespace(
+            status=GetTransactionStatus.SUCCESS, result_meta_xdr=None, ledger=None
+        )
 
 
 def invoke(builder):

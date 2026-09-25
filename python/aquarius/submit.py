@@ -46,6 +46,11 @@ class _BadSeqRejection(AquariusError):
 _POLL_ATTEMPTS = 30
 _POLL_INTERVAL_S = 2
 
+# How often and how long to poll the RPC for a ledger newer than the one that
+# confirmed this engine's previous transaction, before the next simulation.
+_NEXT_LEDGER_POLL_INTERVAL_S = 1.0
+_NEXT_LEDGER_TIMEOUT_S = 30.0
+
 # Fraction of the simulated Soroban resource fee added on top of it. The
 # declared resource fee is a cap: the network charges the non-refundable part
 # plus the refundable part actually consumed (rent, events, return value) and
@@ -217,6 +222,9 @@ class SubmitEngine:
         )
         self._simulation_accounts: dict[str, Account] = {}
         self._network_compute_cache: tuple[float, NetworkCompute] | None = None
+        # Ledger of this engine's last transaction that made it on-chain
+        # (confirmed or failed); cleared once the RPC has moved past it.
+        self._last_tx_ledger: int | None = None
 
     def build_transaction(
         self, source: str, append: Callable[[TransactionBuilder], TransactionBuilder]
@@ -252,6 +260,36 @@ class SubmitEngine:
             self._simulation_accounts[source] = account
         return account
 
+    def _simulate(self, tx: TransactionEnvelope):
+        self._wait_for_ledger_after_last_tx()
+        return self.server.simulate_transaction(tx)
+
+    def _wait_for_ledger_after_last_tx(self) -> None:
+        """Wait until the RPC's latest ledger is past the one that applied this
+        engine's previous transaction.
+
+        Simulation runs on the latest ledger's state, but the transaction
+        applies in a later ledger. Right after a transaction applied in ledger
+        L, state that depends on ledger time (e.g. reward accrual) looks
+        unchanged since that transaction when simulated on L, so entries the
+        call will write at apply time can land in the footprint as read-only,
+        and the transaction fails on-chain. Simulating on L+1 or later sees
+        the same kind of state change as the apply will.
+        """
+        last = self._last_tx_ledger
+        if last is None:
+            return
+        deadline = time.monotonic() + _NEXT_LEDGER_TIMEOUT_S
+        while self.server.get_health().latest_ledger <= last:
+            if time.monotonic() >= deadline:
+                raise AquariusError(
+                    f"The RPC did not advance past ledger {last}, which applied the "
+                    f"previous transaction, within {_NEXT_LEDGER_TIMEOUT_S:g} s; not "
+                    "simulating on that ledger's state"
+                )
+            time.sleep(_NEXT_LEDGER_POLL_INTERVAL_S)
+        self._last_tx_ledger = None
+
     def prepare(
         self,
         source: str,
@@ -264,7 +302,7 @@ class SubmitEngine:
         extra signed transaction), then rebuild and simulate again.
         """
         tx = self.build_transaction(source, append)
-        simulation = self.server.simulate_transaction(tx)
+        simulation = self._simulate(tx)
 
         if simulation.restore_preamble is not None:
             if signer is None:
@@ -274,7 +312,7 @@ class SubmitEngine:
                 )
             self._restore(source, simulation.restore_preamble, signer)
             tx = self.build_transaction(source, append)
-            simulation = self.server.simulate_transaction(tx)
+            simulation = self._simulate(tx)
 
         if simulation.error is not None:
             raise classify_contract_error(simulation.error) or AquariusError(simulation.error)
@@ -319,12 +357,12 @@ class SubmitEngine:
         first (one signed transaction), then simulate again.
         """
         tx = self._build(self._simulation_account(source), append)
-        simulation = self.server.simulate_transaction(tx)
+        simulation = self._simulate(tx)
 
         if simulation.restore_preamble is not None and signer is not None:
             self._restore(source, simulation.restore_preamble, signer)
             tx = self._build(self._simulation_account(source), append)
-            simulation = self.server.simulate_transaction(tx)
+            simulation = self._simulate(tx)
 
         if simulation.error is not None:
             raise classify_contract_error(simulation.error) or AquariusError(simulation.error)
@@ -394,6 +432,15 @@ class SubmitEngine:
             max_attempts=_POLL_ATTEMPTS,
             sleep_strategy=lambda attempt: min(0.5 * max(attempt, 1), _POLL_INTERVAL_S),
         )
+
+        # A failed transaction also applied in its ledger (sequence number,
+        # fee), and what usually follows it is a retry that should simulate on
+        # the state after it, so its ledger is remembered as well.
+        if (
+            result.status in (GetTransactionStatus.SUCCESS, GetTransactionStatus.FAILED)
+            and result.ledger is not None
+        ):
+            self._last_tx_ledger = result.ledger
 
         if result.status == GetTransactionStatus.SUCCESS:
             return ConfirmedTx(tx_hash=tx_hash, return_value=self._return_value(result))

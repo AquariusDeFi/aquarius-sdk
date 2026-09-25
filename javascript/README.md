@@ -178,6 +178,19 @@ the simulated instructions.
 const aqua = new AquariusClient({ network: "mainnet", signer, instructionHeadroom: 0.4 });
 ```
 
+Consecutive calls wait for the next ledger. Simulation runs on the latest
+ledger's state, but a transaction applies in a later one. Right after a
+transaction applies in ledger L, state that changes with ledger time (such as
+pool reward accrual) looks unchanged on L, so a follow-up call simulated there —
+a withdraw right after a deposit, a claim right after a withdraw — can declare
+an entry it will write at apply time as read-only and fail on-chain. So after
+each of the client's transactions lands on-chain (confirmed or failed), its
+next simulation (write or read) first polls the RPC's `getHealth` about once a
+second until the latest ledger is past L, and raises `AquariusError` if that
+takes over 30 s. This adds up to
+one ledger (~5 s) of latency to back-to-back calls and nothing otherwise; the
+wait is per client instance.
+
 ## Amounts
 
 All amounts are `bigint` in token base units (stroops for classic assets: 1 token = 10^7).
