@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ./python[dev]
-      - run: pytest python/tests -q
+      - run: pytest python/tests e2e/test_probe_fixture.py -q
 
   typescript:
     runs-on: ubuntu-latest

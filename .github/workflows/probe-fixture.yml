@@ -1,0 +1,50 @@
+name: Probe fixture
+
+# Sets up the probe wallet fixture that the Aquarius availability exporter
+# needs on the mainnet E2E wallet: a USDC trustline, free USDC and LP shares
+# in the XLM/USDC 0.10% pool. Manual only; run check -> plan -> execute ->
+# check. e2e/probe_fixture.py documents each mode and its safety checks.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "check: read-only fixture check | plan: dry run, submits nothing | execute: sign and submit the plan"
+        type: choice
+        options: [check, plan, execute]
+        default: check
+
+jobs:
+  probe-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    # Same group as the mainnet lifecycle jobs in e2e.yml: they share this
+    # wallet and its sequence number, so the fixture never runs concurrently
+    # with them.
+    concurrency:
+      group: mainnet-e2e
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ./python
+      # Exit 1 when the fixture is incomplete.
+      - name: Check the fixture (read-only, no secret)
+        if: inputs.mode == 'check'
+        run: python e2e/probe_fixture.py --check
+      # The secret only confirms that it derives to the expected account;
+      # a dry run signs and submits nothing. Exit 2 when the plan is refused.
+      - name: Plan (dry run)
+        if: inputs.mode == 'plan'
+        run: python e2e/probe_fixture.py
+        env:
+          MAINNET_E2E_SECRET: ${{ secrets.MAINNET_E2E_SECRET }}
+      - name: Execute (sign and submit)
+        if: inputs.mode == 'execute'
+        run: python e2e/probe_fixture.py --execute --yes
+        env:
+          MAINNET_E2E_SECRET: ${{ secrets.MAINNET_E2E_SECRET }}
