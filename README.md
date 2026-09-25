@@ -53,6 +53,15 @@ spending the whole XLM balance. Re-preparing the XDR from
 `build_transaction()` / `buildTransaction()` with stellar-sdk's own
 `prepare_transaction` / `prepareTransaction` drops the headroom.
 
+They also declare the simulated CPU instructions plus a headroom —
+`instruction_headroom` / `instructionHeadroom`, default `0.25` (+25%), `0`
+disables — capped at the network's per-transaction limit. The declared count is
+a hard limit (a transaction that needs more fails on-chain with
+`INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED`), and the resource fee is raised
+by the non-refundable compute fee of the added instructions, which is charged
+whether or not they are used (under 0.0001 XLM for a typical swap at current
+mainnet rates).
+
 ## Design principles
 
 1. **Two-phase everything.** `quote()` → `Quote.execute()`. UIs show before they commit; the quote object carries everything needed to execute, so what you quoted is what you execute.
