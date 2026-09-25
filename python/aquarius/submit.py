@@ -48,14 +48,19 @@ _UINT32_MAX = 4_294_967_295
 
 
 def validate_resource_fee_headroom(headroom) -> float:
-    """Raise unless ``headroom`` is a non-negative finite number."""
-    if (
-        isinstance(headroom, bool)
-        or not isinstance(headroom, (int, float))
-        or not math.isfinite(headroom)
-        or headroom < 0
-    ):
-        raise AquariusError("resource_fee_headroom must be a non-negative finite number")
+    """Return ``headroom``, or the default for None; raise unless it is a
+    non-negative finite number."""
+    if headroom is None:
+        return DEFAULT_RESOURCE_FEE_HEADROOM
+    invalid = AquariusError("resource_fee_headroom must be a non-negative finite number")
+    if isinstance(headroom, bool) or not isinstance(headroom, (int, float)):
+        raise invalid
+    try:
+        finite = math.isfinite(headroom)
+    except OverflowError:  # ints beyond the float range
+        finite = False
+    if not finite or headroom < 0:
+        raise invalid
     return headroom
 
 
@@ -107,7 +112,7 @@ class SubmitEngine:
         passphrase: str,
         base_fee: int,
         timeout: int | None = None,
-        resource_fee_headroom: float = DEFAULT_RESOURCE_FEE_HEADROOM,
+        resource_fee_headroom: float | None = None,
     ):
         self.server = server
         self.passphrase = passphrase
@@ -117,7 +122,7 @@ class SubmitEngine:
         # bots, whose stale transactions should expire rather than execute).
         self.timeout = timeout
         # Fraction of the simulated resource fee added on top of it before
-        # signing; 0 disables. See DEFAULT_RESOURCE_FEE_HEADROOM.
+        # signing; 0 disables, None means DEFAULT_RESOURCE_FEE_HEADROOM.
         self.resource_fee_headroom = validate_resource_fee_headroom(resource_fee_headroom)
         self._simulation_accounts: dict[str, Account] = {}
 

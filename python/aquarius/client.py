@@ -17,7 +17,7 @@ from .errors import AquariusError, SlippageError
 from .pool import Pool, Position, parse_pools_map, sort_token_ids
 from .networks import NETWORKS, NetworkConfig
 from .signer import signer_public_key
-from .submit import DEFAULT_RESOURCE_FEE_HEADROOM, SubmitEngine
+from .submit import SubmitEngine
 
 _FRIENDBOT_URL = "https://friendbot.stellar.org"
 _U32_MAX = 2**32 - 1
@@ -102,7 +102,7 @@ class AquariusClient:
         api_url: str | None = None,
         base_fee: int = 100_000,
         timeout: int | str | None = None,
-        resource_fee_headroom: float = DEFAULT_RESOURCE_FEE_HEADROOM,
+        resource_fee_headroom: float | None = None,
     ):
         """timeout: transaction time bound in seconds, or "infinite".
 
@@ -111,9 +111,12 @@ class AquariusClient:
         no bound when signing goes through a wallet (humans take their time).
 
         resource_fee_headroom: fraction of the simulated Soroban resource fee
-        added on top of it before signing. Default 0.5 (50%); 0 disables. The
-        declared resource fee is a cap and unused fee is refunded, so headroom
-        costs nothing unless the transaction needs it at apply time.
+        added on top of it before signing. Default (None) 0.5, i.e. 50%; 0
+        disables. The declared resource fee is a cap and unused fee is
+        refunded, so headroom costs nothing unless the transaction needs it at
+        apply time. The source account must still hold the full declared fee
+        (inclusion + resource + headroom): it is debited before execution and
+        the unused part is refunded after apply.
         """
         preset = NETWORKS.get(network)
         if preset is None:
