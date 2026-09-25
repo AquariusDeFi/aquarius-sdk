@@ -13,8 +13,10 @@ const PASSPHRASE = Networks.TESTNET;
 const KEYPAIR = Keypair.random();
 const STALE_SEQUENCE = "100"; // what the lagging replica serves on the first load
 const CHAIN_SEQUENCE = "105"; // where the chain actually is
+const CONFIRMED_LEDGER = 1000; // the ledger that applies every submitted transaction
 
 SubmitEngine._badSeqDelaysMs = [1, 1]; // keep the tests fast
+SubmitEngine._nextLedgerPollIntervalMs = 1;
 AquariusClient._requoteDelaysMs = [0, 0];
 
 const rejected = name => ({
@@ -27,10 +29,12 @@ const PENDING = { status: "PENDING", hash: "abc123" };
 /** Scripted sendTransaction responses; the first account load serves a stale
  * sequence (lagging replica), later loads the converged one. */
 class FakeServer {
-  constructor(sendResponses) {
+  constructor(sendResponses, latestLedgers = []) {
     this.sendResponses = [...sendResponses];
     this.loads = 0;
     this.submitted = [];
+    this.latestLedgers = [...latestLedgers]; // the last one repeats
+    this.calls = [];
   }
 
   async getAccount(accountId) {
@@ -44,7 +48,23 @@ class FakeServer {
   }
 
   async pollTransaction() {
-    return { status: rpc.Api.GetTransactionStatus.SUCCESS, returnValue: undefined };
+    return {
+      status: rpc.Api.GetTransactionStatus.SUCCESS,
+      returnValue: undefined,
+      ledger: CONFIRMED_LEDGER,
+    };
+  }
+
+  async getHealth() {
+    this.calls.push("getHealth");
+    const latestLedger = this.latestLedgers[0];
+    if (this.latestLedgers.length > 1) this.latestLedgers.shift();
+    return { latestLedger };
+  }
+
+  async simulateTransaction() {
+    this.calls.push("simulate");
+    return { result: { retval: xdr.ScVal.scvU32(7) } };
   }
 }
 
@@ -298,4 +318,91 @@ test("sequence retries preserve the fixed authorization without a new simulation
   await engine.signAndSubmit(tx, KEYPAIR);
   assert.equal(simulations, 1);
   assert.deepEqual(server.submitted.map(authXdr), [authXdr(tx), authXdr(tx)]);
+});
+
+const manageData = () => Operation.manageData({ name: "t", value: "1" });
+
+async function write(engine) {
+  const tx = await engine.buildTransaction(KEYPAIR.publicKey(), manageData());
+  return engine.signAndSubmit(tx, KEYPAIR);
+}
+
+function clientOn(server) {
+  const client = new AquariusClient({ network: "testnet" });
+  client.engine = new SubmitEngine(server, PASSPHRASE, "100");
+  return client;
+}
+
+test("simulations and writes never poll for the next ledger", async () => {
+  const server = new FakeServer([PENDING], [CONFIRMED_LEDGER]);
+  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  await engine.read(KEYPAIR.publicKey(), manageData);
+  await write(engine);
+  await engine.read(KEYPAIR.publicKey(), manageData);
+  await engine.read(KEYPAIR.publicKey(), manageData);
+  assert.deepEqual(server.calls, ["simulate", "simulate", "simulate"]);
+});
+
+test("waitForNextLedger without a transaction waits past the current latest ledger", async () => {
+  const server = new FakeServer([], [CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]);
+  const latest = await clientOn(server).waitForNextLedger();
+  assert.equal(latest, CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+});
+
+test("waitForNextLedger defaults to the ledger of the last transaction", async () => {
+  const server = new FakeServer([PENDING], [CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]);
+  const client = clientOn(server);
+  await write(client.engine);
+  assert.equal(await client.waitForNextLedger(), CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+
+  server.calls = [];
+  server.latestLedgers = [CONFIRMED_LEDGER + 1]; // already past it: no further wait
+  assert.equal(await client.waitForNextLedger(), CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, ["getHealth"]);
+});
+
+test("waitForNextLedger waits past an explicit ledger", async () => {
+  const server = new FakeServer(
+    [PENDING],
+    [CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1, CONFIRMED_LEDGER + 2],
+  );
+  const client = clientOn(server);
+  await write(client.engine);
+  assert.equal(await client.waitForNextLedger({ ledger: CONFIRMED_LEDGER + 1 }), CONFIRMED_LEDGER + 2);
+  assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+});
+
+test("waitForNextLedger rejects when the ledger does not advance in time", async () => {
+  const server = new FakeServer([PENDING], [CONFIRMED_LEDGER]);
+  const client = clientOn(server);
+  await write(client.engine);
+  await assert.rejects(
+    () => client.waitForNextLedger({ timeoutMs: 20 }),
+    error =>
+      error instanceof AquariusError &&
+      error.message.includes(`did not advance past ledger ${CONFIRMED_LEDGER}`),
+  );
+  assert.ok(server.calls.length > 1);
+  assert.ok(server.calls.every(call => call === "getHealth"));
+});
+
+test("waitForNextLedger rejects invalid arguments before polling", async () => {
+  const server = new FakeServer([], [CONFIRMED_LEDGER]);
+  const client = clientOn(server);
+  const invalid = message => error => error instanceof AquariusError && error.message === message;
+  for (const ledger of [-1, 1.5, NaN, Infinity, "1"]) {
+    await assert.rejects(
+      () => client.waitForNextLedger({ ledger }),
+      invalid("ledger must be a non-negative integer"),
+    );
+  }
+  for (const timeoutMs of [0, -1, NaN, Infinity, "1000", null]) {
+    await assert.rejects(
+      () => client.waitForNextLedger({ timeoutMs }),
+      invalid("timeoutMs must be a positive finite number"),
+    );
+  }
+  assert.deepEqual(server.calls, []);
 });

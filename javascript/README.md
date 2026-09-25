@@ -114,6 +114,26 @@ await aqua.positions();                               // every pool where the si
 
 Deposit and withdrawal guards come from a simulation of the exact call, reduced by `slippage` — quoted-versus-executed drift is bounded the same way as for swaps. Reads need no signer.
 
+A withdraw or claim right after a deposit into a pool with rewards should first
+wait for the next ledger:
+
+```ts
+const result = await pool.deposit({ amounts: [[XLM, 50_0000000n], [AQUA, 2500_0000000n]] });
+await aqua.waitForNextLedger();                       // past the ledger that applied the deposit
+await pool.withdraw({ shares: result.shares });
+```
+
+Simulation runs on the latest ledger's state, but a transaction applies in a
+later one. The rewards contract rewrites the user's reward entry only when
+rewards accrued since the user's last checkpoint, so a withdraw simulated on
+the deposit's own ledger declares that entry read-only and fails on-chain once
+time has advanced. `waitForNextLedger({ ledger?, timeoutMs? })` waits until the
+RPC's latest ledger is past `ledger` — by default the ledger of the client's
+last on-chain transaction (confirmed or failed), or, if there is none, the
+current one — polling `getHealth` about once a second, and resolves to the
+latest ledger observed; it rejects with `AquariusError` after `timeoutMs`
+(default 30 000). The SDK never waits on its own.
+
 `pools.byAddress` reads the pool's tokens, hash, type and fee from the indexer
 in one request. A pool the indexer has not picked up yet cannot be resolved
 from an address alone — pass the pair and it is discovered on-chain instead:
@@ -270,6 +290,11 @@ try {
   }
 }
 ```
+
+The client does not see transactions you submit yourself, so
+`waitForNextLedger()` does not default to their ledger. Before a dependent
+build (e.g. a withdraw after a deposit into a pool with rewards), pass the
+ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
 
 ## What the SDK handles for you
 

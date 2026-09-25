@@ -48,6 +48,9 @@ class _BadSeqRejection(AquariusError):
 _POLL_ATTEMPTS = 30
 _POLL_INTERVAL_S = 2
 
+# How often wait_for_next_ledger polls the RPC's latest ledger.
+_NEXT_LEDGER_POLL_INTERVAL_S = 1.0
+
 # Fraction of the simulated Soroban resource fee added on top of it. The
 # declared resource fee is a cap: the network charges the non-refundable part
 # plus the refundable part actually consumed (rent, events, return value) and
@@ -219,6 +222,9 @@ class SubmitEngine:
         )
         self._simulation_accounts: dict[str, Account] = {}
         self._network_compute_cache: tuple[float, NetworkCompute] | None = None
+        # Ledger of this engine's last transaction that made it on-chain
+        # (confirmed or failed); the default for wait_for_next_ledger.
+        self._last_tx_ledger: int | None = None
 
     def build_transaction(
         self, source: str, append: Callable[[TransactionBuilder], TransactionBuilder]
@@ -253,6 +259,40 @@ class SubmitEngine:
             account = self.server.load_account(source)
             self._simulation_accounts[source] = account
         return account
+
+    def wait_for_next_ledger(self, ledger: int | None = None, timeout: float = 30.0) -> int:
+        """Wait until the RPC's latest ledger is greater than ``ledger`` and
+        return the latest ledger observed.
+
+        ``ledger`` defaults to the ledger of this engine's last on-chain
+        transaction (confirmed or failed), or, if there is none, to the RPC's
+        current latest ledger. Polls ``getHealth`` about once a second and
+        raises ``AquariusError`` after ``timeout`` seconds.
+        """
+        if ledger is not None and (type(ledger) is not int or ledger < 0):
+            raise AquariusError("ledger must be a non-negative integer")
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise AquariusError("timeout must be a positive finite number")
+        try:
+            finite = math.isfinite(timeout)
+        except OverflowError:  # ints beyond the float range
+            finite = False
+        if not finite or timeout <= 0:
+            raise AquariusError("timeout must be a positive finite number")
+
+        deadline = time.monotonic() + timeout
+        latest = self.server.get_health().latest_ledger
+        if ledger is None:
+            ledger = self._last_tx_ledger if self._last_tx_ledger is not None else latest
+        while latest <= ledger:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AquariusError(
+                    f"The RPC did not advance past ledger {ledger} within {timeout:g} s"
+                )
+            time.sleep(min(_NEXT_LEDGER_POLL_INTERVAL_S, remaining))
+            latest = self.server.get_health().latest_ledger
+        return latest
 
     def prepare(
         self,
@@ -423,6 +463,15 @@ class SubmitEngine:
             max_attempts=_POLL_ATTEMPTS,
             sleep_strategy=lambda attempt: min(0.5 * max(attempt, 1), _POLL_INTERVAL_S),
         )
+
+        # A failed transaction also applied in its ledger (sequence number,
+        # fee), and what usually follows it is a retry that should simulate on
+        # the state after it, so its ledger is remembered as well.
+        if (
+            result.status in (GetTransactionStatus.SUCCESS, GetTransactionStatus.FAILED)
+            and result.ledger is not None
+        ):
+            self._last_tx_ledger = result.ledger
 
         if result.status == GetTransactionStatus.SUCCESS:
             return ConfirmedTx(tx_hash=tx_hash, return_value=self._return_value(result))
