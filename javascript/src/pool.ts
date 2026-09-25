@@ -66,12 +66,16 @@ export interface PoolContext {
   readSource(requireSigner?: boolean): string;
   readRouter(fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal>;
   readContract(contractId: string, fn: string, args: xdr.ScVal[]): Promise<xdr.ScVal>;
-  submitRouter(fn: string, args: xdr.ScVal[], withUser: boolean): Promise<ConfirmedTx>;
+  submitRouter(
+    fn: string,
+    args: xdr.ScVal[],
+    auth: xdr.SorobanAuthorizationEntry[],
+  ): Promise<ConfirmedTx>;
   submitContract(
     contractId: string,
     fn: string,
     args: xdr.ScVal[],
-    auth?: xdr.SorobanAuthorizationEntry[],
+    auth: xdr.SorobanAuthorizationEntry[],
   ): Promise<ConfirmedTx>;
 }
 
@@ -222,11 +226,26 @@ export class Pool {
     ) as [bigint[], bigint];
     const minShares = (estimated[1] * factor) / 10_000n;
 
-    const confirmed = await this.ctx.submitRouter(
-      "deposit",
-      this.depositArgs(desired, minShares),
-      true,
+    const user = new Address(this.ctx.readSource(true)).toScVal();
+    const args = [user, ...this.depositArgs(desired, minShares)];
+    // Pools pull the requested amounts and refund excess. Stable pools skip
+    // zero transfers; constant-product pools call transfer even for zero.
+    const transfers = this.tokens.flatMap((token, i) =>
+      this.type === "stable" && desired[i] === 0n ? [] : [
+        authorizedInvocation(token, "transfer", [
+          user,
+          new Address(this.address).toScVal(),
+          nativeToScVal(desired[i], { type: "i128" }),
+        ]),
+      ],
     );
+    const confirmed = await this.ctx.submitRouter("deposit", args, [
+      sourceAccountEntry(authorizedInvocation(this.ctx.router, "deposit", args, [
+        authorizedInvocation(this.address, "deposit", [
+          user, xdr.ScVal.scvVec(desired.map(u128)), u128(minShares),
+        ], transfers),
+      ])),
+    ]);
     const [amounts, shares] = scValToNative(confirmed.returnValue!) as [bigint[], bigint];
     return { txHash: confirmed.txHash, amounts, shares };
   }
@@ -244,11 +263,22 @@ export class Pool {
     ) as bigint[];
     const minimums = estimated.map(amount => (amount * factor) / 10_000n);
 
-    const confirmed = await this.ctx.submitRouter(
-      "withdraw",
-      this.withdrawArgs(params.shares, minimums),
-      true,
-    );
+    const user = new Address(this.ctx.readSource(true)).toScVal();
+    const args = [user, ...this.withdrawArgs(params.shares, minimums)];
+    // Concentrated legacy withdrawal removes full-range liquidity directly;
+    // stable/constant-product pools burn the user's fungible share tokens.
+    const burns = this.type === "concentrated" ? [] : [
+      authorizedInvocation(await this.shareToken(), "burn", [
+        user, nativeToScVal(params.shares, { type: "i128" }),
+      ]),
+    ];
+    const confirmed = await this.ctx.submitRouter("withdraw", args, [
+      sourceAccountEntry(authorizedInvocation(this.ctx.router, "withdraw", args, [
+        authorizedInvocation(this.address, "withdraw", [
+          user, u128(params.shares), xdr.ScVal.scvVec(minimums.map(u128)),
+        ], burns),
+      ])),
+    ]);
     return {
       txHash: confirmed.txHash,
       amounts: scValToNative(confirmed.returnValue!) as bigint[],
@@ -257,7 +287,13 @@ export class Pool {
 
   /** Claim accrued AQUA rewards for the signer. */
   async claimRewards(): Promise<ClaimResult> {
-    const confirmed = await this.ctx.submitRouter("claim", this.baseArgs(), true);
+    const user = new Address(this.ctx.readSource(true)).toScVal();
+    const args = [user, ...this.baseArgs()];
+    const confirmed = await this.ctx.submitRouter("claim", args, [
+      sourceAccountEntry(authorizedInvocation(this.ctx.router, "claim", args, [
+        authorizedInvocation(this.address, "claim", [user]),
+      ])),
+    ]);
     return {
       txHash: confirmed.txHash,
       amount: scValToNative(confirmed.returnValue!) as bigint,
@@ -675,7 +711,7 @@ export class PoolQuote {
       ]),
     );
     try {
-      const confirmed = await this.ctx.submitContract(this.ctx.router, "swap", args, [entry]);
+      const confirmed = await this.ctx.submitRouter("swap", args, [entry]);
       return {
         txHash: confirmed.txHash,
         amountIn: this.amountIn,
@@ -723,15 +759,16 @@ export class ConcentratedDepositEstimate {
       xdr.ScVal.scvVec(this.desired.map(u128)),
       u128(minLiquidity),
     ];
-    // Mirror the web app's transaction shape: authorize a transfer of the
-    // full desired amount per token — the contract pulls exactly those
-    // amounts and refunds whatever the range doesn't need.
-    const transfers = this.pool.tokens.map((token, i) =>
-      authorizedInvocation(token, "transfer", [
-        new Address(owner).toScVal(),
-        new Address(this.pool.address).toScVal(),
-        nativeToScVal(this.desired[i], { type: "i128" }),
-      ]),
+    // The contract pulls positive desired amounts and refunds whatever the
+    // range doesn't need; zero amounts do not invoke a token transfer.
+    const transfers = this.pool.tokens.flatMap((token, i) =>
+      this.desired[i] > 0n ? [
+        authorizedInvocation(token, "transfer", [
+          new Address(owner).toScVal(),
+          new Address(this.pool.address).toScVal(),
+          nativeToScVal(this.desired[i], { type: "i128" }),
+        ]),
+      ] : [],
     );
     const confirmed = await this.ctx.submitContract(this.pool.address, "deposit_position", args, [
       sourceAccountEntry(

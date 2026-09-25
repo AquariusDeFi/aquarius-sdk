@@ -374,16 +374,21 @@ export class AquariusClient {
 
   // -- escape hatches ---------------------------------------------------------------
 
-  /** Raw router invocation. Arguments are xdr.ScVal values; the result is decoded. */
+  /** Raw router invocations with caller-defined authorization; results are decoded. */
   readonly contract = {
+    /** Authorize only this router call. Use callWithAuth for nested authorization. */
     call: async (fn: string, ...args: xdr.ScVal[]): Promise<unknown> => {
-      const signer = this.requireSigner();
-      const tx = await this.engine.prepare(
-        signer.publicKey(),
-        () => Operation.invokeContractFunction({ contract: this.network.router, function: fn, args }),
-        signer,
-      );
-      const result = await this.engine.signAndSubmit(tx, signer);
+      return this.contract.callWithAuth(fn, args, [
+        sourceAccountEntry(authorizedInvocation(this.network.router, fn, args)),
+      ]);
+    },
+    /** Supply the complete auth tree, or [] for a call requiring no authorization. */
+    callWithAuth: async (
+      fn: string,
+      args: xdr.ScVal[],
+      auth: xdr.SorobanAuthorizationEntry[],
+    ): Promise<unknown> => {
+      const result = await this.submitRouter(fn, args, auth);
       return result.returnValue ? scValToNative(result.returnValue) : undefined;
     },
   };
@@ -472,7 +477,7 @@ export class AquariusClient {
       readSource: (requireSigner?: boolean) => this.readSource(requireSigner),
       readRouter: (fn, args) => this.readRouter(fn, args),
       readContract: (contractId, fn, args) => this.readContract(contractId, fn, args),
-      submitRouter: (fn, args, withUser) => this.submitRouter(fn, args, withUser),
+      submitRouter: (fn, args, auth) => this.submitRouter(fn, args, auth),
       submitContract: (contractId, fn, args, auth) =>
         this.submitContract(contractId, fn, args, auth),
     });
@@ -500,22 +505,23 @@ export class AquariusClient {
     );
   }
 
-  private async submitRouter(
+  private submitRouter(
     fn: string,
     args: xdr.ScVal[],
-    withUser: boolean,
+    auth: xdr.SorobanAuthorizationEntry[],
   ): Promise<ConfirmedTx> {
-    const signer = this.requireSigner();
-    const finalArgs = withUser ? [new Address(signer.publicKey()).toScVal(), ...args] : args;
-    return this.submitContract(this.network.router, fn, finalArgs);
+    return this.submitContract(this.network.router, fn, args, auth);
   }
 
   private async submitContract(
     contractId: string,
     fn: string,
     args: xdr.ScVal[],
-    auth?: xdr.SorobanAuthorizationEntry[],
+    auth: xdr.SorobanAuthorizationEntry[],
   ): Promise<ConfirmedTx> {
+    if (!Array.isArray(auth)) {
+      throw new AquariusError("An explicit auth array is required; use [] for a call without authorization");
+    }
     const signer = this.requireSigner();
     const tx = await this.engine.prepare(
       signer.publicKey(),
