@@ -177,39 +177,82 @@ async function write(engine) {
   return engine.signAndSubmit(tx, KEYPAIR);
 }
 
-test("a simulation after a transaction waits for the next ledger", async () => {
-  const server = new FakeServer(
-    [PENDING],
-    [CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1],
-  );
-  const engine = new SubmitEngine(server, PASSPHRASE, "100");
-  await engine.read(KEYPAIR.publicKey(), manageData);
-  assert.deepEqual(server.calls, ["simulate"]); // nothing remembered yet: no ledger poll
+function clientOn(server) {
+  const client = new AquariusClient({ network: "testnet" });
+  client.engine = new SubmitEngine(server, PASSPHRASE, "100");
+  return client;
+}
 
-  await write(engine);
-  server.calls = [];
-  await engine.read(KEYPAIR.publicKey(), manageData);
-  await engine.read(KEYPAIR.publicKey(), manageData);
-  assert.deepEqual(server.calls, [
-    "getHealth", "getHealth", "getHealth", "simulate",
-    "simulate", // cleared once passed
-  ]);
-});
-
-test("no next ledger within the timeout rejects before simulating", async t => {
-  const timeoutMs = SubmitEngine._nextLedgerTimeoutMs;
-  t.after(() => (SubmitEngine._nextLedgerTimeoutMs = timeoutMs));
-  SubmitEngine._nextLedgerTimeoutMs = 20;
+test("simulations and writes never poll for the next ledger", async () => {
   const server = new FakeServer([PENDING], [CONFIRMED_LEDGER]);
   const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  await engine.read(KEYPAIR.publicKey(), manageData);
   await write(engine);
+  await engine.read(KEYPAIR.publicKey(), manageData);
+  await engine.read(KEYPAIR.publicKey(), manageData);
+  assert.deepEqual(server.calls, ["simulate", "simulate", "simulate"]);
+});
+
+test("waitForNextLedger without a transaction waits past the current latest ledger", async () => {
+  const server = new FakeServer([], [CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]);
+  const latest = await clientOn(server).waitForNextLedger();
+  assert.equal(latest, CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+});
+
+test("waitForNextLedger defaults to the ledger of the last transaction", async () => {
+  const server = new FakeServer([PENDING], [CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]);
+  const client = clientOn(server);
+  await write(client.engine);
+  assert.equal(await client.waitForNextLedger(), CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+
+  server.calls = [];
+  server.latestLedgers = [CONFIRMED_LEDGER + 1]; // already past it: no further wait
+  assert.equal(await client.waitForNextLedger(), CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, ["getHealth"]);
+});
+
+test("waitForNextLedger waits past an explicit ledger", async () => {
+  const server = new FakeServer(
+    [PENDING],
+    [CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1, CONFIRMED_LEDGER + 2],
+  );
+  const client = clientOn(server);
+  await write(client.engine);
+  assert.equal(await client.waitForNextLedger({ ledger: CONFIRMED_LEDGER + 1 }), CONFIRMED_LEDGER + 2);
+  assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+});
+
+test("waitForNextLedger rejects when the ledger does not advance in time", async () => {
+  const server = new FakeServer([PENDING], [CONFIRMED_LEDGER]);
+  const client = clientOn(server);
+  await write(client.engine);
   await assert.rejects(
-    () => engine.prepare(KEYPAIR.publicKey(), manageData, KEYPAIR),
+    () => client.waitForNextLedger({ timeoutMs: 20 }),
     error =>
       error instanceof AquariusError &&
       error.message.includes(`did not advance past ledger ${CONFIRMED_LEDGER}`),
   );
   assert.ok(server.calls.length > 1);
   assert.ok(server.calls.every(call => call === "getHealth"));
-  assert.equal(server.submitted.length, 1);
+});
+
+test("waitForNextLedger rejects invalid arguments before polling", async () => {
+  const server = new FakeServer([], [CONFIRMED_LEDGER]);
+  const client = clientOn(server);
+  const invalid = message => error => error instanceof AquariusError && error.message === message;
+  for (const ledger of [-1, 1.5, NaN, Infinity, "1"]) {
+    await assert.rejects(
+      () => client.waitForNextLedger({ ledger }),
+      invalid("ledger must be a non-negative integer"),
+    );
+  }
+  for (const timeoutMs of [0, -1, NaN, Infinity, "1000", null]) {
+    await assert.rejects(
+      () => client.waitForNextLedger({ timeoutMs }),
+      invalid("timeoutMs must be a positive finite number"),
+    );
+  }
+  assert.deepEqual(server.calls, []);
 });

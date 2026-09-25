@@ -28,10 +28,8 @@ class BadSeqRejection extends AquariusError {}
 const POLL_ATTEMPTS = 30;
 const POLL_INTERVAL_MS = 2_000;
 
-// How often and how long to poll the RPC for a ledger newer than the one that
-// confirmed this engine's previous transaction, before the next simulation.
+// How often waitForNextLedger polls the RPC's latest ledger.
 const NEXT_LEDGER_POLL_INTERVAL_MS = 1_000;
-const NEXT_LEDGER_TIMEOUT_MS = 30_000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -183,9 +181,8 @@ export class SubmitEngine {
    */
   static _badSeqDelaysMs = [500, 1_000, 2_000];
 
-  /** Next-ledger wait before simulating; static so tests can shrink it. */
+  /** waitForNextLedger poll interval; static so tests can shrink it. */
   static _nextLedgerPollIntervalMs = NEXT_LEDGER_POLL_INTERVAL_MS;
-  static _nextLedgerTimeoutMs = NEXT_LEDGER_TIMEOUT_MS;
 
   constructor(
     private readonly server: rpc.Server,
@@ -218,7 +215,7 @@ export class SubmitEngine {
 
   /**
    * Ledger of this engine's last transaction that made it on-chain (confirmed
-   * or failed); cleared once the RPC has moved past it.
+   * or failed); the default for waitForNextLedger.
    */
   private lastTxLedger?: number;
 
@@ -264,38 +261,34 @@ export class SubmitEngine {
     return account;
   }
 
-  private async simulate(tx: Transaction): Promise<rpc.Api.SimulateTransactionResponse> {
-    await this.waitForLedgerAfterLastTx();
-    return this.server.simulateTransaction(tx);
-  }
-
   /**
-   * Wait until the RPC's latest ledger is past the one that applied this
-   * engine's previous transaction.
-   *
-   * Simulation runs on the latest ledger's state, but the transaction applies
-   * in a later ledger. Right after a transaction applied in ledger L, state
-   * that depends on ledger time (e.g. reward accrual) looks unchanged since
-   * that transaction when simulated on L, so entries the call will write at
-   * apply time can land in the footprint as read-only, and the transaction
-   * fails on-chain. Simulating on L+1 or later sees the same kind of state
-   * change as the apply will.
+   * Wait until the RPC's latest ledger is greater than `ledger` and resolve
+   * to the latest ledger observed. `ledger` defaults to the ledger of this
+   * engine's last on-chain transaction (confirmed or failed), or, if there is
+   * none, to the RPC's current latest ledger. Polls `getHealth` about once a
+   * second and rejects with AquariusError after `timeoutMs`.
    */
-  private async waitForLedgerAfterLastTx(): Promise<void> {
-    const last = this.lastTxLedger;
-    if (last === undefined) return;
-    const timeoutMs = SubmitEngine._nextLedgerTimeoutMs;
+  async waitForNextLedger(ledger?: number, timeoutMs = 30_000): Promise<number> {
+    if (ledger !== undefined && (!Number.isSafeInteger(ledger) || ledger < 0)) {
+      throw new AquariusError("ledger must be a non-negative integer");
+    }
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new AquariusError("timeoutMs must be a positive finite number");
+    }
     const deadline = Date.now() + timeoutMs;
-    while ((await this.server.getHealth()).latestLedger <= last) {
-      if (Date.now() >= deadline) {
+    let latest = (await this.server.getHealth()).latestLedger;
+    const target = ledger ?? this.lastTxLedger ?? latest;
+    while (latest <= target) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
         throw new AquariusError(
-          `The RPC did not advance past ledger ${last}, which applied the previous transaction, ` +
-            `within ${timeoutMs / 1_000} s; not simulating on that ledger's state`,
+          `The RPC did not advance past ledger ${target} within ${timeoutMs / 1_000} s`,
         );
       }
-      await sleep(SubmitEngine._nextLedgerPollIntervalMs);
+      await sleep(Math.min(SubmitEngine._nextLedgerPollIntervalMs, remaining));
+      latest = (await this.server.getHealth()).latestLedger;
     }
-    if (this.lastTxLedger === last) this.lastTxLedger = undefined;
+    return latest;
   }
 
   /**
@@ -309,7 +302,7 @@ export class SubmitEngine {
     signer?: Signer,
   ): Promise<Transaction> {
     let tx = await this.buildTransaction(source, buildOperation());
-    let simulation = await this.simulate(tx);
+    let simulation = await this.server.simulateTransaction(tx);
 
     if (rpc.Api.isSimulationRestore(simulation)) {
       if (!signer) {
@@ -319,7 +312,7 @@ export class SubmitEngine {
       }
       await this.restore(source, simulation, signer);
       tx = await this.buildTransaction(source, buildOperation());
-      simulation = await this.simulate(tx);
+      simulation = await this.server.simulateTransaction(tx);
     }
 
     if (rpc.Api.isSimulationError(simulation)) {
@@ -376,12 +369,12 @@ export class SubmitEngine {
     signer?: Signer,
   ): Promise<xdr.ScVal> {
     let tx = this.build(await this.simulationAccount(source), buildOperation());
-    let simulation = await this.simulate(tx);
+    let simulation = await this.server.simulateTransaction(tx);
 
     if (rpc.Api.isSimulationRestore(simulation) && signer) {
       await this.restore(source, simulation, signer);
       tx = this.build(await this.simulationAccount(source), buildOperation());
-      simulation = await this.simulate(tx);
+      simulation = await this.server.simulateTransaction(tx);
     }
 
     if (rpc.Api.isSimulationError(simulation)) {

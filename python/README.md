@@ -111,6 +111,26 @@ aqua.positions()                                 # every pool where the signer h
 
 Deposit and withdrawal guards come from a simulation of the exact call, reduced by `slippage` — quoted-versus-executed drift is bounded the same way as for swaps. Reads (`reserves()`, `pending_rewards()`, `pools_for_pair()`) need no signer.
 
+A withdraw or claim right after a deposit into a pool with rewards should first
+wait for the next ledger:
+
+```python
+result = pool.deposit({XLM: 50_0000000, AQUA: 2500_0000000})
+aqua.wait_for_next_ledger()                      # past the ledger that applied the deposit
+pool.withdraw(result.shares)
+```
+
+Simulation runs on the latest ledger's state, but a transaction applies in a
+later one. The rewards contract rewrites the user's reward entry only when
+rewards accrued since the user's last checkpoint, so a withdraw simulated on
+the deposit's own ledger declares that entry read-only and fails on-chain once
+time has advanced. `wait_for_next_ledger(ledger=None, timeout=30.0)` waits until
+the RPC's latest ledger is past `ledger` — by default the ledger of the client's
+last on-chain transaction (confirmed or failed), or, if there is none, the
+current one — polling `getHealth` about once a second, and returns the latest
+ledger observed; it raises `AquariusError` on timeout. The SDK never waits on
+its own.
+
 ## What the SDK handles for you
 
 - **Routing** — quotes come from the find-path API; the swap chain XDR is passed through untouched.
@@ -180,19 +200,6 @@ the simulated instructions.
 ```python
 aqua = AquariusClient(network="mainnet", signer=signer, instruction_headroom=0.4)
 ```
-
-Consecutive calls wait for the next ledger. Simulation runs on the latest
-ledger's state, but a transaction applies in a later one. Right after a
-transaction applies in ledger L, state that changes with ledger time (such as
-pool reward accrual) looks unchanged on L, so a follow-up call simulated there —
-a withdraw right after a deposit, a claim right after a withdraw — can declare
-an entry it will write at apply time as read-only and fail on-chain. So after
-each of the client's transactions lands on-chain (confirmed or failed), its
-next simulation (write or read) first polls the RPC's `getHealth` about once a
-second until the latest ledger is past L, and raises `AquariusError` if that
-takes over 30 s. This adds up to
-one ledger (~5 s) of latency to back-to-back calls and nothing otherwise; the
-wait is per client instance.
 
 ## Amounts
 

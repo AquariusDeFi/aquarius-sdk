@@ -1,4 +1,5 @@
 """SubmitEngine sequence-recovery tests on a fake RPC server — no network."""
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -228,29 +229,80 @@ def write(engine):
     return engine.sign_and_submit(tx, KEYPAIR)
 
 
-def test_simulation_after_a_transaction_waits_for_the_next_ledger(clock):
-    server = FakeServer(
-        [PENDING, PENDING], latest_ledgers=[CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]
-    )
-    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
-    write(engine)
-    assert server.calls == ["simulate"]  # nothing remembered yet: no ledger poll
-
-    write(engine)
-    assert server.calls == ["simulate", "get_health", "get_health", "get_health", "simulate"]
-    assert clock.sleeps == [1.0, 1.0]
-
-    server.calls.clear()  # the second write confirmed in CONFIRMED_LEDGER too
-    engine.read(KEYPAIR.public_key, manage_data)
-    engine.read(KEYPAIR.public_key, manage_data)
-    assert server.calls == ["get_health", "simulate", "simulate"]  # cleared once passed
+def client_on(server):
+    client = AquariusClient(network="testnet")
+    client.engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
+    return client
 
 
-def test_no_next_ledger_within_the_timeout_raises_before_simulating(clock):
+def test_simulations_and_writes_never_poll_for_the_next_ledger(clock):
     server = FakeServer([PENDING, PENDING], latest_ledgers=[CONFIRMED_LEDGER])
     engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
+    engine.read(KEYPAIR.public_key, manage_data)
     write(engine)
-    with pytest.raises(AquariusError, match=f"did not advance past ledger {CONFIRMED_LEDGER}"):
-        write(engine)
-    assert server.calls[1:] == ["get_health"] * 31  # at 0 s, 1 s, ..., 30 s
-    assert len(server.submitted) == 1
+    write(engine)
+    engine.read(KEYPAIR.public_key, manage_data)
+    assert server.calls == ["simulate"] * 4
+    assert clock.sleeps == []
+
+
+def test_wait_for_next_ledger_without_a_transaction_waits_past_the_current_ledger(clock):
+    server = FakeServer(
+        [], latest_ledgers=[CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]
+    )
+    assert client_on(server).wait_for_next_ledger() == CONFIRMED_LEDGER + 1
+    assert server.calls == ["get_health"] * 3
+    assert clock.sleeps == [1.0, 1.0]
+
+
+def test_wait_for_next_ledger_defaults_to_the_last_transaction_ledger(clock):
+    server = FakeServer(
+        [PENDING], latest_ledgers=[CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]
+    )
+    client = client_on(server)
+    write(client.engine)
+    server.calls.clear()
+    assert client.wait_for_next_ledger() == CONFIRMED_LEDGER + 1
+    assert server.calls == ["get_health"] * 3
+
+    server.calls.clear()
+    server.latest_ledgers = [CONFIRMED_LEDGER + 1]  # already past it: no further wait
+    assert client.wait_for_next_ledger() == CONFIRMED_LEDGER + 1
+    assert server.calls == ["get_health"]
+
+
+def test_wait_for_next_ledger_waits_past_an_explicit_ledger(clock):
+    server = FakeServer(
+        [PENDING], latest_ledgers=[CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1, CONFIRMED_LEDGER + 2]
+    )
+    client = client_on(server)
+    write(client.engine)
+    server.calls.clear()
+    assert client.wait_for_next_ledger(CONFIRMED_LEDGER + 1) == CONFIRMED_LEDGER + 2
+    assert server.calls == ["get_health"] * 3
+
+
+def test_wait_for_next_ledger_raises_when_the_ledger_does_not_advance_in_time(clock):
+    server = FakeServer([PENDING], latest_ledgers=[CONFIRMED_LEDGER])
+    client = client_on(server)
+    write(client.engine)
+    server.calls.clear()
+    with pytest.raises(AquariusError, match=f"did not advance past ledger {CONFIRMED_LEDGER} within 30 s"):
+        client.wait_for_next_ledger()
+    assert server.calls == ["get_health"] * 31  # at 0 s, 1 s, ..., 30 s
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        *[({"ledger": bad}, "ledger must be a non-negative integer")
+          for bad in (-1, 1.5, True, "1")],
+        *[({"timeout": bad}, "timeout must be a positive finite number")
+          for bad in (0, -1, math.inf, math.nan, True, "30", 10**400)],
+    ],
+)
+def test_wait_for_next_ledger_rejects_invalid_arguments(kwargs, message):
+    server = FakeServer([], latest_ledgers=[CONFIRMED_LEDGER])
+    with pytest.raises(AquariusError, match=message):
+        client_on(server).wait_for_next_ledger(**kwargs)
+    assert server.calls == []
