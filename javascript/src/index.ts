@@ -6,6 +6,7 @@
  */
 
 export { Asset, XLM } from "./assets.js";
+export { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 export {
   AquariusClient,
   type AquariusConfig,
