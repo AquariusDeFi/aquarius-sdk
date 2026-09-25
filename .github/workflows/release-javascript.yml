@@ -35,5 +35,13 @@ jobs:
           test "$TAG" = "$VERSION" || { echo "tag $TAG != package.json $VERSION"; exit 1; }
       - run: npm install
         working-directory: javascript
-      - run: npm publish
+      # A prerelease (0.6.0-alpha.1) goes under its own dist-tag (alpha) so it
+      # never becomes latest; stable versions publish as latest.
+      - name: Publish
         working-directory: javascript
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          case "$VERSION" in
+            *-*) PRERELEASE="${VERSION#*-}"; npm publish --tag "${PRERELEASE%%.*}" ;;
+            *) npm publish ;;
+          esac
