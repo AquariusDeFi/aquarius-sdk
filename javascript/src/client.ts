@@ -34,6 +34,22 @@ export interface AquariusConfig {
    * wallet (humans take their time).
    */
   timeoutSeconds?: number | "infinite";
+  /**
+   * Fraction of the simulated Soroban resource fee added on top of it before
+   * signing. Default 0.5 (50%); 0 disables. The declared resource fee is a
+   * cap and unused fee is refunded, so headroom costs nothing unless the
+   * transaction needs it at apply time. The source account must still hold
+   * the full declared fee (inclusion + resource + headroom): it is debited
+   * before execution and the unused part is refunded after apply.
+   */
+  resourceFeeHeadroom?: number;
+  /**
+   * Fraction of the simulated CPU instructions added on top of them before
+   * signing, capped at the network's per-transaction limit. Default 0.25
+   * (25%); 0 disables. The resource fee is raised by the compute fee of the
+   * added instructions, which is charged whether or not they are used.
+   */
+  instructionHeadroom?: number;
 }
 
 export interface Receipt {
@@ -160,6 +176,8 @@ export class AquariusClient {
       this.network.passphrase,
       config.baseFee ?? "100000",
       timeout,
+      config.resourceFeeHeadroom,
+      config.instructionHeadroom,
     );
     this.signer = config.signer;
   }

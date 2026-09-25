@@ -180,7 +180,10 @@ def test_write_builds_always_load_a_fresh_account():
 
 
 class PreparingServer(FakeServer):
-    """Use stellar-sdk's real assembly, including its empty-auth fallback."""
+    """Use stellar-sdk's real assembly, including its empty-auth fallback.
+
+    It serves no network config, so engines on it disable instruction headroom.
+    """
 
     def __init__(self, *, restore=False, error=None):
         super().__init__([BAD_SEQ, PENDING])
@@ -218,7 +221,7 @@ def contract_append(auth):
 @pytest.mark.parametrize("empty", [False, True])
 def test_prepare_enforces_and_preserves_auth_despite_rpc_auth(empty):
     server = PreparingServer()
-    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
     auth = [] if empty else [source_account_entry(authorized_invocation(
         CONTRACT, "fixed", [scval.to_uint32(5)]
     ))]
@@ -233,7 +236,7 @@ def test_prepare_enforces_and_preserves_auth_despite_rpc_auth(empty):
 
 def test_prepare_restores_then_enforces_the_same_auth(monkeypatch):
     server = PreparingServer(restore=True)
-    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
     auth = [source_account_entry(authorized_invocation(CONTRACT, "fixed", [scval.to_uint32(5)]))]
     expected = [entry.to_xdr() for entry in auth]
     restores = []
@@ -248,7 +251,7 @@ def test_prepare_restores_then_enforces_the_same_auth(monkeypatch):
 
 def test_restore_reuses_the_original_operation_without_rebuilding_auth(monkeypatch):
     server = PreparingServer(restore=True)
-    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
     builds = []
 
     def append(builder):
@@ -275,7 +278,7 @@ def test_second_restore_preamble_stops_before_assembly(monkeypatch):
         return result
 
     server.simulate_transaction = archived
-    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
     monkeypatch.setattr(engine, "_restore", lambda *args: None)
     with pytest.raises(AquariusError, match="archived"):
         engine.prepare(KEYPAIR.public_key, contract_append([]), signer=object())
@@ -292,7 +295,7 @@ def test_prepare_with_no_result_stops_before_assembly():
         return result
 
     server.simulate_transaction = no_result
-    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
     with pytest.raises(AquariusError, match="no result"):
         engine.prepare(KEYPAIR.public_key, contract_append([]))
     assert server.assembled == []
@@ -310,14 +313,14 @@ def test_prepare_fails_closed_if_assembly_changes_auth():
         return assembled
 
     server.prepare_transaction = changed_auth
-    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
     with pytest.raises(AquariusError, match="authorization"):
         engine.prepare(KEYPAIR.public_key, contract_append([]))
 
 
 def test_enforcement_error_stops_before_assembly():
     server = PreparingServer(error="Error(Auth, InvalidAction)")
-    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
     with pytest.raises(AquariusError, match="Auth"):
         engine.prepare(KEYPAIR.public_key, contract_append([]))
     assert server.assembled == []
@@ -325,7 +328,7 @@ def test_enforcement_error_stops_before_assembly():
 
 def test_sequence_retry_keeps_prepared_auth(monkeypatch):
     server = PreparingServer()
-    engine = SubmitEngine(server, PASSPHRASE, base_fee=100)
+    engine = SubmitEngine(server, PASSPHRASE, base_fee=100, instruction_headroom=0)
     auth = [source_account_entry(authorized_invocation(CONTRACT, "fixed", [scval.to_uint32(5)]))]
     expected = [entry.to_xdr() for entry in auth]
     tx = engine.prepare(KEYPAIR.public_key, contract_append(auth))
