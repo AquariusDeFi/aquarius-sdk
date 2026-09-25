@@ -140,6 +140,25 @@ aqua = AquariusClient(
 )
 ```
 
+## Fees
+
+`base_fee` (default `100_000` stroops) is the inclusion fee bid. On top of it,
+every Soroban transaction declares a resource fee taken from simulation, raised
+by `resource_fee_headroom` (default `0.5`, i.e. +50%; `0` disables):
+
+```python
+aqua = AquariusClient(network="mainnet", signer=signer, resource_fee_headroom=0.3)
+```
+
+The declared resource fee is a cap: the network charges the non-refundable part
+plus the refundable part actually consumed (rent, events, return value) and
+refunds the rest, so headroom costs nothing unless it is used. The refundable
+part depends on ledger state at apply time, so the bare simulated fee can fall
+short and fail the transaction on-chain with
+`INVOKE_HOST_FUNCTION_INSUFFICIENT_REFUNDABLE_FEE`. The headroom is applied
+before signing (also to automatic restore transactions and to
+`quote.build_transaction()`), so wallets see and sign the final fee.
+
 ## Amounts
 
 All amounts are integers in token base units (stroops for classic assets: 1 token = 10^7).
