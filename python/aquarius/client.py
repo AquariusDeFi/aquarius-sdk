@@ -103,6 +103,7 @@ class AquariusClient:
         base_fee: int = 100_000,
         timeout: int | str | None = None,
         resource_fee_headroom: float | None = None,
+        instruction_headroom: float | None = None,
     ):
         """timeout: transaction time bound in seconds, or "infinite".
 
@@ -117,6 +118,12 @@ class AquariusClient:
         apply time. The source account must still hold the full declared fee
         (inclusion + resource + headroom): it is debited before execution and
         the unused part is refunded after apply.
+
+        instruction_headroom: fraction of the simulated CPU instructions added
+        on top of them before signing, capped at the network's per-transaction
+        limit. Default (None) 0.25, i.e. 25%; 0 disables. The resource fee is
+        raised by the compute fee of the added instructions, which is charged
+        whether or not they are used.
         """
         preset = NETWORKS.get(network)
         if preset is None:
@@ -143,6 +150,7 @@ class AquariusClient:
             base_fee,
             timeout=resolved_timeout,
             resource_fee_headroom=resource_fee_headroom,
+            instruction_headroom=instruction_headroom,
         )
         self.signer = signer
 

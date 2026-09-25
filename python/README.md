@@ -166,6 +166,21 @@ Re-preparing the XDR from `quote.build_transaction()` with stellar-sdk's own
 `prepare_transaction` re-simulates and replaces the resource fee, which drops the
 headroom.
 
+Declared CPU instructions are a hard limit too: a transaction that needs more
+than it declares fails on-chain with
+`INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED`, and actual usage can exceed the
+simulated count by several percent. So the simulated instructions are raised by
+`instruction_headroom` (default `0.25`, i.e. +25%; `0` disables), capped at the
+network's per-transaction limit (read from the network config and cached), and
+the resource fee by the compute fee of the added instructions — non-refundable,
+under 0.0001 XLM for a typical swap at current mainnet rates — before the fee
+headroom is applied on top. Restore transactions run no contract code and keep
+the simulated instructions.
+
+```python
+aqua = AquariusClient(network="mainnet", signer=signer, instruction_headroom=0.4)
+```
+
 ## Amounts
 
 All amounts are integers in token base units (stroops for classic assets: 1 token = 10^7).

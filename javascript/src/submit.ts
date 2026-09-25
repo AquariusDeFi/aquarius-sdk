@@ -41,14 +41,95 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  */
 export const DEFAULT_RESOURCE_FEE_HEADROOM = 0.5;
 
+/**
+ * Fraction of the simulated CPU instructions added on top of them. Simulation
+ * measures instructions against ledger state at simulation time, and the
+ * declared count is a hard limit: a transaction that needs even one more
+ * instruction at apply time fails on-chain with
+ * INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED. Swaps have been observed to
+ * use from ~0% to ~9% more instructions than simulated.
+ */
+export const DEFAULT_INSTRUCTION_HEADROOM = 0.25;
+
 const UINT32_MAX = 4_294_967_295n;
 
+/** Soroban charges compute per this many instructions. */
+const INSTRUCTIONS_INCREMENT = 10_000n;
+
+/**
+ * How long the network's compute settings are reused. They change only
+ * through validator-voted network upgrades.
+ */
+const NETWORK_COMPUTE_TTL_MS = 60 * 60 * 1_000;
+
+/** @internal The network's CONFIG_SETTING_CONTRACT_COMPUTE_V0 values used here. */
+export interface NetworkCompute {
+  txMaxInstructions: bigint;
+  feeRatePerInstructionsIncrement: bigint;
+}
+
 /** @internal Throws unless `headroom` is a non-negative finite number. */
-export function validateResourceFeeHeadroom(headroom: unknown): number {
+export function validateHeadroom(headroom: unknown, option: string): number {
   if (typeof headroom !== "number" || !Number.isFinite(headroom) || headroom < 0) {
-    throw new AquariusError("resourceFeeHeadroom must be a non-negative finite number");
+    throw new AquariusError(`${option} must be a non-negative finite number`);
   }
   return headroom;
+}
+
+/**
+ * @internal Raises the declared Soroban instructions by
+ * ceil(instructions * headroom), capped at the network's per-transaction
+ * limit, and raises the resource fee and the total fee by the compute fee of
+ * the added instructions — the same amount the network adds to the
+ * non-refundable fee for them. Returned as is when nothing can be added or
+ * the total fee would not fit in uint32.
+ */
+export function withInstructionHeadroom(
+  tx: Transaction,
+  headroom: number,
+  compute: NetworkCompute,
+  passphrase: string,
+): Transaction {
+  const envelope = tx.toEnvelope();
+  const body = envelope.v1().tx();
+  if (headroom === 0 || body.ext().switch() !== 1) return tx;
+  const sorobanData = body.ext().sorobanData();
+  const resources = sorobanData.resources();
+  const simulated = resources.instructions();
+  const declared = Math.min(
+    simulated + Math.ceil(simulated * headroom),
+    Number(compute.txMaxInstructions),
+  );
+  if (declared <= simulated) return tx;
+  const computeFee = (instructions: number) => {
+    const scaled = BigInt(instructions) * compute.feeRatePerInstructionsIncrement;
+    return (scaled + INSTRUCTIONS_INCREMENT - 1n) / INSTRUCTIONS_INCREMENT;
+  };
+  const extraFee = computeFee(declared) - computeFee(simulated);
+  if (BigInt(body.fee()) + extraFee > UINT32_MAX) return tx;
+  resources.instructions(declared);
+  sorobanData.resourceFee(
+    xdr.Int64.fromString((sorobanData.resourceFee().toBigInt() + extraFee).toString()),
+  );
+  body.fee(Number(BigInt(body.fee()) + extraFee));
+  return new Transaction(envelope, passphrase);
+}
+
+async function fetchNetworkCompute(server: rpc.Server): Promise<NetworkCompute> {
+  const key = xdr.LedgerKey.configSetting(
+    new xdr.LedgerKeyConfigSetting({
+      configSettingId: xdr.ConfigSettingId.configSettingContractComputeV0(),
+    }),
+  );
+  const { entries } = await server.getLedgerEntries(key);
+  if (!entries.length) {
+    throw new AquariusError("The RPC returned no CONTRACT_COMPUTE_V0 config setting");
+  }
+  const compute = entries[0].val.configSetting().contractCompute();
+  return {
+    txMaxInstructions: compute.txMaxInstructions().toBigInt(),
+    feeRatePerInstructionsIncrement: compute.feeRatePerInstructionsIncrement().toBigInt(),
+  };
 }
 
 /**
@@ -112,11 +193,32 @@ export class SubmitEngine {
      * signing; 0 disables. See DEFAULT_RESOURCE_FEE_HEADROOM.
      */
     private readonly resourceFeeHeadroom: number = DEFAULT_RESOURCE_FEE_HEADROOM,
+    /**
+     * Fraction of the simulated CPU instructions added on top of them before
+     * signing; 0 disables. See DEFAULT_INSTRUCTION_HEADROOM.
+     */
+    private readonly instructionHeadroom: number = DEFAULT_INSTRUCTION_HEADROOM,
   ) {
-    validateResourceFeeHeadroom(resourceFeeHeadroom);
+    validateHeadroom(resourceFeeHeadroom, "resourceFeeHeadroom");
+    validateHeadroom(instructionHeadroom, "instructionHeadroom");
   }
 
   private readonly simulationAccounts = new Map<string, Promise<Account>>();
+
+  private networkComputeCache?: { fetchedAt: number; value: Promise<NetworkCompute> };
+
+  private networkCompute(): Promise<NetworkCompute> {
+    const now = Date.now();
+    const cached = this.networkComputeCache;
+    if (cached && now - cached.fetchedAt < NETWORK_COMPUTE_TTL_MS) return cached.value;
+    const value = fetchNetworkCompute(this.server).catch((error: unknown) => {
+      // a failed fetch must not poison later transactions
+      if (this.networkComputeCache?.value === value) this.networkComputeCache = undefined;
+      throw error;
+    });
+    this.networkComputeCache = { fetchedAt: now, value };
+    return value;
+  }
 
   async buildTransaction(source: string, operation: xdr.Operation): Promise<Transaction> {
     return this.build(await this.server.getAccount(source), operation);
@@ -175,11 +277,18 @@ export class SubmitEngine {
       throw classifyContractError(simulation.error) ?? new AquariusError(simulation.error);
     }
 
-    return withResourceFeeHeadroom(
-      rpc.assembleTransaction(tx, simulation).build(),
-      this.resourceFeeHeadroom,
-      this.passphrase,
-    );
+    // Instructions first: their compute fee is part of the resource fee that
+    // the fee headroom then scales.
+    let assembled = rpc.assembleTransaction(tx, simulation).build();
+    if (this.instructionHeadroom !== 0) {
+      assembled = withInstructionHeadroom(
+        assembled,
+        this.instructionHeadroom,
+        await this.networkCompute(),
+        this.passphrase,
+      );
+    }
+    return withResourceFeeHeadroom(assembled, this.resourceFeeHeadroom, this.passphrase);
   }
 
   private async restore(
