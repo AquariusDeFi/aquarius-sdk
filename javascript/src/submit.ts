@@ -11,6 +11,7 @@ import {
 
 import {
   AquariusError,
+  RestoreRequiredError,
   TxTimeoutError,
   classifyContractError,
   errorFromDiagnostics,
@@ -90,12 +91,12 @@ export function withInstructionHeadroom(
   compute: NetworkCompute,
   passphrase: string,
 ): Transaction {
-  const envelope = tx.toEnvelope();
-  const body = envelope.v1().tx();
-  if (headroom === 0 || body.ext().switch() !== 1) return tx;
-  const sorobanData = body.ext().sorobanData();
-  const resources = sorobanData.resources();
-  const simulated = resources.instructions();
+  // XDR values are immutable; edit the wire form and rebuild the envelope.
+  const wire = tx.toEnvelope().toXdrObject();
+  if (headroom === 0 || wire.type !== 2 || wire.v1.tx.ext.v !== 1) return tx;
+  const body = wire.v1.tx;
+  const sorobanData = wire.v1.tx.ext.sorobanData;
+  const simulated = sorobanData.resources.instructions;
   const declared = Math.min(
     simulated + Math.ceil(simulated * headroom),
     Number(compute.txMaxInstructions),
@@ -106,29 +107,31 @@ export function withInstructionHeadroom(
     return (scaled + INSTRUCTIONS_INCREMENT - 1n) / INSTRUCTIONS_INCREMENT;
   };
   const extraFee = computeFee(declared) - computeFee(simulated);
-  if (BigInt(body.fee()) + extraFee > UINT32_MAX) return tx;
-  resources.instructions(declared);
-  sorobanData.resourceFee(
-    xdr.Int64.fromString((sorobanData.resourceFee().toBigInt() + extraFee).toString()),
-  );
-  body.fee(Number(BigInt(body.fee()) + extraFee));
-  return new Transaction(envelope, passphrase);
+  if (BigInt(body.fee) + extraFee > UINT32_MAX) return tx;
+  sorobanData.resources.instructions = declared;
+  sorobanData.resourceFee += extraFee;
+  body.fee = Number(BigInt(body.fee) + extraFee);
+  return new Transaction(xdr.TransactionEnvelope.fromXdrObject(wire), passphrase);
 }
 
 async function fetchNetworkCompute(server: rpc.Server): Promise<NetworkCompute> {
   const key = xdr.LedgerKey.configSetting(
     new xdr.LedgerKeyConfigSetting({
-      configSettingId: xdr.ConfigSettingId.configSettingContractComputeV0(),
+      configSettingId: xdr.ConfigSettingId.configSettingContractComputeV0,
     }),
   );
   const { entries } = await server.getLedgerEntries(key);
   if (!entries.length) {
     throw new AquariusError("The RPC returned no CONTRACT_COMPUTE_V0 config setting");
   }
-  const compute = entries[0].val.configSetting().contractCompute();
+  const data = entries[0].val;
+  if (data.type !== "configSetting" || data.configSetting.type !== "configSettingContractComputeV0") {
+    throw new AquariusError("The RPC returned no CONTRACT_COMPUTE_V0 config setting");
+  }
+  const compute = data.configSetting.contractCompute;
   return {
-    txMaxInstructions: compute.txMaxInstructions().toBigInt(),
-    feeRatePerInstructionsIncrement: compute.feeRatePerInstructionsIncrement().toBigInt(),
+    txMaxInstructions: compute.txMaxInstructions,
+    feeRatePerInstructionsIncrement: compute.feeRatePerInstructionsIncrement,
   };
 }
 
@@ -143,18 +146,19 @@ export function withResourceFeeHeadroom(
   headroom: number,
   passphrase: string,
 ): Transaction {
-  const envelope = tx.toEnvelope();
-  const body = envelope.v1().tx();
-  if (headroom === 0 || body.ext().switch() !== 1) return tx;
-  const sorobanData = body.ext().sorobanData();
-  const resourceFee = sorobanData.resourceFee().toBigInt();
-  const room = UINT32_MAX - BigInt(body.fee());
+  // XDR values are immutable; edit the wire form and rebuild the envelope.
+  const wire = tx.toEnvelope().toXdrObject();
+  if (headroom === 0 || wire.type !== 2 || wire.v1.tx.ext.v !== 1) return tx;
+  const body = wire.v1.tx;
+  const sorobanData = wire.v1.tx.ext.sorobanData;
+  const resourceFee = sorobanData.resourceFee;
+  const room = UINT32_MAX - BigInt(body.fee);
   const wanted = Number(resourceFee) * headroom;
   const extra = wanted >= Number(room) ? room : BigInt(Math.ceil(wanted));
   if (extra === 0n) return tx;
-  sorobanData.resourceFee(xdr.Int64.fromString((resourceFee + extra).toString()));
-  body.fee(Number(BigInt(body.fee()) + extra));
-  return new Transaction(envelope, passphrase);
+  sorobanData.resourceFee = resourceFee + extra;
+  body.fee = Number(BigInt(body.fee) + extra);
+  return new Transaction(xdr.TransactionEnvelope.fromXdrObject(wire), passphrase);
 }
 
 export interface ConfirmedTx {
@@ -252,8 +256,9 @@ export class SubmitEngine {
   /**
    * Enforce client-built authorization and assemble a contract transaction.
    * Simulation supplies resources, never authorization. If it reports
-   * archived ledger entries, restore them first (one extra signed
-   * transaction), then rebuild and simulate again.
+   * archived ledger entries and a signer is supplied, restore them first
+   * (one extra signed transaction), then rebuild and simulate again.
+   * Without a signer, return the unsigned restore via RestoreRequiredError.
    */
   async prepare(
     source: string,
@@ -267,23 +272,22 @@ export class SubmitEngine {
     let tx = await this.buildTransaction(source, operation());
     let simulation = await this.server.simulateTransaction(tx, undefined, "enforce");
 
-    if (rpc.Api.isSimulationRestore(simulation)) {
-      if (!signer) {
-        throw new AquariusError(
-          "Ledger entries for this call are archived and need a restore, which requires a signer",
-        );
-      }
+    if (rpc.Api.isSimulationRestore(simulation) && signer) {
       await this.restore(source, simulation, signer);
       tx = await this.buildTransaction(source, operation());
       simulation = await this.server.simulateTransaction(tx, undefined, "enforce");
     }
 
-    if (rpc.Api.isSimulationError(simulation)) {
-      throw classifyContractError(simulation.error) ?? new AquariusError(simulation.error);
+    if (rpc.Api.isSimulationRestore(simulation)) {
+      if (signer) {
+        throw new AquariusError("Ledger entries are still archived after restoration");
+      }
+      const restoreTx = await this.buildRestoreTransaction(source, simulation);
+      throw new RestoreRequiredError(restoreTx.toXDR());
     }
 
-    if (rpc.Api.isSimulationRestore(simulation)) {
-      throw new AquariusError("Ledger entries are still archived after restoration");
+    if (rpc.Api.isSimulationError(simulation)) {
+      throw classifyContractError(simulation.error) ?? new AquariusError(simulation.error);
     }
     if (!rpc.Api.isSimulationSuccess(simulation) || !simulation.result) {
       throw new AquariusError("Simulation returned no contract result");
@@ -292,7 +296,11 @@ export class SubmitEngine {
     // Stellar assembly fills an empty operation auth list from result.auth.
     // Supply only client auth, including an intentionally empty list, and
     // retain the original operation byte-for-byte in the prepared envelope.
-    const auth = operation().body().invokeHostFunctionOp().auth();
+    const body = operation().body;
+    if (body.type !== "invokeHostFunction") {
+      throw new AquariusError("Only contract invocations can be prepared");
+    }
+    const auth = body.invokeHostFunctionOp.auth;
     let assembled = rpc.assembleTransaction(tx, {
       ...simulation,
       result: { ...simulation.result, auth },
@@ -315,12 +323,21 @@ export class SubmitEngine {
     simulation: rpc.Api.SimulateTransactionRestoreResponse,
     signer: Signer,
   ): Promise<void> {
+    const restoreTx = await this.buildRestoreTransaction(source, simulation);
+    const signed = await signTransaction(signer, restoreTx, this.passphrase);
+    await this.submit(signed);
+  }
+
+  private async buildRestoreTransaction(
+    source: string,
+    simulation: rpc.Api.SimulateTransactionRestoreResponse,
+  ): Promise<Transaction> {
     const account = await this.server.getAccount(source);
     // The builder adds the Soroban resource fee to the inclusion fee.
     const sorobanData = new SorobanDataBuilder(simulation.restorePreamble.transactionData.build())
       .setResourceFee(simulation.restorePreamble.minResourceFee)
       .build();
-    const restoreTx = withResourceFeeHeadroom(
+    return withResourceFeeHeadroom(
       new TransactionBuilder(account, {
         fee: this.baseFee,
         networkPassphrase: this.passphrase,
@@ -332,27 +349,18 @@ export class SubmitEngine {
       this.resourceFeeHeadroom,
       this.passphrase,
     );
-    const signed = await signTransaction(signer, restoreTx, this.passphrase);
-    await this.submit(signed);
   }
 
   /**
-   * Execute a read through simulation — nothing is signed or submitted. If the
-   * entries are archived and a signer is available, restore them first.
+   * Execute a read through simulation — nothing is signed or submitted.
+   * Archived entries are readable: restorePreamble accompanies the result.
    */
   async read(
     source: string,
     buildOperation: () => xdr.Operation,
-    signer?: Signer,
   ): Promise<xdr.ScVal> {
-    let tx = this.build(await this.simulationAccount(source), buildOperation());
-    let simulation = await this.server.simulateTransaction(tx);
-
-    if (rpc.Api.isSimulationRestore(simulation) && signer) {
-      await this.restore(source, simulation, signer);
-      tx = this.build(await this.simulationAccount(source), buildOperation());
-      simulation = await this.server.simulateTransaction(tx);
-    }
+    const tx = this.build(await this.simulationAccount(source), buildOperation());
+    const simulation = await this.server.simulateTransaction(tx);
 
     if (rpc.Api.isSimulationError(simulation)) {
       throw classifyContractError(simulation.error) ?? new AquariusError(simulation.error);
@@ -387,12 +395,14 @@ export class SubmitEngine {
 
   private async resignWithFreshSequence(signed: Transaction, signer: Signer): Promise<Transaction> {
     const account = await this.server.getAccount(signed.source);
-    const envelope = signed.toEnvelope();
-    envelope
-      .v1()
-      .tx()
-      .seqNum(xdr.Int64.fromString((BigInt(account.sequenceNumber()) + 1n).toString()));
-    envelope.v1().signatures([]);
+    // XDR values are immutable; edit the wire form and rebuild the envelope.
+    const wire = signed.toEnvelope().toXdrObject();
+    if (wire.type !== 2) {
+      throw new AquariusError("Only v1 transaction envelopes can be re-signed");
+    }
+    wire.v1.tx.seqNum = BigInt(account.sequenceNumber()) + 1n;
+    wire.v1.signatures = [];
+    const envelope = xdr.TransactionEnvelope.fromXdrObject(wire);
     return signTransaction(signer, new Transaction(envelope, this.passphrase), this.passphrase);
   }
 
@@ -420,7 +430,7 @@ export class SubmitEngine {
       case "PENDING":
         return this.poll(response.hash);
       default: {
-        const name = response.errorResult?.result().switch().name ?? "unknown";
+        const name = response.errorResult?.result.type ?? "unknown";
         const message = `Transaction rejected on submission: ${name}`;
         if (name.toUpperCase().includes("BADSEQ")) {
           throw new BadSeqRejection(message, response.hash);

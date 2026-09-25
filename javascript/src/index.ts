@@ -10,11 +10,18 @@ export { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 export {
   AquariusClient,
   type AquariusConfig,
+  type ClaimKind,
+  type CreatePoolParams,
+  type CreatePoolResult,
+  type IncentivesConfig,
+  type PoolCreationFee,
   type ProviderFeeConfig,
   type Quote,
   type QuoteParams,
   type Receipt,
+  type SwapOptions,
 } from "./client.js";
+export { batchCallScVal, type BatchCall } from "./batch.js";
 export type { Signer } from "./signer.js";
 export { FeeCollector, type ClaimedFees } from "./collector.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
@@ -28,9 +35,14 @@ export {
   type ClaimResult,
   type DepositAmounts,
   type DepositResult,
+  type Incentive,
   type PoolType,
   type Position,
+  type RewardsInfo,
+  type ScheduleIncentiveParams,
+  type WithdrawClaims,
   type WithdrawResult,
+  type WorkingBalance,
 } from "./pool.js";
 export {
   MAX_TICK,
@@ -39,6 +51,7 @@ export {
   rangeStatus,
   snapTick,
   tickFromPrice,
+  tickSpacingForFee,
   type ClaimFeesResult,
   type ConcentratedDepositResult,
   type ConcentratedPosition,
@@ -53,6 +66,8 @@ export {
   NoRouteError,
   NoTrustlineError,
   PausedError,
+  RestoreRequiredError,
+  ResourceLimitError,
   SlippageError,
   StaleSimulationError,
   TxTimeoutError,

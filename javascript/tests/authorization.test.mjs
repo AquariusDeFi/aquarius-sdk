@@ -18,12 +18,12 @@ const vector = values => xdr.ScVal.scvVec(values.map(u128));
 const encodeArgs = args => args.map(value => value.toXDR("base64"));
 
 function describe(invocation) {
-  const fn = invocation.function().contractFn();
+  const fn = invocation.function.contractFn;
   return {
-    contract: Address.fromScAddress(fn.contractAddress()).toString(),
-    fn: fn.functionName().toString(),
-    args: fn.args().map(scValToNative),
-    children: invocation.subInvocations().map(describe),
+    contract: Address.fromScAddress(fn.contractAddress).toString(),
+    fn: fn.functionName.toString(),
+    args: fn.args.map(scValToNative),
+    children: invocation.subInvocations.map(describe),
   };
 }
 
@@ -59,9 +59,9 @@ for (const type of ["volatile", "stable"]) {
     await pool.deposit({ amounts: [100n, 200n] });
     const { args, auth } = ctx.submitted[0];
     assert.equal(auth.length, 1);
-    assert.equal(auth[0].credentials().switch().name, "sorobanCredentialsSourceAccount");
-    const root = auth[0].rootInvocation();
-    assert.deepEqual(encodeArgs(root.function().contractFn().args()), encodeArgs(args));
+    assert.equal(auth[0].credentials.type, "sorobanCredentialsSourceAccount");
+    const root = auth[0].rootInvocation;
+    assert.deepEqual(encodeArgs(root.function.contractFn.args), encodeArgs(args));
     const tree = describe(root);
     assert.equal(tree.contract, ROUTER);
     assert.equal(tree.fn, "deposit");
@@ -71,15 +71,15 @@ for (const type of ["volatile", "stable"]) {
         contract, fn: "transfer", args: [OWNER, POOL, [100n, 200n][i]], children: [],
       })),
     }]);
-    for (const transfer of root.subInvocations()[0].subInvocations()) {
-      assert.equal(transfer.function().contractFn().args()[2].switch().name, "scvI128");
+    for (const transfer of root.subInvocations[0].subInvocations) {
+      assert.equal(transfer.function.contractFn.args[2].type, "scvI128");
     }
   });
 
   test(`${type} deposit mirrors the contract's zero-transfer behavior`, async () => {
     const { ctx, pool } = poolContext(type);
     await pool.deposit({ amounts: [0n, 200n] });
-    const transfers = describe(ctx.submitted[0].auth[0].rootInvocation()).children[0].children;
+    const transfers = describe(ctx.submitted[0].auth[0].rootInvocation).children[0].children;
     assert.deepEqual(transfers.map(t => t.args[2]), type === "stable" ? [200n] : [0n, 200n]);
   });
 
@@ -87,13 +87,13 @@ for (const type of ["volatile", "stable"]) {
     const { ctx, pool } = poolContext(type);
     await pool.withdraw({ shares: 10n });
     const { args, auth } = ctx.submitted[0];
-    const root = auth[0].rootInvocation();
-    assert.deepEqual(encodeArgs(root.function().contractFn().args()), encodeArgs(args));
+    const root = auth[0].rootInvocation;
+    assert.deepEqual(encodeArgs(root.function.contractFn.args), encodeArgs(args));
     assert.deepEqual(describe(root).children, [{
       contract: POOL, fn: "withdraw", args: [OWNER, 10n, [198n, 495n]],
       children: [{ contract: SHARE_TOKEN, fn: "burn", args: [OWNER, 10n], children: [] }],
     }]);
-    assert.equal(root.subInvocations()[0].subInvocations()[0].function().contractFn().args()[1].switch().name, "scvI128");
+    assert.equal(root.subInvocations[0].subInvocations[0].function.contractFn.args[1].type, "scvI128");
   });
 }
 
@@ -101,7 +101,7 @@ test("concentrated legacy withdrawal has no share-token burn or lookup", async (
   const { ctx, pool } = poolContext("concentrated");
   await pool.withdraw({ shares: 10n });
   assert.deepEqual(ctx.reads, ["withdraw"]);
-  assert.deepEqual(describe(ctx.submitted[0].auth[0].rootInvocation()).children, [{
+  assert.deepEqual(describe(ctx.submitted[0].auth[0].rootInvocation).children, [{
     contract: POOL, fn: "withdraw", args: [OWNER, 10n, [198n, 495n]], children: [],
   }]);
 });
@@ -110,8 +110,8 @@ test("rewards claims authorize only the exact router and pool calls", async () =
   const { ctx, pool } = poolContext("volatile");
   await pool.claimRewards();
   const { args, auth } = ctx.submitted[0];
-  assert.deepEqual(encodeArgs(auth[0].rootInvocation().function().contractFn().args()), encodeArgs(args));
-  assert.deepEqual(describe(auth[0].rootInvocation()).children, [{
+  assert.deepEqual(encodeArgs(auth[0].rootInvocation.function.contractFn.args), encodeArgs(args));
+  assert.deepEqual(describe(auth[0].rootInvocation).children, [{
     contract: POOL, fn: "claim", args: [OWNER], children: [],
   }]);
 });
@@ -120,20 +120,20 @@ test("raw calls default to exact root authorization and accept an explicit tree 
   const client = new AquariusClient({ network: "testnet", signer: Keypair.random() });
   const operations = [];
   client.engine.prepare = async (_source, buildOperation) => {
-    operations.push(buildOperation().body().invokeHostFunctionOp());
+    operations.push(buildOperation().body.invokeHostFunctionOp);
     return "prepared";
   };
   client.engine.signAndSubmit = async () => ({ txHash: "hash", returnValue: u128(7n) });
   const args = [u128(10n)];
   assert.equal(await client.contract.call("custom", ...args), 7n);
-  const root = operations[0].auth()[0].rootInvocation();
+  const root = operations[0].auth[0].rootInvocation;
   assert.deepEqual(describe(root), { contract: ROUTER, fn: "custom", args: [10n], children: [] });
   const auth = [sourceAccountEntry(authorizedInvocation(ROUTER, "custom", args, [
     authorizedInvocation(TOKEN_A, "transfer", []),
   ]))];
   await client.contract.callWithAuth("custom", args, auth);
-  assert.equal(operations[1].auth()[0].toXDR("base64"), auth[0].toXDR("base64"));
+  assert.equal(operations[1].auth[0].toXDR("base64"), auth[0].toXDR("base64"));
   await client.contract.callWithAuth("public_call", [], []);
-  assert.deepEqual(operations[2].auth(), []);
+  assert.deepEqual(operations[2].auth, []);
   await assert.rejects(() => client.contract.callWithAuth("missing_auth", []), /explicit.*auth/i);
 });

@@ -20,7 +20,7 @@ AquariusClient._requoteDelaysMs = [0, 0];
 const rejected = name => ({
   status: "ERROR",
   hash: "rejected",
-  errorResult: { result: () => ({ switch: () => ({ name }) }) },
+  errorResult: { result: { type: name } },
 });
 const PENDING = { status: "PENDING", hash: "abc123" };
 
@@ -67,7 +67,7 @@ test("txBadSeq is re-signed with a fresh sequence and resubmitted", async () => 
   const resubmitted = server.submitted[1];
   assert.equal(resubmitted.sequence, (BigInt(CHAIN_SEQUENCE) + 1n).toString()); // reloaded
   assert.equal(resubmitted.signatures.length, 1); // stale signature dropped, re-signed
-  assert.ok(KEYPAIR.verify(resubmitted.hash(), resubmitted.signatures[0].signature()));
+  assert.ok(KEYPAIR.verify(resubmitted.hash(), resubmitted.signatures[0].signature));
 });
 
 test("txBadSeq gives up after bounded retries", async () => {
@@ -88,6 +88,38 @@ test("other rejections are not retried", async () => {
   assert.equal(server.submitted.length, 1);
 });
 
+test("an executing write still restores, re-simulates and signs the original call", async () => {
+  const server = new FakeServer([PENDING, PENDING]);
+  let simulations = 0;
+  server.simulateTransaction = async () => {
+    simulations++;
+    const result = {
+      _parsed: true,
+      transactionData: new SorobanDataBuilder(),
+      minResourceFee: "10",
+      result: { retval: xdr.ScVal.scvVoid(), auth: [] },
+    };
+    return simulations === 1
+      ? { ...result, restorePreamble: { minResourceFee: "500", transactionData: new SorobanDataBuilder() } }
+      : result;
+  };
+  // The fake server serves no network config, so instruction headroom is off.
+  const engine = new SubmitEngine(server, PASSPHRASE, "100", null, undefined, 0);
+  const tx = await engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
+    contract: "CCSXYUVLYALKJGIIYMGYLZI447VS6TDWFTVDL43B4IKK2WERHLWUVCRC",
+    function: "claim",
+    args: [],
+  }), KEYPAIR);
+  assert.equal(simulations, 2);
+  assert.equal(server.submitted.length, 1);
+  assert.equal(server.submitted[0].operations[0].type, "restoreFootprint");
+  assert.equal(server.submitted[0].signatures.length, 1);
+  assert.equal(tx.signatures.length, 0);
+  await engine.signAndSubmit(tx, KEYPAIR);
+  assert.equal(server.submitted[1].operations[0].type, "invokeHostFunction");
+  assert.equal(server.submitted[1].signatures.length, 1);
+});
+
 function diagnosticEvent(contractCode) {
   const topics = [xdr.ScVal.scvSymbol("error")];
   if (contractCode !== undefined) {
@@ -96,9 +128,9 @@ function diagnosticEvent(contractCode) {
   return new xdr.DiagnosticEvent({
     inSuccessfulContractCall: false,
     event: new xdr.ContractEvent({
-      ext: new xdr.ExtensionPoint(0), contractId: null,
-      type: xdr.ContractEventType.diagnostic(),
-      body: new xdr.ContractEventBody(0, new xdr.ContractEventV0({
+      ext: xdr.ExtensionPoint.v0(), contractId: null,
+      type: xdr.ContractEventType.diagnostic,
+      body: xdr.ContractEventBody.v0(new xdr.ContractEventV0({
         topics, data: xdr.ScVal.scvVoid(),
       })),
     }),
@@ -138,7 +170,7 @@ test("reads share one account fetch, even concurrently", async () => {
   const op = () => Operation.manageData({ name: "t", value: "1" });
   await Promise.all([engine.read(KEYPAIR.publicKey(), op), engine.read(KEYPAIR.publicKey(), op)]);
   const value = await engine.read(KEYPAIR.publicKey(), op);
-  assert.equal(value.u32(), 7);
+  assert.equal(value.u32, 7);
   assert.equal(server.loads, 1); // sequence numbers are irrelevant to simulation
 });
 
@@ -250,7 +282,7 @@ test("read simulations retain recording and never return authorization for signi
   const result = await engine.read(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
     contract: CONTRACT, function: "estimate", args: [],
   }));
-  assert.equal(result.u32(), 7);
+  assert.equal(result.u32, 7);
   assert.deepEqual(server.submitted, []);
 });
 

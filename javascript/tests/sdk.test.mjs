@@ -268,29 +268,26 @@ test("swap operation carries bounded client-built authorization", async () => {
 
   {
     const { op, parsed } = build(true);
-    const [entry] = op.body().invokeHostFunctionOp().auth();
-    assert.equal(
-      entry.credentials().switch(),
-      xdr.SorobanCredentialsType.sorobanCredentialsSourceAccount(),
-    );
-    const root = entry.rootInvocation();
-    assert.equal(root.function().contractFn().functionName().toString(), "swap_chained");
-    const [transfer] = root.subInvocations();
-    const t = transfer.function().contractFn();
-    assert.equal(t.functionName().toString(), "transfer");
-    assert.equal(scValToNative(t.args()[2]), parsed.amountIn); // bounded: exactly what is spent
+    const [entry] = op.body.invokeHostFunctionOp.auth;
+    assert.equal(entry.credentials.type, "sorobanCredentialsSourceAccount");
+    const root = entry.rootInvocation;
+    assert.equal(root.function.contractFn.functionName.toString(), "swap_chained");
+    const [transfer] = root.subInvocations;
+    const t = transfer.function.contractFn;
+    assert.equal(t.functionName.toString(), "transfer");
+    assert.equal(scValToNative(t.args[2]), parsed.amountIn); // bounded: exactly what is spent
   }
   {
     const { op, parsed } = build(false);
-    const [entry] = op.body().invokeHostFunctionOp().auth();
-    const root = entry.rootInvocation();
+    const [entry] = op.body.invokeHostFunctionOp.auth;
+    const root = entry.rootInvocation;
     assert.equal(
-      root.function().contractFn().functionName().toString(),
+      root.function.contractFn.functionName.toString(),
       "swap_chained_strict_receive",
     );
-    const [transfer] = root.subInvocations();
+    const [transfer] = root.subInvocations;
     // max-in: the contract pulls at most the guard and refunds the difference
-    assert.equal(scValToNative(transfer.function().contractFn().args()[2]), parsed.guard);
+    assert.equal(scValToNative(transfer.function.contractFn.args[2]), parsed.guard);
   }
 });
 
@@ -304,7 +301,7 @@ test("unsigned quote XDR enforces client auth and excludes authorization returne
   let simulatedOperation;
   client.server.simulateTransaction = async (tx, _resources, mode) => {
     assert.equal(mode, "enforce");
-    simulatedOperation = tx.toEnvelope().v1().tx().operations()[0].toXDR("base64");
+    simulatedOperation = tx.toEnvelope().v1.tx.operations[0].toXDR("base64");
     return {
       _parsed: true, latestLedger: 100, events: [], minResourceFee: "0",
       transactionData: new SorobanDataBuilder(),
@@ -318,8 +315,8 @@ test("unsigned quote XDR enforces client auth and excludes authorization returne
   const quote = await client.quote({ from: XLM, to: AQUA, amountIn: 100_000_000n });
   const tx = new Transaction(await quote.buildTransaction(), TESTNET_PASSPHRASE);
   assert.equal(tx.signatures.length, 0);
-  assert.equal(tx.toEnvelope().v1().tx().operations()[0].toXDR("base64"), simulatedOperation);
-  assert.equal(tx.operations[0].auth[0].rootInvocation().function().contractFn().functionName().toString(), "swap_chained");
+  assert.equal(tx.toEnvelope().v1.tx.operations[0].toXDR("base64"), simulatedOperation);
+  assert.equal(tx.operations[0].auth[0].rootInvocation.function.contractFn.functionName.toString(), "swap_chained");
 });
 
 test("positions resolves pools concurrently and filters empty ones", async () => {
@@ -348,4 +345,19 @@ test("positions resolves pools concurrently and filters empty ones", async () =>
     [["A", 5n], ["C", 7n]], // input order kept, empty position dropped
   );
   assert.ok(peak > 1); // the per-pool read chains overlapped
+});
+
+test("contract overrides point a network preset at another deployment", () => {
+  const staging = new AquariusClient({
+    network: "mainnet",
+    apiUrl: "https://staging.invalid/api",
+    contracts: { router: "CSTAGINGROUTER" },
+  });
+  const mainnet = new AquariusClient({ network: "mainnet" });
+  assert.equal(staging.network.router, "CSTAGINGROUTER");
+  assert.equal(staging.network.apiUrl, "https://staging.invalid/api");
+  assert.equal(staging.network.batch, mainnet.network.batch); // unspecified: preset kept
+  assert.equal(staging.network.collectorFactory, mainnet.network.collectorFactory);
+  assert.equal(staging.network.passphrase, mainnet.network.passphrase);
+  assert.equal(mainnet.network.router, "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK");
 });
