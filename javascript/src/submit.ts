@@ -28,6 +28,11 @@ class BadSeqRejection extends AquariusError {}
 const POLL_ATTEMPTS = 30;
 const POLL_INTERVAL_MS = 2_000;
 
+// How often and how long to poll the RPC for a ledger newer than the one that
+// confirmed this engine's previous transaction, before the next simulation.
+const NEXT_LEDGER_POLL_INTERVAL_MS = 1_000;
+const NEXT_LEDGER_TIMEOUT_MS = 30_000;
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
@@ -178,6 +183,10 @@ export class SubmitEngine {
    */
   static _badSeqDelaysMs = [500, 1_000, 2_000];
 
+  /** Next-ledger wait before simulating; static so tests can shrink it. */
+  static _nextLedgerPollIntervalMs = NEXT_LEDGER_POLL_INTERVAL_MS;
+  static _nextLedgerTimeoutMs = NEXT_LEDGER_TIMEOUT_MS;
+
   constructor(
     private readonly server: rpc.Server,
     private readonly passphrase: string,
@@ -206,6 +215,12 @@ export class SubmitEngine {
   private readonly simulationAccounts = new Map<string, Promise<Account>>();
 
   private networkComputeCache?: { fetchedAt: number; value: Promise<NetworkCompute> };
+
+  /**
+   * Ledger of this engine's last transaction that made it on-chain (confirmed
+   * or failed); cleared once the RPC has moved past it.
+   */
+  private lastTxLedger?: number;
 
   private networkCompute(): Promise<NetworkCompute> {
     const now = Date.now();
@@ -249,6 +264,40 @@ export class SubmitEngine {
     return account;
   }
 
+  private async simulate(tx: Transaction): Promise<rpc.Api.SimulateTransactionResponse> {
+    await this.waitForLedgerAfterLastTx();
+    return this.server.simulateTransaction(tx);
+  }
+
+  /**
+   * Wait until the RPC's latest ledger is past the one that applied this
+   * engine's previous transaction.
+   *
+   * Simulation runs on the latest ledger's state, but the transaction applies
+   * in a later ledger. Right after a transaction applied in ledger L, state
+   * that depends on ledger time (e.g. reward accrual) looks unchanged since
+   * that transaction when simulated on L, so entries the call will write at
+   * apply time can land in the footprint as read-only, and the transaction
+   * fails on-chain. Simulating on L+1 or later sees the same kind of state
+   * change as the apply will.
+   */
+  private async waitForLedgerAfterLastTx(): Promise<void> {
+    const last = this.lastTxLedger;
+    if (last === undefined) return;
+    const timeoutMs = SubmitEngine._nextLedgerTimeoutMs;
+    const deadline = Date.now() + timeoutMs;
+    while ((await this.server.getHealth()).latestLedger <= last) {
+      if (Date.now() >= deadline) {
+        throw new AquariusError(
+          `The RPC did not advance past ledger ${last}, which applied the previous transaction, ` +
+            `within ${timeoutMs / 1_000} s; not simulating on that ledger's state`,
+        );
+      }
+      await sleep(SubmitEngine._nextLedgerPollIntervalMs);
+    }
+    if (this.lastTxLedger === last) this.lastTxLedger = undefined;
+  }
+
   /**
    * Simulate and assemble a contract transaction. If simulation reports
    * archived ledger entries, restore them first (one extra signed
@@ -260,7 +309,7 @@ export class SubmitEngine {
     signer?: Signer,
   ): Promise<Transaction> {
     let tx = await this.buildTransaction(source, buildOperation());
-    let simulation = await this.server.simulateTransaction(tx);
+    let simulation = await this.simulate(tx);
 
     if (rpc.Api.isSimulationRestore(simulation)) {
       if (!signer) {
@@ -270,7 +319,7 @@ export class SubmitEngine {
       }
       await this.restore(source, simulation, signer);
       tx = await this.buildTransaction(source, buildOperation());
-      simulation = await this.server.simulateTransaction(tx);
+      simulation = await this.simulate(tx);
     }
 
     if (rpc.Api.isSimulationError(simulation)) {
@@ -327,12 +376,12 @@ export class SubmitEngine {
     signer?: Signer,
   ): Promise<xdr.ScVal> {
     let tx = this.build(await this.simulationAccount(source), buildOperation());
-    let simulation = await this.server.simulateTransaction(tx);
+    let simulation = await this.simulate(tx);
 
     if (rpc.Api.isSimulationRestore(simulation) && signer) {
       await this.restore(source, simulation, signer);
       tx = this.build(await this.simulationAccount(source), buildOperation());
-      simulation = await this.server.simulateTransaction(tx);
+      simulation = await this.simulate(tx);
     }
 
     if (rpc.Api.isSimulationError(simulation)) {
@@ -418,6 +467,16 @@ export class SubmitEngine {
       attempts: POLL_ATTEMPTS,
       sleepStrategy: (iter: number) => Math.min(500 * Math.max(iter, 1), POLL_INTERVAL_MS),
     });
+
+    // A failed transaction also applied in its ledger (sequence number, fee),
+    // and what usually follows it is a retry that should simulate on the state
+    // after it, so its ledger is remembered as well.
+    if (
+      result.status === rpc.Api.GetTransactionStatus.SUCCESS ||
+      result.status === rpc.Api.GetTransactionStatus.FAILED
+    ) {
+      this.lastTxLedger = result.ledger ?? this.lastTxLedger;
+    }
 
     if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
       return { txHash: hash, returnValue: result.returnValue };
