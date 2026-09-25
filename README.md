@@ -62,18 +62,19 @@ by the non-refundable compute fee of the added instructions, which is charged
 whether or not they are used (under 0.0001 XLM for a typical swap at current
 mainnet rates).
 
-Consecutive calls wait for the next ledger. Simulation runs on the latest
-ledger's state, but a transaction applies in a later one. Right after a
-transaction applies in ledger L, state that changes with ledger time (such as
-pool reward accrual) looks unchanged on L, so a follow-up call simulated there —
-a withdraw right after a deposit, a claim right after a withdraw — can declare
-an entry it will write at apply time as read-only and fail on-chain. So after
-each of the client's transactions lands on-chain (confirmed or failed), its
-next simulation (write or read) first polls the RPC's `getHealth` about once a
-second until the latest ledger is past L, and raises `AquariusError` if that
-takes over 30 s. This adds up to
-one ledger (~5 s) of latency to back-to-back calls and nothing otherwise; the
-wait is per client instance.
+`wait_for_next_ledger()` / `waitForNextLedger()` waits until the RPC's latest
+ledger is past the one that applied the client's last on-chain transaction
+(confirmed or failed), or past an explicit `ledger`; with neither, it waits for
+the next ledger. Call it between dependent writes whose second simulation
+depends on ledger-time state the first one changed. Simulation runs on the
+latest ledger's state, but a transaction applies in a later one: after a
+deposit into a pool with rewards, the rewards contract rewrites the user's
+reward entry only when rewards accrued since the user's last checkpoint, so a
+withdraw or claim simulated on the deposit's own ledger declares that entry
+read-only and fails on-chain once time has advanced. The method polls the RPC's
+`getHealth` about once a second, returns the latest ledger observed, and raises
+`AquariusError` after a timeout (default 30 s). The SDK never waits on its own:
+simulations, reads and writes do not poll.
 
 ## Design principles
 

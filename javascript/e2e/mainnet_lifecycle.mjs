@@ -132,6 +132,8 @@ console.log(`deposit : [${deposit.amounts.map(fmt)}] -> ${fmt(deposit.shares)} s
 assert.ok((await pool.shareBalance()) >= deposit.shares);
 assert.ok((await pool.pendingRewards()) >= 0n);
 
+// The withdraw must simulate past the deposit's ledger (reward checkpoint).
+await aqua.waitForNextLedger();
 const withdraw = await retryStale(() => pool.withdraw({ shares: deposit.shares }));
 aquaHave += withdraw.amounts[1 - xlmIndex];
 console.log(`withdraw: [${withdraw.amounts.map(fmt)}]  ${EXPLORER}${withdraw.txHash}`);
@@ -178,6 +180,8 @@ if (!concentrated) {
   const value = await concentrated.positionValue(lower, upper);
   assert.equal(value.total.length, concentrated.tokens.length);
 
+  // The withdraw must simulate past the deposit's ledger (reward checkpoint).
+  await aqua.waitForNextLedger();
   const closed = await retryStale(() =>
     concentrated.withdrawPosition({ tickLower: lower, tickUpper: upper }));
   aquaHave += closed.amounts[1 - xlmC];

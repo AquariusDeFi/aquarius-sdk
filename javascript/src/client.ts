@@ -354,6 +354,29 @@ export class AquariusClient {
     await this.waitForAccountReady(source);
   }
 
+  /**
+   * Wait until the RPC's latest ledger is greater than `ledger`; resolves to
+   * the latest ledger observed.
+   *
+   * Call it before a follow-up call whose simulation depends on ledger-time
+   * state changed by a previous transaction — e.g. a withdraw or claim right
+   * after a deposit into a pool with rewards. Simulation runs on the latest
+   * ledger's state, but the transaction applies in a later one. The rewards
+   * contract rewrites the user's reward entry only when rewards accrued since
+   * the user's last checkpoint, so a withdraw simulated on the deposit's own
+   * ledger declares that entry read-only, and the transaction fails on-chain
+   * once time has advanced.
+   *
+   * `ledger` defaults to the ledger of this client's last on-chain transaction
+   * (confirmed or failed); if there is none, to the RPC's current latest
+   * ledger, i.e. simply wait for the next ledger. Rejects with AquariusError
+   * when the RPC has not moved past it within `timeoutMs` (default 30 000).
+   * Polls `getHealth` about once a second.
+   */
+  async waitForNextLedger(options?: { ledger?: number; timeoutMs?: number }): Promise<number> {
+    return this.engine.waitForNextLedger(options?.ledger, options?.timeoutMs);
+  }
+
   private async waitForAccountReady(publicKey: string): Promise<void> {
     const deadline = performance.now() + 30_000;
     const remaining = () => {
