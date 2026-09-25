@@ -153,6 +153,47 @@ const aqua = new AquariusClient({
 });
 ```
 
+## Fees
+
+`baseFee` (default `"100000"` stroops) is the inclusion fee bid. On top of it,
+every Soroban transaction declares a resource fee taken from simulation, raised
+by `resourceFeeHeadroom` (default `0.5`, i.e. +50%; `0` disables):
+
+```ts
+const aqua = new AquariusClient({ network: "mainnet", signer, resourceFeeHeadroom: 0.3 });
+```
+
+The declared resource fee is a cap: the network charges the non-refundable part
+plus the refundable part actually consumed (rent, events, return value) and
+refunds the rest, so headroom costs nothing unless it is used. The refundable
+part depends on ledger state at apply time, so the bare simulated fee can fall
+short and fail the transaction on-chain with
+`INVOKE_HOST_FUNCTION_INSUFFICIENT_REFUNDABLE_FEE`. The headroom is applied
+before signing (also to automatic restore transactions and to
+`quote.buildTransaction()`), so wallets see and sign the final fee.
+
+The source account must hold the full declared fee — inclusion fee plus
+resource fee plus headroom: it is debited before execution, and the unused part
+is refunded after apply. When spending the whole XLM balance, leave that margin.
+Re-preparing the XDR from `quote.buildTransaction()` with stellar-sdk's own
+`prepareTransaction` re-simulates and replaces the resource fee, which drops the
+headroom.
+
+Declared CPU instructions are a hard limit too: a transaction that needs more
+than it declares fails on-chain with
+`INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED`, and actual usage can exceed the
+simulated count by several percent. So the simulated instructions are raised by
+`instructionHeadroom` (default `0.25`, i.e. +25%; `0` disables), capped at the
+network's per-transaction limit (read from the network config and cached), and
+the resource fee by the compute fee of the added instructions — non-refundable,
+under 0.0001 XLM for a typical swap at current mainnet rates — before the fee
+headroom is applied on top. Restore transactions run no contract code and keep
+the simulated instructions.
+
+```ts
+const aqua = new AquariusClient({ network: "mainnet", signer, instructionHeadroom: 0.4 });
+```
+
 ## Amounts
 
 All amounts are `bigint` in token base units (stroops for classic assets: 1 token = 10^7).

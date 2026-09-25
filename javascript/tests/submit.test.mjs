@@ -155,6 +155,8 @@ const CONTRACT = StrKey.encodeContract(Buffer.alloc(32, 1));
 const fixedAuth = () => [sourceAccountEntry(authorizedInvocation(CONTRACT, "fixed", []))];
 const hostileAuth = () => [sourceAccountEntry(authorizedInvocation(CONTRACT, "unexpected_debit", []))];
 const authXdr = tx => tx.operations[0].auth.map(entry => entry.toXDR("base64"));
+// The fake server serves no network config, so instruction headroom is off.
+const authEngine = server => new SubmitEngine(server, PASSPHRASE, "100", null, undefined, 0);
 const success = (auth = hostileAuth()) => ({
   _parsed: true,
   latestLedger: 100,
@@ -173,7 +175,7 @@ for (const auth of [fixedAuth(), []]) {
       assert.equal(resources, undefined);
       return success();
     };
-    const engine = new SubmitEngine(server, PASSPHRASE, "100");
+    const engine = authEngine(server);
     const tx = await engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
       contract: CONTRACT, function: "fixed", args: [], auth,
     }));
@@ -192,7 +194,7 @@ test("restore retry freezes the original operation and enforces auth on both sim
       ? { ...success(), restorePreamble: { minResourceFee: "0", transactionData: new SorobanDataBuilder() } }
       : success();
   };
-  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  const engine = authEngine(server);
   const auth = fixedAuth();
   const original = auth.map(entry => entry.toXDR("base64"));
   // Stub restoration: exercise the retry without signing any restore.
@@ -215,7 +217,7 @@ test("a repeated restore response cannot produce a prepared contract transaction
     simulations += 1;
     return { ...success(), restorePreamble: { minResourceFee: "0", transactionData: new SorobanDataBuilder() } };
   };
-  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  const engine = authEngine(server);
   engine.restore = async () => {};
   await assert.rejects(() => engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
     contract: CONTRACT, function: "fixed", args: [], auth: fixedAuth(),
@@ -230,7 +232,7 @@ test("enforcement failure aborts preparation without falling back to recording",
     modes.push(mode);
     return { error: "HostError: Error(Auth, InvalidAction)" };
   };
-  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  const engine = authEngine(server);
   await assert.rejects(() => engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
     contract: CONTRACT, function: "fixed", args: [], auth: [],
   })), /Auth/);
@@ -244,7 +246,7 @@ test("read simulations retain recording and never return authorization for signi
     assert.equal(mode, undefined);
     return { ...success(), result: { auth: hostileAuth(), retval: xdr.ScVal.scvU32(7) } };
   };
-  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  const engine = authEngine(server);
   const result = await engine.read(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
     contract: CONTRACT, function: "estimate", args: [],
   }));
@@ -256,7 +258,7 @@ test("sequence retries preserve the fixed authorization without a new simulation
   const server = new FakeServer([rejected("txBadSeq"), PENDING]);
   let simulations = 0;
   server.simulateTransaction = async () => { simulations += 1; return success(); };
-  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  const engine = authEngine(server);
   const auth = fixedAuth();
   const tx = await engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
     contract: CONTRACT, function: "fixed", args: [], auth,

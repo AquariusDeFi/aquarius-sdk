@@ -1,6 +1,7 @@
 import {
   Account,
   Operation,
+  SorobanDataBuilder,
   TimeoutInfinite,
   Transaction,
   TransactionBuilder,
@@ -28,6 +29,133 @@ const POLL_ATTEMPTS = 30;
 const POLL_INTERVAL_MS = 2_000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Fraction of the simulated Soroban resource fee added on top of it. The
+ * declared resource fee is a cap: the network charges the non-refundable part
+ * plus the refundable part actually consumed (rent, events, return value) and
+ * refunds the rest, so headroom costs nothing unless it is used. The refundable
+ * part depends on ledger state at apply time, which can change between
+ * simulation and apply; without headroom such a transaction fails on-chain with
+ * INVOKE_HOST_FUNCTION_INSUFFICIENT_REFUNDABLE_FEE.
+ */
+export const DEFAULT_RESOURCE_FEE_HEADROOM = 0.5;
+
+/**
+ * Fraction of the simulated CPU instructions added on top of them. Simulation
+ * measures instructions against ledger state at simulation time, and the
+ * declared count is a hard limit: a transaction that needs even one more
+ * instruction at apply time fails on-chain with
+ * INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED. Swaps have been observed to
+ * use from ~0% to ~9% more instructions than simulated.
+ */
+export const DEFAULT_INSTRUCTION_HEADROOM = 0.25;
+
+const UINT32_MAX = 4_294_967_295n;
+
+/** Soroban charges compute per this many instructions. */
+const INSTRUCTIONS_INCREMENT = 10_000n;
+
+/**
+ * How long the network's compute settings are reused. They change only
+ * through validator-voted network upgrades.
+ */
+const NETWORK_COMPUTE_TTL_MS = 60 * 60 * 1_000;
+
+/** @internal The network's CONFIG_SETTING_CONTRACT_COMPUTE_V0 values used here. */
+export interface NetworkCompute {
+  txMaxInstructions: bigint;
+  feeRatePerInstructionsIncrement: bigint;
+}
+
+/** @internal Throws unless `headroom` is a non-negative finite number. */
+export function validateHeadroom(headroom: unknown, option: string): number {
+  if (typeof headroom !== "number" || !Number.isFinite(headroom) || headroom < 0) {
+    throw new AquariusError(`${option} must be a non-negative finite number`);
+  }
+  return headroom;
+}
+
+/**
+ * @internal Raises the declared Soroban instructions by
+ * ceil(instructions * headroom), capped at the network's per-transaction
+ * limit, and raises the resource fee and the total fee by the compute fee of
+ * the added instructions — the same amount the network adds to the
+ * non-refundable fee for them. Returned as is when nothing can be added or
+ * the total fee would not fit in uint32.
+ */
+export function withInstructionHeadroom(
+  tx: Transaction,
+  headroom: number,
+  compute: NetworkCompute,
+  passphrase: string,
+): Transaction {
+  const envelope = tx.toEnvelope();
+  const body = envelope.v1().tx();
+  if (headroom === 0 || body.ext().switch() !== 1) return tx;
+  const sorobanData = body.ext().sorobanData();
+  const resources = sorobanData.resources();
+  const simulated = resources.instructions();
+  const declared = Math.min(
+    simulated + Math.ceil(simulated * headroom),
+    Number(compute.txMaxInstructions),
+  );
+  if (declared <= simulated) return tx;
+  const computeFee = (instructions: number) => {
+    const scaled = BigInt(instructions) * compute.feeRatePerInstructionsIncrement;
+    return (scaled + INSTRUCTIONS_INCREMENT - 1n) / INSTRUCTIONS_INCREMENT;
+  };
+  const extraFee = computeFee(declared) - computeFee(simulated);
+  if (BigInt(body.fee()) + extraFee > UINT32_MAX) return tx;
+  resources.instructions(declared);
+  sorobanData.resourceFee(
+    xdr.Int64.fromString((sorobanData.resourceFee().toBigInt() + extraFee).toString()),
+  );
+  body.fee(Number(BigInt(body.fee()) + extraFee));
+  return new Transaction(envelope, passphrase);
+}
+
+async function fetchNetworkCompute(server: rpc.Server): Promise<NetworkCompute> {
+  const key = xdr.LedgerKey.configSetting(
+    new xdr.LedgerKeyConfigSetting({
+      configSettingId: xdr.ConfigSettingId.configSettingContractComputeV0(),
+    }),
+  );
+  const { entries } = await server.getLedgerEntries(key);
+  if (!entries.length) {
+    throw new AquariusError("The RPC returned no CONTRACT_COMPUTE_V0 config setting");
+  }
+  const compute = entries[0].val.configSetting().contractCompute();
+  return {
+    txMaxInstructions: compute.txMaxInstructions().toBigInt(),
+    feeRatePerInstructionsIncrement: compute.feeRatePerInstructionsIncrement().toBigInt(),
+  };
+}
+
+/**
+ * @internal Raises the declared Soroban resource fee by
+ * ceil(resourceFee * headroom) and the total fee by the same amount, so the
+ * inclusion fee is unchanged. The increase is capped so the total fee stays
+ * within uint32. Transactions without Soroban data are returned as is.
+ */
+export function withResourceFeeHeadroom(
+  tx: Transaction,
+  headroom: number,
+  passphrase: string,
+): Transaction {
+  const envelope = tx.toEnvelope();
+  const body = envelope.v1().tx();
+  if (headroom === 0 || body.ext().switch() !== 1) return tx;
+  const sorobanData = body.ext().sorobanData();
+  const resourceFee = sorobanData.resourceFee().toBigInt();
+  const room = UINT32_MAX - BigInt(body.fee());
+  const wanted = Number(resourceFee) * headroom;
+  const extra = wanted >= Number(room) ? room : BigInt(Math.ceil(wanted));
+  if (extra === 0n) return tx;
+  sorobanData.resourceFee(xdr.Int64.fromString((resourceFee + extra).toString()));
+  body.fee(Number(BigInt(body.fee()) + extra));
+  return new Transaction(envelope, passphrase);
+}
 
 export interface ConfirmedTx {
   txHash: string;
@@ -60,9 +188,37 @@ export class SubmitEngine {
      * whose stale transactions should expire rather than execute).
      */
     private readonly timeoutSeconds: number | null = null,
-  ) {}
+    /**
+     * Fraction of the simulated resource fee added on top of it before
+     * signing; 0 disables. See DEFAULT_RESOURCE_FEE_HEADROOM.
+     */
+    private readonly resourceFeeHeadroom: number = DEFAULT_RESOURCE_FEE_HEADROOM,
+    /**
+     * Fraction of the simulated CPU instructions added on top of them before
+     * signing; 0 disables. See DEFAULT_INSTRUCTION_HEADROOM.
+     */
+    private readonly instructionHeadroom: number = DEFAULT_INSTRUCTION_HEADROOM,
+  ) {
+    validateHeadroom(resourceFeeHeadroom, "resourceFeeHeadroom");
+    validateHeadroom(instructionHeadroom, "instructionHeadroom");
+  }
 
   private readonly simulationAccounts = new Map<string, Promise<Account>>();
+
+  private networkComputeCache?: { fetchedAt: number; value: Promise<NetworkCompute> };
+
+  private networkCompute(): Promise<NetworkCompute> {
+    const now = Date.now();
+    const cached = this.networkComputeCache;
+    if (cached && now - cached.fetchedAt < NETWORK_COMPUTE_TTL_MS) return cached.value;
+    const value = fetchNetworkCompute(this.server).catch((error: unknown) => {
+      // a failed fetch must not poison later transactions
+      if (this.networkComputeCache?.value === value) this.networkComputeCache = undefined;
+      throw error;
+    });
+    this.networkComputeCache = { fetchedAt: now, value };
+    return value;
+  }
 
   async buildTransaction(source: string, operation: xdr.Operation): Promise<Transaction> {
     return this.build(await this.server.getAccount(source), operation);
@@ -137,10 +293,21 @@ export class SubmitEngine {
     // Supply only client auth, including an intentionally empty list, and
     // retain the original operation byte-for-byte in the prepared envelope.
     const auth = operation().body().invokeHostFunctionOp().auth();
-    return rpc.assembleTransaction(tx, {
+    let assembled = rpc.assembleTransaction(tx, {
       ...simulation,
       result: { ...simulation.result, auth },
     }).clearOperations().addOperation(operation()).build();
+    // Instructions first: their compute fee is part of the resource fee that
+    // the fee headroom then scales.
+    if (this.instructionHeadroom !== 0) {
+      assembled = withInstructionHeadroom(
+        assembled,
+        this.instructionHeadroom,
+        await this.networkCompute(),
+        this.passphrase,
+      );
+    }
+    return withResourceFeeHeadroom(assembled, this.resourceFeeHeadroom, this.passphrase);
   }
 
   private async restore(
@@ -149,16 +316,22 @@ export class SubmitEngine {
     signer: Signer,
   ): Promise<void> {
     const account = await this.server.getAccount(source);
-    const fee =
-      parseInt(this.baseFee, 10) + parseInt(simulation.restorePreamble.minResourceFee, 10);
-    const restoreTx = new TransactionBuilder(account, {
-      fee: fee.toString(),
-      networkPassphrase: this.passphrase,
-    })
-      .setSorobanData(simulation.restorePreamble.transactionData.build())
-      .addOperation(Operation.restoreFootprint({}))
-      .setTimeout(TimeoutInfinite)
+    // The builder adds the Soroban resource fee to the inclusion fee.
+    const sorobanData = new SorobanDataBuilder(simulation.restorePreamble.transactionData.build())
+      .setResourceFee(simulation.restorePreamble.minResourceFee)
       .build();
+    const restoreTx = withResourceFeeHeadroom(
+      new TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.passphrase,
+      })
+        .setSorobanData(sorobanData)
+        .addOperation(Operation.restoreFootprint({}))
+        .setTimeout(TimeoutInfinite)
+        .build(),
+      this.resourceFeeHeadroom,
+      this.passphrase,
+    );
     const signed = await signTransaction(signer, restoreTx, this.passphrase);
     await this.submit(signed);
   }

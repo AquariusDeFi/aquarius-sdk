@@ -42,6 +42,26 @@ Only account absence is retried; a readiness timeout does not mean funding faile
 on-chain failure without recognized diagnostics raises `AquariusError` with the
 transaction hash; inspect that transaction before deciding whether to retry.
 
+Soroban transactions declare the simulated resource fee plus a headroom —
+`resource_fee_headroom` / `resourceFeeHeadroom`, default `0.5` (+50%), `0`
+disables. The declared resource fee is a cap and the unused part is refunded,
+so the headroom costs nothing unless state changes between simulation and
+apply make the transaction need it. The source account must still hold the
+full declared fee (inclusion + resource + headroom): it is debited before
+execution and the unused part refunded after apply, so leave that margin when
+spending the whole XLM balance. Re-preparing the XDR from
+`build_transaction()` / `buildTransaction()` with stellar-sdk's own
+`prepare_transaction` / `prepareTransaction` drops the headroom.
+
+They also declare the simulated CPU instructions plus a headroom —
+`instruction_headroom` / `instructionHeadroom`, default `0.25` (+25%), `0`
+disables — capped at the network's per-transaction limit. The declared count is
+a hard limit (a transaction that needs more fails on-chain with
+`INVOKE_HOST_FUNCTION_RESOURCE_LIMIT_EXCEEDED`), and the resource fee is raised
+by the non-refundable compute fee of the added instructions, which is charged
+whether or not they are used (under 0.0001 XLM for a typical swap at current
+mainnet rates).
+
 ## Design principles
 
 1. **Two-phase everything.** `quote()` → `Quote.execute()`. UIs show before they commit; the quote object carries everything needed to execute, so what you quoted is what you execute.
