@@ -123,10 +123,10 @@ async function prepareWith(headroom, simulations = [success], instructionHeadroo
 }
 
 const resourceFeeOf = tx =>
-  Number(tx.toEnvelope().v1().tx().ext().sorobanData().resourceFee().toBigInt());
+  Number(tx.toEnvelope().v1.tx.ext.sorobanData.resourceFee);
 
 const instructionsOf = tx =>
-  tx.toEnvelope().v1().tx().ext().sorobanData().resources().instructions();
+  tx.toEnvelope().v1.tx.ext.sorobanData.resources.instructions;
 
 test("default headroom raises the resource fee and the total fee by 50%", async () => {
   const { tx } = await prepareWith(undefined);
@@ -180,7 +180,7 @@ test("the restore transaction gets the same headroom on its minimum resource fee
   const extra = Math.ceil(restoreFee * 0.5); // 10_001
   assert.equal(resourceFeeOf(restore), restoreFee + extra);
   assert.equal(Number(restore.fee), BASE_FEE + restoreFee + extra);
-  assert.ok(KEYPAIR.verify(restore.hash(), restore.signatures[0].signature())); // signed final fee
+  assert.ok(KEYPAIR.verify(restore.hash(), restore.signatures[0].signature)); // signed final fee
 
   assert.equal(resourceFeeOf(tx), RESOURCE_FEE + Math.ceil(RESOURCE_FEE * 0.5));
 });
@@ -193,7 +193,7 @@ test("the signed envelope carries the raised fee", async () => {
   const signed = server.submitted[0];
   assert.equal(signed.fee, tx.fee);
   assert.equal(resourceFeeOf(signed), resourceFeeOf(tx));
-  assert.ok(KEYPAIR.verify(signed.hash(), signed.signatures[0].signature()));
+  assert.ok(KEYPAIR.verify(signed.hash(), signed.signatures[0].signature));
 });
 
 test("headroom is capped so the total fee fits in uint32", async () => {
@@ -303,7 +303,7 @@ test("signed envelopes and unsigned XDR carry the raised instructions", async ()
     const signed = server.submitted[0];
     assert.equal(instructionsOf(signed), declared);
     assert.equal(resourceFeeOf(signed), resourceFeeOf(tx));
-    assert.ok(KEYPAIR.verify(signed.hash(), signed.signatures[0].signature()));
+    assert.ok(KEYPAIR.verify(signed.hash(), signed.signatures[0].signature));
   }
   assert.equal(instructionsOf(seen), declared);
 });

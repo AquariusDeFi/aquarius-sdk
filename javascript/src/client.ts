@@ -1,18 +1,23 @@
 import { Buffer } from "buffer";
 
-import { Address, Asset as StellarAsset, Operation, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
+import { Address, Asset as StellarAsset, Keypair, Operation, Transaction, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 
-import { ApiClient, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
+import { ApiClient, FindPathResponse, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
+import { BatchCall, batchArgs, batchOperation, batchResults, isBudgetExceeded } from "./batch.js";
+import { snapTick, tickFromPrice, tickSpacingForFee } from "./concentrated.js";
 import { AquariusError, SlippageError } from "./errors.js";
 import { CollectorContext, FeeCollector } from "./collector.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
+  DepositAmounts,
   Pool,
+  PoolType,
   Position,
   parsePoolMeta,
   parsePoolsMap,
+  resolveAmounts,
   sortTokenIds,
 } from "./pool.js";
 import { Signer } from "./signer.js";
@@ -25,6 +30,12 @@ export interface AquariusConfig {
   rpcUrl?: string;
   horizonUrl?: string;
   apiUrl?: string;
+  /**
+   * Contract address overrides — a staging deployment on the same network,
+   * for instance, is the network's preset with another router (and usually
+   * another `apiUrl`). Unspecified addresses keep the preset's values.
+   */
+  contracts?: Partial<Pick<NetworkConfig, "router" | "batch" | "collectorFactory">>;
   /** Inclusion fee bid in stroops. Default 100000 (0.01 XLM). */
   baseFee?: string;
   /**
@@ -80,6 +91,15 @@ export type QuoteParams = {
   providerFee?: ProviderFeeConfig;
 } & ({ amountIn: bigint; amountOut?: never } | { amountOut: bigint; amountIn?: never });
 
+export interface SwapOptions {
+  /**
+   * Add the trustline for the output asset in the same transaction, through
+   * the batch contract — one signature, one fee. Only for classic assets the
+   * signer does not hold yet and whose issuer does not require authorization.
+   */
+  addTrustline?: boolean;
+}
+
 export interface Quote {
   amountIn: bigint;
   amountOut: bigint;
@@ -89,9 +109,50 @@ export interface Quote {
   route: string[];
   isExactInput: boolean;
   /** Build, sign, submit, confirm, and parse the swap this quote describes. */
-  execute(): Promise<Receipt>;
+  execute(options?: SwapOptions): Promise<Receipt>;
   /** Escape hatch: the simulated, unsigned transaction envelope XDR — sign it anywhere. */
-  buildTransaction(): Promise<string>;
+  buildTransaction(options?: SwapOptions): Promise<string>;
+}
+
+/** What creating a pool costs: paid in `token` to `destination`, per pool type. */
+export interface PoolCreationFee {
+  token: string;
+  destination: string;
+  volatile: bigint;
+  stable: bigint;
+  concentrated: bigint;
+}
+
+export type CreatePoolParams = {
+  tokens: Asset[];
+  /** Pool fee in basis points (10 = 0.1%). */
+  feeBps: number;
+  /** The first deposit — a pool is never created empty. */
+  amounts: DepositAmounts;
+  /** Refuse a creation fee that differs from the one the user reviewed. */
+  expectedCreationFee?: { token: string; destination: string; amount: bigint };
+  /** Fraction of the simulated shares/liquidity to tolerate losing. Default 0.01 (1%). */
+  slippage?: number;
+} & (
+  | { type: "volatile" | "stable" }
+  | {
+      type: "concentrated";
+      tickRange?: [number, number];
+      priceRange?: [number | string, number | string];
+    }
+);
+
+export interface CreatePoolResult {
+  txHash: string;
+  pool: Pool;
+}
+
+export type ClaimKind = "rewards" | "incentives" | "positionFees";
+
+export interface IncentivesConfig {
+  minDurationSeconds: bigint;
+  /** Minimum reward per day, in the reward token's base units. */
+  minDailyAmount: bigint;
 }
 
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
@@ -162,6 +223,9 @@ export class AquariusClient {
       rpcUrl: config.rpcUrl ?? preset.rpcUrl,
       horizonUrl: config.horizonUrl ?? preset.horizonUrl,
       apiUrl: config.apiUrl ?? preset.apiUrl,
+      router: config.contracts?.router ?? preset.router,
+      batch: config.contracts?.batch ?? preset.batch,
+      collectorFactory: config.contracts?.collectorFactory ?? preset.collectorFactory,
     };
     this.api = new ApiClient(this.network.apiUrl);
     this.server = new rpc.Server(this.network.rpcUrl);
@@ -195,7 +259,6 @@ export class AquariusClient {
     }
     const exactInput = params.amountIn !== undefined;
     if (params.providerFee) validateProviderFee(params.providerFee);
-    const slippageBps = Math.round((params.slippage ?? 0.01) * 10_000);
     const tokenIn = params.from.contractId(this.network.passphrase);
     const tokenOut = params.to.contractId(this.network.passphrase);
     const requestedAmount = exactInput ? params.amountIn! : params.amountOut!;
@@ -211,6 +274,30 @@ export class AquariusClient {
       },
       exactInput,
     );
+    return this.quoteFromPath(params, response);
+  }
+
+  /** Build a quote from a previously fetched find-path response, preserving the reviewed route. */
+  quoteFromPath(params: QuoteParams, response: FindPathResponse): Quote {
+    params = {
+      ...params,
+      providerFee: params.providerFee ? Object.freeze({ ...params.providerFee }) : undefined,
+    } as QuoteParams;
+    if ((params.amountIn === undefined) === (params.amountOut === undefined)) {
+      throw new AquariusError("Pass exactly one of amountIn / amountOut");
+    }
+    if (params.providerFee) validateProviderFee(params.providerFee);
+    const slippage = params.slippage ?? 0.01;
+    if (!Number.isFinite(slippage) || slippage < 0 || slippage >= 1) {
+      throw new AquariusError("slippage must be a finite fraction in [0, 1)");
+    }
+    const slippageBps = Math.round(slippage * 10_000);
+    const exactInput = params.amountIn !== undefined;
+    const tokenIn = params.from.contractId(this.network.passphrase);
+    const requestedAmount = exactInput ? params.amountIn! : params.amountOut!;
+    const routeAmount = params.providerFee && !exactInput
+      ? grossBeforeProviderFee(requestedAmount, params.providerFee)
+      : requestedAmount;
     const parsed = parseFindPathResponse(response, {
       amountIn: params.amountIn,
       amountOut: exactInput ? undefined : routeAmount,
@@ -287,7 +374,7 @@ export class AquariusClient {
     const confirmed = await this.submitContract(factory, "deploy_swap_fee_contract", args, [
       sourceAccountEntry(authorizedInvocation(factory, "deploy_swap_fee_contract", args)),
     ]);
-    const address = Address.fromScAddress(confirmed.returnValue!.address()).toString();
+    const address = scValToNative(confirmed.returnValue!) as string;
     return new FeeCollector(address, this.collectorContext());
   }
 
@@ -369,7 +456,7 @@ export class AquariusClient {
     // transaction client. getAccount masks RPC errors as account absence.
     const server = new rpc.Server(this.network.rpcUrl);
     const key = xdr.LedgerKey.account(new xdr.LedgerKeyAccount({
-      accountId: new Address(publicKey).toScAddress().accountId(),
+      accountId: Keypair.fromPublicKey(publicKey).xdrAccountId(),
     }));
     while (true) {
       const response = await fetch(`${this.network.horizonUrl}/accounts/${publicKey}`, {
@@ -439,6 +526,298 @@ export class AquariusClient {
         (x, y) => (order[x.type] ?? 3) - (order[y.type] ?? 3) || x.feeBps - y.feeBps,
       );
     },
+
+    /**
+     * One pool by its contract address — for callers that hold an address and
+     * not a pair (a pool page, a stored position). Resolved through the
+     * indexer, which supplies the tokens, hash, type and fee in one request.
+     *
+     * A pool the indexer has not picked up yet is not resolvable from an
+     * address alone: pass `tokens` (the pair, in any order) and it is
+     * discovered on-chain via get_pools instead.
+     */
+    byAddress: async (address: string, options?: { tokens: [Asset, Asset] }): Promise<Pool> => {
+      if (options) {
+        const pools = await this.pools.forPair(options.tokens[0], options.tokens[1]);
+        const pool = pools.find(p => p.address === address);
+        if (!pool) {
+          throw new AquariusError(`Pool ${address} is not one of the pools for this pair`);
+        }
+        return pool;
+      }
+      const [meta] = await this.api.poolsByAddresses([address]);
+      if (!meta) {
+        throw new AquariusError(
+          `Pool ${address} was not found. A pool that is not indexed yet needs its token pair — pass { tokens }.`,
+        );
+      }
+      return this.makePool(
+        Uint8Array.from(Buffer.from(meta.index, "hex")),
+        meta.address,
+        sortTokenIds(meta.tokens_addresses),
+        meta,
+      );
+    },
+
+    /**
+     * Create a pool and make its first deposit in one transaction. There is
+     * deliberately no way to create an empty pool: the creation fee, the
+     * pool init and the deposit are one atomic batch under one signature.
+     *
+     * Volatile and stable pools take `amounts` in sorted-token order (or as
+     * [asset, amount] pairs). A concentrated pool also needs the range —
+     * `tickRange` or `priceRange` — snapped to the fee tier's tick spacing.
+     * The minimum shares/liquidity comes from simulating the entire batch,
+     * reduced by slippage, including when init resolves an existing pool.
+     */
+    create: async (params: CreatePoolParams): Promise<CreatePoolResult> => {
+      const plan = await this.createPoolPlan(params);
+      const confirmed = await this.submitBatch(plan.calls, plan.auth, true);
+      return { txHash: confirmed.txHash, pool: plan.pool };
+    },
+
+    /** The same creation, prepared but not signed: envelope XDR plus the pool it will create. */
+    buildCreate: async (
+      params: CreatePoolParams,
+    ): Promise<{ xdr: string; pool: Pool }> => {
+      const plan = await this.createPoolPlan(params);
+      return { xdr: await this.buildBatch(plan.calls, plan.auth, true), pool: plan.pool };
+    },
+  };
+
+  /** What creating a pool costs right now — one simulation for all five values. */
+  async poolCreationFee(): Promise<PoolCreationFee> {
+    const router = this.network.router;
+    const [token, volatile, stable, concentrated, destination] = await this.readBatch([
+      { contractId: router, fn: "get_init_pool_payment_token", args: [] },
+      { contractId: router, fn: "get_standard_pool_payment_amount", args: [] },
+      { contractId: router, fn: "get_stable_pool_payment_amount", args: [] },
+      { contractId: router, fn: "get_conc_pool_payment_amount", args: [] },
+      { contractId: router, fn: "get_init_pool_payment_address", args: [] },
+    ]);
+    const stableFee = BigInt(scValToNative(stable) as bigint);
+    return {
+      token: scValToNative(token) as string,
+      destination: scValToNative(destination) as string,
+      volatile: BigInt(scValToNative(volatile) as bigint),
+      stable: stableFee,
+      concentrated: BigInt(scValToNative(concentrated) as bigint),
+    };
+  }
+
+  private async createPoolPlan(params: CreatePoolParams): Promise<{
+    calls: BatchCall[];
+    auth: xdr.SorobanAuthorizedInvocation[];
+    pool: Pool;
+  }> {
+    const user = this.requireSigner().publicKey();
+    const passphrase = this.network.passphrase;
+    const slippage = params.slippage ?? 0.01;
+    if (!Number.isFinite(slippage) || slippage < 0 || slippage >= 1) {
+      throw new AquariusError("slippage must be a finite fraction in [0, 1)");
+    }
+    if (params.type === "stable" ? params.tokens.length < 2 : params.tokens.length !== 2) {
+      throw new AquariusError(
+        params.type === "stable"
+          ? "A stable pool needs at least two tokens"
+          : `A ${params.type} pool takes exactly two tokens`,
+      );
+    }
+    const tokens = sortTokenIds(params.tokens.map(t => t.contractId(passphrase)));
+    const desired = resolveAmounts(params.amounts, tokens, passphrase);
+    if (desired.every(a => a === 0n)) {
+      throw new AquariusError("A pool is created with its first deposit — pass non-zero amounts");
+    }
+
+    // 1. the init call, paying the creation fee
+    const fee = await this.poolCreationFee();
+    const initFn = {
+      volatile: "init_standard_pool",
+      stable: "init_stableswap_pool",
+      concentrated: "init_concentrated_pool",
+    }[params.type];
+    const feeAmount = fee[params.type];
+    const expected = params.expectedCreationFee;
+    if (expected && (expected.token !== fee.token || expected.destination !== fee.destination || expected.amount !== feeAmount)) {
+      throw new AquariusError("Pool creation fee changed. Review the fee and try again.");
+    }
+    const initArgs = [
+      new Address(user).toScVal(),
+      xdr.ScVal.scvVec(tokens.map(t => new Address(t).toScVal())),
+      nativeToScVal(params.feeBps, { type: "u32" }),
+    ];
+    const initRoot = authorizedInvocation(this.network.router, initFn, initArgs, [
+      authorizedInvocation(fee.token, "transfer", [
+        new Address(user).toScVal(),
+        new Address(fee.destination).toScVal(),
+        nativeToScVal(feeAmount, { type: "i128" }),
+      ]),
+    ]);
+
+    // 2. the address the pool will get: simulate the init on its own
+    const created = scValToNative(
+      await this.engine.read(
+        user,
+        () =>
+          Operation.invokeContractFunction({
+            contract: this.network.router,
+            function: initFn,
+            args: initArgs,
+            auth: [sourceAccountEntry(initRoot)],
+          }),
+      ),
+    ) as [Uint8Array, string];
+    if (!Array.isArray(created) || typeof created[1] !== "string") {
+      throw new AquariusError("Could not resolve the address of the pool to be created");
+    }
+    const [poolHash, poolAddress] = created;
+
+    // 3. the first deposit into that address. Stable and concentrated pools
+    // skip zero transfers; constant-product pools call transfer even for zero.
+    const transfers = tokens.flatMap((token, i) =>
+      params.type !== "volatile" && desired[i] === 0n ? [] : [
+        authorizedInvocation(token, "transfer", [
+          new Address(user).toScVal(),
+          new Address(poolAddress).toScVal(),
+          nativeToScVal(desired[i], { type: "i128" }),
+        ]),
+      ],
+    );
+    let depositFn: string;
+    let depositArgs: xdr.ScVal[];
+    if (params.type === "concentrated") {
+      const spacing = tickSpacingForFee(params.feeBps);
+      let range = params.tickRange;
+      if (!range) {
+        if (!params.priceRange) {
+          throw new AquariusError("A concentrated pool needs tickRange or priceRange");
+        }
+        range = [
+          snapTick(tickFromPrice(params.priceRange[0]), spacing),
+          snapTick(tickFromPrice(params.priceRange[1]), spacing, { up: true }),
+        ];
+      }
+      if (range[0] >= range[1]) {
+        throw new AquariusError("tickLower must be below tickUpper");
+      }
+      depositFn = "deposit_position";
+      depositArgs = [
+        new Address(user).toScVal(),
+        xdr.ScVal.scvI32(range[0]),
+        xdr.ScVal.scvI32(range[1]),
+        xdr.ScVal.scvVec(desired.map(a => nativeToScVal(a, { type: "u128" }))),
+        nativeToScVal(1n, { type: "u128" }),
+      ];
+    } else {
+      depositFn = "deposit";
+      depositArgs = [
+        new Address(user).toScVal(),
+        xdr.ScVal.scvVec(desired.map(a => nativeToScVal(a, { type: "u128" }))),
+        nativeToScVal(1n, { type: "u128" }),
+      ];
+    }
+
+    const pool = this.newPool(
+      poolAddress,
+      Uint8Array.from(poolHash),
+      params.type,
+      params.feeBps,
+      tokens,
+      [],
+    );
+    const planFor = (minimum: bigint) => {
+      const args = [...depositArgs.slice(0, -1), nativeToScVal(minimum, { type: "u128" })];
+      return {
+        calls: [
+          { contractId: this.network.router, fn: initFn, args: initArgs },
+          { contractId: poolAddress, fn: depositFn, args },
+        ],
+        auth: [initRoot, authorizedInvocation(poolAddress, depositFn, args, transfers)],
+        pool,
+      };
+    };
+
+    // A standalone estimator cannot read a pool that init has not deployed
+    // yet. Simulate both calls atomically, then bind the wallet's auth tree
+    // to the guarded deposit. Init can also resolve an existing pool.
+    const preview = planFor(1n);
+    const result = await this.engine.read(user, () =>
+      batchOperation(this.network.batch, user, preview.calls, preview.auth, true),
+    );
+    const deposit = scValToNative(batchResults(result, 2)[1]) as unknown;
+    if (
+      !Array.isArray(deposit) || deposit.length !== 2 ||
+      typeof deposit[1] !== "bigint" || deposit[1] <= 0n
+    ) {
+      throw new AquariusError("Pool creation simulation returned no positive shares/liquidity");
+    }
+    const factor = BigInt(Math.round((1 - slippage) * 10_000));
+    const minimum = (deposit[1] * factor) / 10_000n;
+    return planFor(minimum > 0n ? minimum : 1n);
+  }
+
+  // -- claims across pools -------------------------------------------------------------
+
+  /**
+   * Claim from several pools under one signature: AQUA rewards, gauge
+   * incentives and concentrated position fees, in any mix.
+   */
+  async claim(items: Array<{ pool: Pool; kind: ClaimKind }>): Promise<{ txHash: string }> {
+    const { calls, auth } = this.claimPlan(items);
+    const confirmed = await this.submitBatch(calls, auth, false);
+    return { txHash: confirmed.txHash };
+  }
+
+  /** The same multi-pool claim, prepared but not signed. */
+  buildClaim(items: Array<{ pool: Pool; kind: ClaimKind }>): Promise<string> {
+    const { calls, auth } = this.claimPlan(items);
+    return this.buildBatch(calls, auth, false);
+  }
+
+  private claimPlan(items: Array<{ pool: Pool; kind: ClaimKind }>): {
+    calls: BatchCall[];
+    auth: xdr.SorobanAuthorizedInvocation[];
+  } {
+    if (items.length === 0) throw new AquariusError("Nothing to claim");
+    const user = new Address(this.requireSigner().publicKey()).toScVal();
+    const fnFor: Record<ClaimKind, string> = {
+      rewards: "claim",
+      incentives: "gauges_claim",
+      positionFees: "claim_all_position_fees",
+    };
+    const calls = items.map(({ pool, kind }) => ({
+      contractId: pool.address,
+      fn: fnFor[kind],
+      args: [user],
+    }));
+    return { calls, auth: calls.map(c => authorizedInvocation(c.contractId, c.fn, c.args)) };
+  }
+
+  // -- incentives ------------------------------------------------------------------------
+
+  readonly incentives = {
+    /** Router-wide limits for scheduling a gauge incentive. */
+    config: async (): Promise<IncentivesConfig> => {
+      const router = this.network.router;
+      const [duration, daily] = await this.readBatch([
+        { contractId: router, fn: "pool_gauge_get_min_duration", args: [] },
+        { contractId: router, fn: "pool_gauge_get_min_daily_amount", args: [] },
+      ]);
+      return {
+        minDurationSeconds: BigInt(scValToNative(duration) as bigint),
+        minDailyAmount: BigInt(scValToNative(daily) as bigint),
+      };
+    },
+  };
+
+  // -- batch reads ------------------------------------------------------------------------
+
+  readonly batch = {
+    /**
+     * Many contract reads in one simulation, results in call order. A batch
+     * that overflows the simulation budget is split in halves until it fits.
+     */
+    read: (calls: BatchCall[]): Promise<xdr.ScVal[]> => this.readBatch(calls),
   };
 
   /**
@@ -489,15 +868,34 @@ export class AquariusClient {
         tokens_str: [],
       });
     }
-    return new Pool(address, poolHash, parsed.type, parsed.feeBps, [...tokens], parsed.labels, {
+    return this.newPool(address, poolHash, parsed.type, parsed.feeBps, tokens, parsed.labels);
+  }
+
+  private newPool(
+    address: string,
+    poolHash: Uint8Array,
+    type: PoolType,
+    feeBps: number,
+    tokens: string[],
+    labels: string[],
+  ): Pool {
+    const { code, issuer } = this.network.rewardToken;
+    return new Pool(address, poolHash, type, feeBps, [...tokens], labels, {
       passphrase: this.network.passphrase,
       router: this.network.router,
+      rewardToken: Asset.classic(code, issuer).contractId(this.network.passphrase),
       readSource: (requireSigner?: boolean) => this.readSource(requireSigner),
       readRouter: (fn, args) => this.readRouter(fn, args),
       readContract: (contractId, fn, args) => this.readContract(contractId, fn, args),
+      readBatch: calls => this.readBatch(calls),
       submitRouter: (fn, args, auth) => this.submitRouter(fn, args, auth),
       submitContract: (contractId, fn, args, auth) =>
         this.submitContract(contractId, fn, args, auth),
+      submitBatch: (calls, auth, returnResults) => this.submitBatch(calls, auth, returnResults),
+      buildRouter: (fn, args, auth) => this.buildRouter(fn, args, auth),
+      buildContract: (contractId, fn, args, auth) =>
+        this.buildContract(contractId, fn, args, auth),
+      buildBatch: (calls, auth, returnResults) => this.buildBatch(calls, auth, returnResults),
     });
   }
 
@@ -519,7 +917,6 @@ export class AquariusClient {
     return this.engine.read(
       this.readSource(),
       () => Operation.invokeContractFunction({ contract: contractId, function: fn, args }),
-      this.signer,
     );
   }
 
@@ -537,16 +934,104 @@ export class AquariusClient {
     args: xdr.ScVal[],
     auth: xdr.SorobanAuthorizationEntry[],
   ): Promise<ConfirmedTx> {
+    const tx = await this.prepareContract(contractId, fn, args, auth, this.requireSigner());
+    return this.engine.signAndSubmit(tx, this.requireSigner());
+  }
+
+  /**
+   * Simulate and assemble a contract call without signing it. The seam the
+   * build* escape hatches sit on. Only submitting paths pass a restore
+   * signer; builds report RestoreRequiredError with an unsigned restore.
+   */
+  private async prepareContract(
+    contractId: string,
+    fn: string,
+    args: xdr.ScVal[],
+    auth: xdr.SorobanAuthorizationEntry[],
+    restoreSigner?: Signer,
+  ): Promise<Transaction> {
     if (!Array.isArray(auth)) {
       throw new AquariusError("An explicit auth array is required; use [] for a call without authorization");
     }
     const signer = this.requireSigner();
-    const tx = await this.engine.prepare(
+    return this.engine.prepare(
       signer.publicKey(),
       () => Operation.invokeContractFunction({ contract: contractId, function: fn, args, auth }),
-      signer,
+      restoreSigner,
     );
-    return this.engine.signAndSubmit(tx, signer);
+  }
+
+  private async buildContract(
+    contractId: string,
+    fn: string,
+    args: xdr.ScVal[],
+    auth: xdr.SorobanAuthorizationEntry[],
+  ): Promise<string> {
+    return (await this.prepareContract(contractId, fn, args, auth)).toXDR();
+  }
+
+  private buildRouter(
+    fn: string,
+    args: xdr.ScVal[],
+    auth: xdr.SorobanAuthorizationEntry[],
+  ): Promise<string> {
+    return this.buildContract(this.network.router, fn, args, auth);
+  }
+
+  private prepareBatch(
+    calls: BatchCall[],
+    auth: xdr.SorobanAuthorizedInvocation[],
+    returnResults: boolean,
+    restoreSigner?: Signer,
+  ): Promise<Transaction> {
+    const signer = this.requireSigner();
+    return this.engine.prepare(
+      signer.publicKey(),
+      () => batchOperation(this.network.batch, signer.publicKey(), calls, auth, returnResults),
+      restoreSigner,
+    );
+  }
+
+  private async submitBatch(
+    calls: BatchCall[],
+    auth: xdr.SorobanAuthorizedInvocation[],
+    returnResults: boolean,
+  ): Promise<ConfirmedTx> {
+    const tx = await this.prepareBatch(calls, auth, returnResults, this.requireSigner());
+    return this.engine.signAndSubmit(tx, this.requireSigner());
+  }
+
+  private async buildBatch(
+    calls: BatchCall[],
+    auth: xdr.SorobanAuthorizedInvocation[],
+    returnResults: boolean,
+  ): Promise<string> {
+    return (await this.prepareBatch(calls, auth, returnResults)).toXDR();
+  }
+
+  private async readBatch(calls: BatchCall[]): Promise<xdr.ScVal[]> {
+    if (calls.length === 0) return [];
+    const source = this.readSource();
+    try {
+      const retval = await this.engine.read(
+        source,
+        () =>
+          Operation.invokeContractFunction({
+            contract: this.network.batch,
+            function: "batch",
+            args: batchArgs(source, calls, true),
+          }),
+      );
+      return batchResults(retval, calls.length);
+    } catch (error) {
+      if (!isBudgetExceeded(error) || calls.length < 2) throw error;
+      const mid = Math.ceil(calls.length / 2);
+      const [left, right] = await Promise.all([
+        this.readBatch(calls.slice(0, mid)),
+        this.readBatch(calls.slice(mid)),
+      ]);
+      return [...left, ...right];
+    }
   }
 
   // -- internals ---------------------------------------------------------------------
@@ -557,12 +1042,27 @@ export class AquariusClient {
     tokenIn: string,
     originalParams: QuoteParams,
   ): Quote {
-    const buildOperation = () => this.buildSwapOperation(
-      parsed,
-      exactInput,
-      tokenIn,
-      originalParams.providerFee,
-    );
+    const buildOperation = (options?: SwapOptions) => {
+      if (!options?.addTrustline) {
+        return this.buildSwapOperation(parsed, exactInput, tokenIn, originalParams.providerFee);
+      }
+      // trust + swap atomically: the batch authorizes both, the swap keeps
+      // its own bounded transfer underneath.
+      const plan = this.swapPlan(parsed, exactInput, tokenIn, originalParams.providerFee);
+      const user = this.requireSigner().publicKey();
+      const trustline = this.trustlineCall(originalParams.to, user);
+      return batchOperation(
+        this.network.batch,
+        user,
+        [trustline, { contractId: plan.contractId, fn: plan.fn, args: plan.args }],
+        [authorizedInvocation(trustline.contractId, trustline.fn, trustline.args), plan.root],
+        true,
+      );
+    };
+    const swapReturn = (retval: xdr.ScVal | undefined, options?: SwapOptions): bigint => {
+      const value = options?.addTrustline ? batchResults(retval, 2)[1] : retval!;
+      return BigInt(scValToNative(value) as bigint);
+    };
 
     const quote: Quote = {
       amountIn: parsed.amountIn,
@@ -571,18 +1071,22 @@ export class AquariusClient {
       route: parsed.route,
       isExactInput: exactInput,
 
-      buildTransaction: async () => {
+      buildTransaction: async (options?: SwapOptions) => {
         const source = this.requireSigner().publicKey();
-        const tx = await this.engine.prepare(source, buildOperation, this.signer);
+        const tx = await this.engine.prepare(source, () => buildOperation(options));
         return tx.toXDR();
       },
 
-      execute: async (): Promise<Receipt> => {
+      execute: async (options?: SwapOptions): Promise<Receipt> => {
         const signer = this.requireSigner();
         try {
-          const tx = await this.engine.prepare(signer.publicKey(), buildOperation, signer);
+          const tx = await this.engine.prepare(
+            signer.publicKey(),
+            () => buildOperation(options),
+            signer,
+          );
           const result = await this.engine.signAndSubmit(tx, signer);
-          const returned = BigInt(scValToNative(result.returnValue!) as bigint);
+          const returned = swapReturn(result.returnValue, options);
           return exactInput
             ? { txHash: result.txHash, amountIn: parsed.amountIn, amountOut: returned }
             : { txHash: result.txHash, amountIn: returned, amountOut: parsed.amountOut };
@@ -604,12 +1108,12 @@ export class AquariusClient {
    * strict-receive the authorized transfer is maxIn — the contract pulls the
    * maximum and refunds the difference.
    */
-  private buildSwapOperation(
+  private swapPlan(
     parsed: ParsedRoute,
     exactInput: boolean,
     tokenIn: string,
     providerFee?: ProviderFeeConfig,
-  ): xdr.Operation {
+  ): { contractId: string; fn: string; args: xdr.ScVal[]; root: xdr.SorobanAuthorizedInvocation } {
     const signer = this.requireSigner();
     const user = signer.publicKey();
     const contractId = providerFee?.contractId ?? this.network.router;
@@ -641,14 +1145,42 @@ export class AquariusClient {
       nativeToScVal(transferAmount, { type: "i128" }),
     ]);
 
-    return Operation.invokeContractFunction({
-      contract: contractId,
-      function: fn,
+    return {
+      contractId,
+      fn,
       args,
-      auth: [
-        sourceAccountEntry(authorizedInvocation(contractId, fn, args, [transferInvocation])),
-      ],
+      root: authorizedInvocation(contractId, fn, args, [transferInvocation]),
+    };
+  }
+
+  private buildSwapOperation(
+    parsed: ParsedRoute,
+    exactInput: boolean,
+    tokenIn: string,
+    providerFee?: ProviderFeeConfig,
+  ): xdr.Operation {
+    const plan = this.swapPlan(parsed, exactInput, tokenIn, providerFee);
+    return Operation.invokeContractFunction({
+      contract: plan.contractId,
+      function: plan.fn,
+      args: plan.args,
+      auth: [sourceAccountEntry(plan.root)],
     });
+  }
+
+  /** The `trust` call on a classic asset's contract — the SAC's trustline creator. */
+  private trustlineCall(asset: Asset, user: string): BatchCall {
+    if (asset.isNative || asset.code === undefined || asset.issuer === undefined) {
+      throw new AquariusError("Automatic trustlines are only available for classic assets");
+    }
+    if (asset.issuer === user) {
+      throw new AquariusError("An issuer needs no trustline for its own asset");
+    }
+    return {
+      contractId: asset.contractId(this.network.passphrase),
+      fn: "trust",
+      args: [new Address(user).toScVal()],
+    };
   }
 
   private async fetchHorizonAccount(
