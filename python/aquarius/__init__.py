@@ -36,7 +36,7 @@ from .errors import (
 from .networks import NETWORKS, NetworkConfig
 from .pool import ClaimResult, DepositResult, Pool, PoolQuote, Position, WithdrawResult
 
-__version__ = "0.5.0"
+__version__ = "0.6.0a1"
 
 __all__ = [
     "ApiClient",
