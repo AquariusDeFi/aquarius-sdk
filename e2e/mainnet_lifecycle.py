@@ -2,10 +2,10 @@
 
 Flow: swap 1 XLM -> AQUA, deposit 0.5 XLM + matching AQUA into the deep
 XLM/AQUA volatile pool, read the position back, withdraw; then the same
-shape on the concentrated pool (beta surface): sweep leftovers, open a
-range around the current tick, read it back, close; finally swap
-everything back to XLM. ~2 XLM in play, returned minus fees (typically
-< 0.05 XLM).
+shape on a concentrated pool (beta surface): sweep leftovers, open a
+range around the current tick between ticks other LPs already
+initialized, read it back, close; finally swap everything back to XLM.
+~2 XLM in play, returned minus fees (typically < 0.05 XLM).
 
 Requires MAINNET_E2E_SECRET in the environment — a dedicated, lightly funded
 account (>= 5 XLM spendable). Never run two instances concurrently: they
@@ -19,7 +19,7 @@ import sys
 import time
 
 import requests
-from stellar_sdk import Keypair
+from stellar_sdk import Keypair, scval
 
 from aquarius import AquariusClient, Asset, StaleSimulationError, XLM, snap_tick
 
@@ -27,9 +27,10 @@ AQUA = Asset.classic("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M
 EXPLORER = "https://stellar.expert/explorer/public/tx/"
 SWAP_XLM = 1_0000000
 DEPOSIT_XLM = 5000000
-# 0.6 XLM: the concentrated deposit initializes fresh tick entries most runs
-# (new persistent ledger entries), and that one transaction alone costs
-# ~0.32 XLM in resource fees; everything else totals well under 0.1.
+# 0.6 XLM: the costliest step is the concentrated deposit, ~0.17 XLM in
+# resource fees for the position's new persistent entry (its bounds reuse
+# initialized ticks, so no fresh tick storage); everything else totals well
+# under 0.1.
 MAX_ACCEPTABLE_LOSS = 6000000
 
 secret = os.environ.get("MAINNET_E2E_SECRET", "")
@@ -122,25 +123,64 @@ withdraw = retry_stale(lambda: pool.withdraw(deposit.shares))
 aqua_have += withdraw.amounts[1 - xlm_index]
 print(f"withdraw: {[fmt(a) for a in withdraw.amounts]}  {EXPLORER}{withdraw.tx_hash}")
 
-# --- concentrated lifecycle (beta surface) on the production pool -----------
-concentrated = next((p for p in pools if p.type == "concentrated"), None)
-if concentrated is None:
+# --- concentrated lifecycle (beta surface) on a production pool -------------
+def initialized_range(pool) -> tuple[int, int] | None:
+    """Bounds around the current tick that other LPs already initialized.
+
+    Ticks live in persistent 16-tick chunks that are never deleted; a bound
+    in an untouched chunk makes the deposit create, and pay rent for, new
+    tick storage, while a tick with liquidity_gross > 0 is in a live chunk.
+    Bounds keep a one-spacing margin from the current tick so the position
+    stays in range while the run executes. None when either side has no
+    initialized tick within 40 spacings.
+    """
+    spacing = pool.tick_spacing()
+    tick = pool.current_tick()
+    candidates = list(range(snap_tick(tick - 40 * spacing, spacing, up=True),
+                            tick + 40 * spacing + 1, spacing))
+    infos = pool._read_pool("get_ticks_batch", [
+        scval.to_vec([scval.to_int32(t) for t in candidates])
+    ])
+    initialized = [t for t, info in zip(candidates, infos) if int(info["liquidity_gross"]) > 0]
+    lowers = [t for t in initialized if t <= tick - spacing]
+    uppers = [t for t in initialized if t >= tick + spacing]
+    print(f"concentrated {pool.address} ({pool.fee_bps}bps): tick {tick}, spacing "
+          f"{spacing}, {len(initialized)} initialized ticks within 40 spacings")
+    if not lowers or not uppers:
+        return None
+    return (min(lowers, key=lambda t: abs(t - (tick - 10 * spacing))),
+            min(uppers, key=lambda t: abs(t - (tick + 10 * spacing))))
+
+
+concentrated_pools = [p for p in pools if p.type == "concentrated"]
+if not concentrated_pools:
     print("no concentrated XLM/AQUA pool on mainnet — concentrated segment skipped")
 else:
-    xlm_c = concentrated.tokens.index(XLM.contract_id(client.network.passphrase))
+    xlm_id = XLM.contract_id(client.network.passphrase)
 
     # Close positions a previous crashed run left behind (20-range cap; and
-    # the cleanup assert below only means something starting from zero).
-    for stale_lower, stale_upper in concentrated.position_ranges():
-        out = retry_stale(lambda lo=stale_lower, up=stale_upper:
-                          concentrated.withdraw_position(lo, up))
-        aqua_have += out.amounts[1 - xlm_c]
-        print(f"swept leftover position [{stale_lower}, {stale_upper})")
+    # the cleanup assert below only means something starting from zero), on
+    # every pool: the pool picked below can differ from run to run.
+    for swept in concentrated_pools:
+        for stale_lower, stale_upper in swept.position_ranges():
+            out = retry_stale(lambda p=swept, lo=stale_lower, up=stale_upper:
+                              p.withdraw_position(lo, up))
+            aqua_have += out.amounts[1 - swept.tokens.index(xlm_id)]
+            print(f"swept leftover position [{stale_lower}, {stale_upper}) "
+                  f"in {swept.address}")
 
-    spacing = concentrated.tick_spacing()
-    tick = concentrated.current_tick()
-    lower = snap_tick(tick - 10 * spacing, spacing)
-    upper = snap_tick(tick + 10 * spacing, spacing, up=True)
+    concentrated = None
+    for candidate in concentrated_pools:
+        bounds = initialized_range(candidate)
+        if bounds:
+            concentrated, (lower, upper) = candidate, bounds
+            break
+    assert concentrated is not None, (
+        "no concentrated XLM/AQUA pool has initialized ticks around the current price; "
+        "refusing to pay for fresh tick storage")
+    print(f"concentrated pool: {concentrated.address} ({concentrated.fee_bps}bps), "
+          f"range [{lower}, {upper}) on initialized ticks")
+    xlm_c = concentrated.tokens.index(xlm_id)
     c_reserves = concentrated.reserves()
     aqua_for_range = DEPOSIT_XLM * c_reserves[1 - xlm_c] // c_reserves[xlm_c]
 
