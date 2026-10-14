@@ -4,15 +4,16 @@
 // Flow: swap 1 XLM -> AQUA, pinned-pool swap, deposit 0.5 XLM + matching
 // AQUA into the deep XLM/AQUA volatile pool, read the position back,
 // withdraw; then the concentrated lifecycle (sweep leftovers, open a range
-// around the current tick, read it back, close); finally swap everything
-// back to XLM. Requires MAINNET_E2E_SECRET; runs after the Python
-// lifecycle in CI — both share the wallet, and each starts from the flat
-// state the other leaves behind (no AQUA, no positions).
+// around the current tick between ticks other LPs already initialized, read
+// it back, close); finally swap everything back to XLM. Requires
+// MAINNET_E2E_SECRET; runs after the Python lifecycle in CI — both share
+// the wallet, and each starts from the flat state the other leaves behind
+// (no AQUA, no positions).
 //
 // Run: MAINNET_E2E_SECRET=S... node javascript/e2e/mainnet_lifecycle.mjs
 import assert from "node:assert/strict";
 
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, xdr } from "@stellar/stellar-sdk";
 
 import {
   AquariusClient,
@@ -26,9 +27,10 @@ const AQUA = Asset.classic("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5P
 const EXPLORER = "https://stellar.expert/explorer/public/tx/";
 const SWAP_XLM = 10_000_000n;
 const DEPOSIT_XLM = 5_000_000n;
-// 0.6 XLM: the concentrated deposit initializes fresh tick entries most runs
-// (new persistent ledger entries) at ~0.32 XLM in resource fees; everything
-// else totals well under 0.1.
+// 0.6 XLM: the costliest step is the concentrated deposit, ~0.17 XLM in
+// resource fees for the position's new persistent entry (its bounds reuse
+// initialized ticks, so no fresh tick storage); everything else totals well
+// under 0.1.
 const MAX_ACCEPTABLE_LOSS = 6_000_000n;
 
 const secret = process.env.MAINNET_E2E_SECRET ?? "";
@@ -136,26 +138,66 @@ const withdraw = await retryStale(() => pool.withdraw({ shares: deposit.shares }
 aquaHave += withdraw.amounts[1 - xlmIndex];
 console.log(`withdraw: [${withdraw.amounts.map(fmt)}]  ${EXPLORER}${withdraw.txHash}`);
 
-// --- concentrated lifecycle (beta surface) on the production pool -----------
-const concentrated = pools.find(p => p.type === "concentrated");
-if (!concentrated) {
+// --- concentrated lifecycle (beta surface) on a production pool -------------
+// Bounds around the current tick that other LPs already initialized. Ticks
+// live in persistent 16-tick chunks that are never deleted; a bound in an
+// untouched chunk makes the deposit create, and pay rent for, new tick
+// storage, while a tick with liquidity_gross > 0 is in a live chunk. Bounds
+// keep a one-spacing margin from the current tick so the position stays in
+// range while the run executes. null when either side has no initialized
+// tick within 40 spacings. readPool is the pool's internal simulation read.
+async function initializedRange(pool) {
+  const spacing = await pool.tickSpacing();
+  const tick = await pool.currentTick();
+  const candidates = [];
+  const first = snapTick(tick - 40 * spacing, spacing, { up: true });
+  for (let t = first; t <= tick + 40 * spacing; t += spacing) candidates.push(t);
+  const infos = await pool.readPool("get_ticks_batch", [
+    xdr.ScVal.scvVec(candidates.map(t => xdr.ScVal.scvI32(t))),
+  ]);
+  const initialized = candidates.filter((t, i) => BigInt(infos[i].liquidity_gross) > 0n);
+  const lowers = initialized.filter(t => t <= tick - spacing);
+  const uppers = initialized.filter(t => t >= tick + spacing);
+  console.log(`concentrated ${pool.address} (${pool.feeBps}bps): tick ${tick}, spacing `
+    + `${spacing}, ${initialized.length} initialized ticks within 40 spacings`);
+  if (!lowers.length || !uppers.length) return null;
+  const closest = (ticks, target) => ticks.reduce((best, t) =>
+    (Math.abs(t - target) < Math.abs(best - target) ? t : best));
+  return [closest(lowers, tick - 10 * spacing), closest(uppers, tick + 10 * spacing)];
+}
+
+const concentratedPools = pools.filter(p => p.type === "concentrated");
+if (!concentratedPools.length) {
   console.log("no concentrated XLM/AQUA pool on mainnet — concentrated segment skipped");
 } else {
-  const xlmC = concentrated.tokens.indexOf(xlmContract);
-
   // Close positions a previous crashed run left behind (20-range cap; and
-  // the cleanup assert below only means something starting from zero).
-  for (const [staleLower, staleUpper] of await concentrated.positionRanges()) {
-    const out = await retryStale(() =>
-      concentrated.withdrawPosition({ tickLower: staleLower, tickUpper: staleUpper }));
-    aquaHave += out.amounts[1 - xlmC];
-    console.log(`swept leftover position [${staleLower}, ${staleUpper})`);
+  // the cleanup assert below only means something starting from zero), on
+  // every pool: the pool picked below can differ from run to run.
+  for (const swept of concentratedPools) {
+    for (const [staleLower, staleUpper] of await swept.positionRanges()) {
+      const out = await retryStale(() =>
+        swept.withdrawPosition({ tickLower: staleLower, tickUpper: staleUpper }));
+      aquaHave += out.amounts[1 - swept.tokens.indexOf(xlmContract)];
+      console.log(`swept leftover position [${staleLower}, ${staleUpper}) in ${swept.address}`);
+    }
   }
 
-  const spacing = await concentrated.tickSpacing();
-  const tick = await concentrated.currentTick();
-  const lower = snapTick(tick - 10 * spacing, spacing);
-  const upper = snapTick(tick + 10 * spacing, spacing, { up: true });
+  let concentrated;
+  let lower;
+  let upper;
+  for (const candidate of concentratedPools) {
+    const bounds = await initializedRange(candidate);
+    if (bounds) {
+      concentrated = candidate;
+      [lower, upper] = bounds;
+      break;
+    }
+  }
+  assert.ok(concentrated, "no concentrated XLM/AQUA pool has initialized ticks around the "
+    + "current price; refusing to pay for fresh tick storage");
+  console.log(`concentrated pool: ${concentrated.address} (${concentrated.feeBps}bps), `
+    + `range [${lower}, ${upper}) on initialized ticks`);
+  const xlmC = concentrated.tokens.indexOf(xlmContract);
   const cReserves = await concentrated.reserves();
   const aquaForRange = (DEPOSIT_XLM * cReserves[1 - xlmC]) / cReserves[xlmC];
   const rangeAqua = aquaForRange < aquaHave ? aquaForRange : aquaHave;
