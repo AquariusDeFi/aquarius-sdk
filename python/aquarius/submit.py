@@ -335,6 +335,10 @@ class SubmitEngine:
         ):
             raise AquariusError("Simulation returned no result")
 
+        return self._assemble(tx, simulation, expected_operations)
+
+    def _assemble(self, tx, simulation, expected_operations) -> TransactionEnvelope:
+        """Fill only resources and apply configured headroom to a fixed call."""
         # stellar-sdk fills an empty op.auth from simulation.results[].auth.
         # Strip that input even for an explicitly empty client list: RPC auth
         # must never become part of an envelope prepared for signing.

@@ -84,10 +84,13 @@ test("API HTTP failures raise typed errors and every request is time-bounded", a
     );
     await assert.rejects(api.poolsByAddresses(["CPOOL"]), AquariusError);
     await assert.rejects(api.userPools("GUSER"), AquariusError);
+    await assert.rejects(api.createLimitOrderDraft("https://api.invalid/orders", {}), AquariusError);
+    await assert.rejects(api.listLimitOrders("https://api.invalid/orders", {}), AquariusError);
+    await assert.rejects(api.getLimitOrder("https://api.invalid/orders", "order-id"), AquariusError);
   } finally {
     globalThis.fetch = realFetch;
   }
-  assert.equal(signals.length, 3);
+  assert.equal(signals.length, 6);
   assert.ok(signals.every(s => s instanceof AbortSignal));
 });
 
@@ -295,7 +298,7 @@ test("unsigned quote XDR enforces client auth and excludes authorization returne
   const { Account, Keypair, SorobanDataBuilder, Transaction, xdr } = await import("@stellar/stellar-sdk");
   const { authorizedInvocation, sourceAccountEntry } = await import("../dist/index.js");
   const signer = Keypair.random();
-  const client = new AquariusClient({ network: "testnet", signer });
+  const client = new AquariusClient({ network: "testnet", signer, instructionHeadroom: 0 });
   client.api.findPath = async () => fixture;
   client.server.getAccount = async source => new Account(source, "100");
   let simulatedOperation;

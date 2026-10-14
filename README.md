@@ -4,6 +4,8 @@ Official SDKs for building on [Aquarius](https://aqua.network) — swaps, liquid
 
 **Status: 0.5.x.** Swaps (quote → execute in both modes) and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are complete in both languages, each verified end to end with real testnet transactions. Concentrated liquidity position management (range deposits, withdrawals, fee claims, position reads) is available as a **beta** surface: the concentrated contracts are under an ongoing external audit, and router deposits into concentrated pools remain refused — ranges are managed through the pool contract directly. Provider-fee collectors — routing swaps through your own fee-taking contract, deploying one, and claiming what it accumulates — are fully supported.
 
+Alpha `0.6.0a3` (Python) / `0.6.0-alpha.3` (npm) adds canonical limit-order registry reads, on-chain placement/cancellation, and unsigned fill preparation. Install an explicit alpha version; the stable registry release remains unchanged. See the language READMEs for trusted deployment configuration and the network-capped lifetime. This release has offline fixture coverage; it does not certify a production limit-order deployment.
+
 ## Layout
 
 | Directory | Package | Registry name |
