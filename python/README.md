@@ -1,5 +1,7 @@
 # aquarius-sdk
 
+Alpha installation: `pip install aquarius-sdk==0.6.0a3`.
+
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
 **Status: 0.6.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
@@ -130,6 +132,113 @@ last on-chain transaction (confirmed or failed), or, if there is none, the
 current one — polling `getHealth` about once a second, and returns the latest
 ledger observed; it raises `AquariusError` on timeout. The SDK never waits on
 its own.
+
+## Programmatic on-chain limit orders
+
+The limit-order surface is available in alpha `0.6.0a3`. Configure trusted
+settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
+
+```python
+import os
+
+from aquarius import (
+    AquariusClient,
+    LimitOrderConfig,
+    NoRouteError,
+    XLM,
+    parse_find_path_response,
+)
+
+aqua = AquariusClient(
+    network="testnet",
+    signer=signer,
+    limit_orders=LimitOrderConfig(
+        settlement=os.environ["AQUARIUS_LIMIT_ORDER_SETTLEMENT"],
+        batcher=os.environ["AQUARIUS_BATCHER"],
+    ),
+)
+current_ledger = aqua.latest_ledger()
+order = aqua.create_onchain_limit_order(
+    XLM,
+    AQUA,
+    sell_amount=100_0000000,
+    min_buy_amount=500_0000000,
+    valid_after_ledger=current_ledger,
+    expires_at_ledger=current_ledger + 17_280,
+    allowance_expiration_ledger=current_ledger + 17_280,
+)
+receipt = order.place()
+```
+
+`allowance_expiration_ledger` is explicit because SEP-41 `allowance()` does not
+return the existing expiration. Keep it at or beyond this order and every other
+open order sharing the settlement allowance. It does not affect the order ID.
+For custom C accounts, use `validate_onchain_limit_order_draft()` and
+`build_onchain_placement_args()` with the account's own authorization policy.
+
+`batcher` is required only for `CONTRACT_ONCHAIN` placement. Registry reads,
+cancellation, and filling need the trusted settlement address:
+
+```python
+aqua = AquariusClient(
+    network="testnet",
+    signer=signer,
+    limit_orders=LimitOrderConfig(
+        settlement=os.environ["AQUARIUS_LIMIT_ORDER_SETTLEMENT"],
+    ),
+)
+
+orders = aqua.open_limit_orders(maker=signer.public_key)
+order = aqua.get_limit_order(orders[0].order_id)
+order.cancel()
+```
+
+An independent filler can request an exact-send route and prepare execution:
+
+```python
+response = aqua.api.find_path(
+    {
+        "token_in_address": order.order.sell_token,
+        "token_out_address": order.order.buy_token,
+        "amount": str(order.order.sell_amount),
+    },
+    exact_input=True,
+)
+route = parse_find_path_response(
+    response,
+    amount_in=order.order.sell_amount,
+    slippage_bps=0,
+    pair_label=f"{order.order.sell_token} -> {order.order.buy_token}",
+)
+xlm_token = XLM.contract_id(aqua.network.passphrase)
+if route.amount_out < order.order.required_router_min(xlm_token):
+    raise NoRouteError("Current route does not meet the order minimum")
+
+prepared = order.prepare_fill(route.swap_chain_xdr)
+result = prepared.execute()
+```
+
+The existing generic path lookup and parser are reused unchanged. Route lookup
+and limit policy are separate primitives. Before returning `prepared`, the SDK
+validates the registry record, detached
+`ADDRESS_V2` invocation tree or confirmed on-chain placement, settlement
+receipt, maker minimum, exact execution fee, and maximum transaction fee.
+
+Preparation uses enforced authorization, preserves the maker's signed proof,
+and applies the configured CPU and resource fee headroom before checking that
+the maximum transaction fee is below the execution reward. A restore preamble
+aborts fill preparation without signing or submitting. Unsigned placement and
+cancellation builders also never sign or submit a restore transaction.
+
+The prepared receipt is a simulation preview. Execution returns the validated
+receipt from the confirmed transaction and fails if that receipt is absent or
+violates the order's payout commitments.
+
+Use the registry's current network and product lifetime limits. Expiration must
+be at or below `current_ledger + max_entry_ttl - 1`, including for orders whose
+valid-after ledger is in the future. The allowance horizon must satisfy the
+network's current allowance limit and cover the order. Annual orders are not
+supported by the agreed one-signature flow.
 
 ## What the SDK handles for you
 

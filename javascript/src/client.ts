@@ -1,6 +1,6 @@
 import { Buffer } from "buffer";
 
-import { Address, Asset as StellarAsset, Keypair, Operation, Transaction, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
+import { Address, Asset as StellarAsset, Keypair, Operation, Transaction, hash, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 
 import { ApiClient, FindPathResponse, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
@@ -9,6 +9,22 @@ import { BatchCall, batchArgs, batchOperation, batchResults, isBudgetExceeded } 
 import { snapTick, tickFromPrice, tickSpacingForFee } from "./concentrated.js";
 import { AquariusError, SlippageError } from "./errors.js";
 import { CollectorContext, FeeCollector } from "./collector.js";
+import {
+  LimitOrderConfig,
+  LimitOrderConfigInput,
+  LimitOrderPage,
+  LimitOrderRecord,
+  OnchainLimitOrderReceipt,
+  OnchainLimitOrder,
+  OnchainLimitOrderActions,
+  OnchainLimitOrderDraftPayload,
+  PreparedLimitOrderFill,
+  buildOnchainPlacementArgs,
+  fillParameters,
+  parseLimitOrderRecord,
+  validateFillReceipt,
+  validateOnchainLimitOrderDraft,
+} from "./limit-orders.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
   DepositAmounts,
@@ -61,6 +77,8 @@ export interface AquariusConfig {
    * added instructions, which is charged whether or not they are used.
    */
   instructionHeadroom?: number;
+  /** Trusted coordinates for programmatic on-chain limit-order placement. */
+  limitOrders?: LimitOrderConfigInput;
 }
 
 export interface Receipt {
@@ -98,6 +116,20 @@ export interface SwapOptions {
    * signer does not hold yet and whose issuer does not require authorization.
    */
   addTrustline?: boolean;
+}
+
+export interface OnchainLimitOrderParams {
+  from: Asset;
+  to: Asset;
+  sellAmount: bigint;
+  minBuyAmount: bigint;
+  validAfterLedger: number;
+  expiresAtLedger: number;
+  /**
+   * SEP-41 allowance horizon. Must cover this order and should be no earlier
+   * than any other order sharing the same settlement allowance.
+   */
+  allowanceExpirationLedger: number;
 }
 
 export interface Quote {
@@ -214,6 +246,7 @@ export class AquariusClient {
   private readonly server: rpc.Server;
   private readonly engine: SubmitEngine;
   private readonly signer?: Signer;
+  private readonly limitOrderConfig?: LimitOrderConfig;
 
   constructor(config: AquariusConfig) {
     const preset = NETWORKS[config.network];
@@ -244,9 +277,86 @@ export class AquariusClient {
       config.instructionHeadroom,
     );
     this.signer = config.signer;
+    this.limitOrderConfig = config.limitOrders
+      ? new LimitOrderConfig(config.limitOrders)
+      : undefined;
   }
 
   // -- reads (no signer required) --------------------------------------------
+
+  /** Current Soroban RPC ledger sequence. */
+  async latestLedger(): Promise<number> {
+    return (await this.server.getLatestLedger()).sequence;
+  }
+
+  /** Read one validated cursor page from the public order registry. */
+  async listLimitOrders(params: {
+    maker?: string;
+    status?: string;
+    cursor?: string;
+    limit?: number;
+  } = {}): Promise<LimitOrderPage> {
+    this.requireLimitOrderConfig();
+    const limit = params.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new AquariusError("limit-order page size must be between 1 and 100");
+    }
+    const query: Record<string, string> = { limit: String(limit) };
+    if (params.maker !== undefined) query.maker = params.maker;
+    if (params.status !== undefined) query.status = params.status;
+    if (params.cursor !== undefined) query.cursor = params.cursor;
+    const page = await this.api.listLimitOrders(this.limitOrderApiUrl(), query);
+    if (!Array.isArray(page.orders)) {
+      throw new AquariusError("limit-order registry returned an invalid page");
+    }
+    return {
+      orders: page.orders.map(item =>
+        this.parseLimitOrderRecord(item as Record<string, unknown>)),
+      nextCursor: page.next_cursor === null || page.next_cursor === undefined
+        ? null
+        : String(page.next_cursor),
+    };
+  }
+
+  /** Read every open order, following cursor pages defensively. */
+  async openLimitOrders(maker?: string): Promise<LimitOrderRecord[]> {
+    const records: LimitOrderRecord[] = [];
+    const seenOrderIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let pageNumber = 0; pageNumber < 10_000; pageNumber++) {
+      const page = await this.listLimitOrders({
+        maker,
+        status: "open",
+        cursor,
+      });
+      for (const order of page.orders) {
+        if (seenOrderIds.has(order.orderId)) {
+          throw new AquariusError(
+            "limit-order registry repeated an order across pages",
+          );
+        }
+        seenOrderIds.add(order.orderId);
+        records.push(order);
+      }
+      if (page.nextCursor === null) return records;
+      if (!page.nextCursor || seenCursors.has(page.nextCursor)) {
+        throw new AquariusError(
+          "limit-order registry returned an invalid pagination cursor",
+        );
+      }
+      seenCursors.add(page.nextCursor);
+      cursor = page.nextCursor;
+    }
+    throw new AquariusError("limit-order pagination exceeded the safety limit");
+  }
+
+  /** Read and validate one public order-registry record. */
+  async getLimitOrder(orderId: string): Promise<LimitOrderRecord> {
+    return this.parseLimitOrderRecord(
+      await this.api.getLimitOrder(this.limitOrderApiUrl(), orderId),
+    );
+  }
 
   /** Best route for a swap. Pass amountIn (exact input) or amountOut (exact output). */
   async quote(params: QuoteParams): Promise<Quote> {
@@ -402,6 +512,81 @@ export class AquariusClient {
         return { swapChainXdr: parsed.swapChainXdr, guard: parsed.guard };
       },
     };
+  }
+
+  /** Create a canonical API draft for programmatic G-account placement. */
+  async createOnchainLimitOrder(
+    params: OnchainLimitOrderParams,
+  ): Promise<OnchainLimitOrder> {
+    const signer = this.requireSigner();
+    const maker = signer.publicKey();
+    if (!maker.startsWith("G")) {
+      throw new AquariusError("generic SDK on-chain placement requires a G-account signer");
+    }
+    const i128Max = (1n << 127n) - 1n;
+    if (
+      params.sellAmount <= 0n ||
+      params.minBuyAmount <= 0n ||
+      params.sellAmount > i128Max ||
+      params.minBuyAmount > i128Max ||
+      !Number.isInteger(params.validAfterLedger) ||
+      !Number.isInteger(params.expiresAtLedger) ||
+      params.validAfterLedger < 0 ||
+      params.validAfterLedger > 0xffffffff ||
+      params.expiresAtLedger < 0 ||
+      params.expiresAtLedger > 0xffffffff ||
+      params.validAfterLedger > params.expiresAtLedger
+    ) {
+      throw new AquariusError(
+        "on-chain limit-order amounts must fit positive i128 values and ledgers must fit u32",
+      );
+    }
+    if (
+      !Number.isInteger(params.allowanceExpirationLedger) ||
+      params.allowanceExpirationLedger < params.expiresAtLedger ||
+      params.allowanceExpirationLedger > 0xffffffff
+    ) {
+      throw new AquariusError(
+        "allowance expiration must be a u32 ledger at or after order expiration",
+      );
+    }
+    const sellToken = params.from.contractId(this.network.passphrase);
+    const buyToken = params.to.contractId(this.network.passphrase);
+    if (sellToken === buyToken) {
+      throw new AquariusError("limit-order sell and buy tokens must differ");
+    }
+    const config = this.requireLimitOrderConfig(true);
+    const payload = await this.api.createLimitOrderDraft(
+      this.limitOrderApiUrl(),
+      {
+        placement_mode: "CONTRACT_ONCHAIN",
+        maker,
+        sell_token: sellToken,
+        sell_amount: params.sellAmount.toString(),
+        buy_token: buyToken,
+        min_buy_amount: params.minBuyAmount.toString(),
+        valid_after_ledger: params.validAfterLedger,
+        expires_at_ledger: params.expiresAtLedger,
+      },
+    );
+    return validateOnchainLimitOrderDraft(
+      payload as OnchainLimitOrderDraftPayload,
+      {
+        expectedNetworkPassphrase: this.network.passphrase,
+        expectedSettlement: config.settlement,
+        expectedMaker: maker,
+        expectedOrder: {
+          sellToken,
+          sellAmount: params.sellAmount,
+          buyToken,
+          minBuyAmount: params.minBuyAmount,
+          validAfterLedger: params.validAfterLedger,
+          expiresAtLedger: params.expiresAtLedger,
+        },
+        allowanceExpirationLedger: params.allowanceExpirationLedger,
+        actions: this.onchainLimitOrderActions(),
+      },
+    );
   }
 
   // -- Stellar quirks, absorbed --------------------------------------------------
@@ -1124,6 +1309,209 @@ export class AquariusClient {
     return quote;
   }
 
+  private async prepareLimitOrderFill(
+    record: LimitOrderRecord,
+    swapChainXdr: string,
+    rewardTo?: string,
+  ): Promise<PreparedLimitOrderFill> {
+    this.validateLimitOrderContext(record);
+    if (record.status !== "OPEN") {
+      throw new AquariusError("only an open limit order can be filled");
+    }
+    const signer = this.requireSigner();
+    const filler = signer.publicKey();
+    const recipient = rewardTo ?? filler;
+    if (recipient !== filler) {
+      throw new AquariusError(
+        "the SDK requires the execution fee to pay the transaction signer",
+      );
+    }
+    const operation = Operation.invokeContractFunction({
+      contract: record.settlementAddress,
+      function: "fill",
+      args: fillParameters(record, recipient, swapChainXdr),
+      auth: record.authorization ? [record.authorization] : [],
+    });
+    const operationXdr = operation.toXDR();
+    const fixedOperation = xdr.Operation.fromXDR(operationXdr);
+    const transaction = await this.engine.buildTransaction(filler, fixedOperation);
+    const simulation = await this.server.simulateTransaction(transaction, undefined, "enforce");
+    if (rpc.Api.isSimulationRestore(simulation)) {
+      throw new AquariusError("limit-order fill requires footprint restoration");
+    }
+    if (rpc.Api.isSimulationError(simulation)) {
+      throw new AquariusError(
+        `limit-order fill simulation failed: ${simulation.error}`,
+      );
+    }
+    const resultValue = simulation.result?.retval;
+    if (!resultValue) {
+      throw new AquariusError("limit-order fill simulation returned no receipt");
+    }
+    const receipt = validateFillReceipt(record, recipient, resultValue);
+    const expectedAuth = fixedOperation.body.type === "invokeHostFunction"
+      ? fixedOperation.body.invokeHostFunctionOp.auth : [];
+    const rpcAuth = simulation.result?.auth ?? [];
+    if (rpcAuth.length && (rpcAuth.length !== expectedAuth.length || rpcAuth.some(
+      (entry, index) => !Buffer.from(entry.toXDR()).equals(Buffer.from(expectedAuth[index].toXDR())),
+    ))) {
+      throw new AquariusError("limit-order simulation changed authorization");
+    }
+    const prepared = await this.assembleLimitOrderFill(transaction, simulation, xdr.Operation.fromXDR(operationXdr));
+    const maximumFee = BigInt(prepared.fee);
+    if (maximumFee >= record.order.executorRewardXlm) {
+      throw new AquariusError(
+        `fill maximum fee ${maximumFee} is not below execution fee ` +
+        `${record.order.executorRewardXlm}`,
+      );
+    }
+    return new PreparedLimitOrderFill(
+      record,
+      receipt,
+      maximumFee,
+      prepared.toXDR(),
+      async () => {
+        const result = await this.engine.signAndSubmit(prepared, signer);
+        const confirmedReceipt = validateFillReceipt(record, recipient, result.returnValue!);
+        return { txHash: result.txHash, order: record, receipt: confirmedReceipt };
+      },
+    );
+  }
+
+  /** @internal Exposed for deterministic simulation/assembly tests. */
+  async assembleLimitOrderFill(
+    transaction: import("@stellar/stellar-sdk").Transaction,
+    simulation: rpc.Api.SimulateTransactionSuccessResponse,
+    operation: xdr.Operation,
+  ): Promise<import("@stellar/stellar-sdk").Transaction> {
+    return this.engine.assemble(transaction, operation, simulation);
+  }
+
+  private async buildLimitOrderCancel(record: LimitOrderRecord): Promise<string> {
+    this.limitOrderMakerSigner(record);
+    const operation = this.buildLimitOrderCancelOperation(record);
+    return (
+      await this.engine.prepare(record.order.maker, () => operation)
+    ).toXDR();
+  }
+
+  private async cancelLimitOrder(
+    record: LimitOrderRecord,
+  ): Promise<OnchainLimitOrderReceipt> {
+    const signer = this.limitOrderMakerSigner(record);
+    const operation = this.buildLimitOrderCancelOperation(record);
+    const transaction = await this.engine.prepare(
+      record.order.maker,
+      () => operation,
+      signer,
+    );
+    const result = await this.engine.signAndSubmit(transaction, signer);
+    return { orderId: record.orderId, txHash: result.txHash };
+  }
+
+  private limitOrderRecordActions() {
+    return {
+      prepareLimitOrderFill: (
+        record: LimitOrderRecord,
+        swapChainXdr: string,
+        rewardTo?: string,
+      ) => this.prepareLimitOrderFill(record, swapChainXdr, rewardTo),
+      buildLimitOrderCancel: (record: LimitOrderRecord) =>
+        this.buildLimitOrderCancel(record),
+      cancelLimitOrder: (record: LimitOrderRecord) =>
+        this.cancelLimitOrder(record),
+    };
+  }
+
+  private buildLimitOrderCancelOperation(record: LimitOrderRecord): xdr.Operation {
+    const args = [record.order.orderScVal];
+    return Operation.invokeContractFunction({
+      contract: record.settlementAddress,
+      function: "cancel",
+      args,
+      auth: [sourceAccountEntry(authorizedInvocation(record.settlementAddress, "cancel", args))],
+    });
+  }
+
+  private limitOrderMakerSigner(record: LimitOrderRecord): Signer {
+    this.validateLimitOrderContext(record);
+    const signer = this.requireSigner();
+    if (signer.publicKey() !== record.order.maker) {
+      throw new AquariusError("the signer is not the limit-order maker");
+    }
+    return signer;
+  }
+
+  private onchainLimitOrderActions(): OnchainLimitOrderActions {
+    return {
+      buildPlacement: async order => {
+        const signer = this.requireSigner();
+        const operation = await this.buildOnchainLimitOrderOperation(order);
+        const tx = await this.engine.prepare(signer.publicKey(), () => operation);
+        return tx.toXDR();
+      },
+      place: async order => {
+        const signer = this.requireSigner();
+        const operation = await this.buildOnchainLimitOrderOperation(order);
+        const tx = await this.engine.prepare(signer.publicKey(), () => operation, signer);
+        const result = await this.engine.signAndSubmit(tx, signer);
+        return { orderId: order.orderId, txHash: result.txHash };
+      },
+      buildCancel: async order => {
+        const signer = this.requireSigner();
+        const operation = this.buildOnchainLimitOrderCancelOperation(order);
+        const tx = await this.engine.prepare(signer.publicKey(), () => operation);
+        return tx.toXDR();
+      },
+      cancel: async order => {
+        const signer = this.requireSigner();
+        const operation = this.buildOnchainLimitOrderCancelOperation(order);
+        const tx = await this.engine.prepare(signer.publicKey(), () => operation, signer);
+        const result = await this.engine.signAndSubmit(tx, signer);
+        return { orderId: order.orderId, txHash: result.txHash };
+      },
+    };
+  }
+
+  private async buildOnchainLimitOrderOperation(
+    order: OnchainLimitOrder,
+  ): Promise<xdr.Operation> {
+    const config = this.requireLimitOrderConfig(true);
+    const xlmToken = Asset.native().contractId(this.network.passphrase);
+    const currentAllowances = new Map<string, bigint>();
+    for (const token of order.requiredAllowances(xlmToken).keys()) {
+      const value = await this.readContract(token, "allowance", [
+        new Address(order.maker).toScVal(),
+        new Address(order.settlementAddress).toScVal(),
+      ]);
+      currentAllowances.set(token, BigInt(scValToNative(value) as bigint));
+    }
+    const args = buildOnchainPlacementArgs(order, currentAllowances, xlmToken);
+    const calls = args[1].type === "scvVec" ? args[1].vec! : [];
+    const subInvocations = calls.map(call => {
+      if (call.type !== "scvVec" || !call.vec) throw new AquariusError("Invalid placement batch");
+      const [target, name, parameters] = call.vec;
+      if (parameters.type !== "scvVec" || !parameters.vec) throw new AquariusError("Invalid placement arguments");
+      return authorizedInvocation(scValToNative(target) as string, scValToNative(name) as string, parameters.vec);
+    });
+    return Operation.invokeContractFunction({
+      contract: config.batcher!,
+      function: "batch",
+      args,
+      auth: [sourceAccountEntry(authorizedInvocation(config.batcher!, "batch", args, subInvocations))],
+    });
+  }
+
+  private buildOnchainLimitOrderCancelOperation(order: OnchainLimitOrder): xdr.Operation {
+    const args = [order.orderScVal];
+    return Operation.invokeContractFunction({
+      contract: order.settlementAddress,
+      function: "cancel",
+      args,
+      auth: [sourceAccountEntry(authorizedInvocation(order.settlementAddress, "cancel", args))],
+    });
+  }
+
   /**
    * Mirrors the transaction shape used by the Aquarius web app: explicit
    * authorization of the router call and its token-transfer sub-invocation
@@ -1223,5 +1611,58 @@ export class AquariusClient {
       throw new AquariusError("This operation requires a signer — pass one in the client config");
     }
     return this.signer;
+  }
+
+  private limitOrderApiUrl(): string {
+    const url = this.requireLimitOrderConfig().apiUrl ?? this.network.limitOrdersApiUrl;
+    if (!url) throw new AquariusError("No limit-order API URL configured for this network");
+    return url;
+  }
+
+  private parseLimitOrderRecord(payload: Record<string, unknown>): LimitOrderRecord {
+    const config = this.requireLimitOrderConfig();
+    return parseLimitOrderRecord(payload, {
+      networkPassphrase: this.network.passphrase,
+      settlementAddress: config.settlement,
+      xlmToken: Asset.native().contractId(this.network.passphrase),
+      actions: this.limitOrderRecordActions(),
+    });
+  }
+
+  private validateLimitOrderContext(record: LimitOrderRecord): void {
+    const config = this.requireLimitOrderConfig();
+    if (record.settlementAddress !== config.settlement) {
+      throw new AquariusError("limit order targets another settlement contract");
+    }
+    const expectedNetworkId = Buffer.from(hash(Buffer.from(this.network.passphrase))).toString("hex");
+    if (record.networkId !== expectedNetworkId) {
+      throw new AquariusError("limit order targets another network");
+    }
+    const validated = this.parseLimitOrderRecord(record.raw);
+    if (
+      validated.orderId !== record.orderId ||
+      validated.status !== record.status ||
+      !Buffer.from(validated.order.orderScVal.toXDR()).equals(Buffer.from(record.order.orderScVal.toXDR())) ||
+      (validated.authorization ? Buffer.from(validated.authorization.toXDR()).toString("base64") : null) !==
+        (record.authorization ? Buffer.from(record.authorization.toXDR()).toString("base64") : null)
+    ) {
+      throw new AquariusError(
+        "limit-order record differs from its canonical payload",
+      );
+    }
+  }
+
+  private requireLimitOrderConfig(requireBatcher = false): LimitOrderConfig {
+    if (!this.limitOrderConfig) {
+      throw new AquariusError(
+        "Limit orders require trusted settlement configuration",
+      );
+    }
+    if (requireBatcher && !this.limitOrderConfig.batcher) {
+      throw new AquariusError(
+        "On-chain placement requires trusted batcher configuration",
+      );
+    }
+    return this.limitOrderConfig;
   }
 }

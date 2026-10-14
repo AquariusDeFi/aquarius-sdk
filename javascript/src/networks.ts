@@ -18,6 +18,7 @@ export interface NetworkConfig {
   collectorFactory?: string;
   /** The protocol reward token (AQUA) — code and issuer of the classic asset. */
   rewardToken: { code: string; issuer: string };
+  limitOrdersApiUrl?: string;
 }
 
 export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
@@ -33,6 +34,7 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     readSource: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
     collectorFactory: "CA4Q2T6FRAFYJYSMDJV7F6B7RL5PS6QS2UOZHBMCT2KSMGQRAAKP2MKO",
     rewardToken: { code: "AQUA", issuer: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA" },
+    limitOrdersApiUrl: "https://amm-api.aqua.network/api/external/v1/limit-orders",
   },
   testnet: {
     router: "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
@@ -43,5 +45,6 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     passphrase: Networks.TESTNET,
     readSource: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
     rewardToken: { code: "AQUA", issuer: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER" },
+    limitOrdersApiUrl: "https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
   },
 };

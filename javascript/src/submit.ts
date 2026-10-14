@@ -335,6 +335,17 @@ export class SubmitEngine {
       throw new AquariusError("Simulation returned no contract result");
     }
 
+    return this.assemble(tx, operation(), simulation);
+  }
+
+  /** @internal Assemble fixed operations with configured resource headroom. */
+  async assemble(
+    tx: Transaction,
+    fixedOperation: xdr.Operation,
+    simulation: rpc.Api.SimulateTransactionSuccessResponse,
+  ): Promise<Transaction> {
+    const operationXdr = fixedOperation.toXDR();
+    const operation = () => xdr.Operation.fromXDR(operationXdr);
     // Stellar assembly fills an empty operation auth list from result.auth.
     // Supply only client auth, including an intentionally empty list, and
     // retain the original operation byte-for-byte in the prepared envelope.
@@ -345,7 +356,7 @@ export class SubmitEngine {
     const auth = body.invokeHostFunctionOp.auth;
     let assembled = rpc.assembleTransaction(tx, {
       ...simulation,
-      result: { ...simulation.result, auth },
+      result: { ...simulation.result!, auth },
     }).clearOperations().addOperation(operation()).build();
     // Instructions first: their compute fee is part of the resource fee that
     // the fee headroom then scales.

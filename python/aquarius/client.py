@@ -4,16 +4,30 @@ import time
 from dataclasses import dataclass, field
 
 import requests
-from stellar_sdk import Address, SorobanServer, scval
+from stellar_sdk import Address, Network, SorobanServer, scval
 from stellar_sdk.client.requests_client import RequestsClient
 from stellar_sdk.exceptions import AccountNotFoundException
 from stellar_sdk.xdr import SCVal, SorobanAuthorizationEntry
+from stellar_sdk.soroban_rpc import AuthMode
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .authorization import authorized_invocation, source_account_entry
 from .assets import Asset
 from .collector import FeeCollector
 from .errors import AquariusError, SlippageError
+from .limit_orders import (
+    LimitOrderConfig,
+    LimitOrderPage,
+    LimitOrderRecord,
+    OnchainLimitOrder,
+    OnchainLimitOrderReceipt,
+    PreparedLimitOrderFill,
+    build_onchain_placement_args,
+    fill_parameters,
+    parse_limit_order_record,
+    validate_fill_receipt,
+    validate_onchain_limit_order_draft,
+)
 from .pool import Pool, Position, parse_pools_map, sort_token_ids
 from .networks import NETWORKS, NetworkConfig
 from .signer import signer_public_key
@@ -104,6 +118,7 @@ class AquariusClient:
         timeout: int | str | None = None,
         resource_fee_headroom: float | None = None,
         instruction_headroom: float | None = None,
+        limit_orders: LimitOrderConfig | None = None,
     ):
         """timeout: transaction time bound in seconds, or "infinite".
 
@@ -135,6 +150,8 @@ class AquariusClient:
             horizon_url=horizon_url or preset.horizon_url,
             passphrase=preset.passphrase,
             read_source=preset.read_source,
+            collector_factory=preset.collector_factory,
+            limit_orders_api_url=preset.limit_orders_api_url,
         )
         if timeout is None:
             resolved_timeout = 300 if isinstance(getattr(signer, "secret", None), str) else None
@@ -153,8 +170,79 @@ class AquariusClient:
             instruction_headroom=instruction_headroom,
         )
         self.signer = signer
+        self.limit_order_config = limit_orders
 
     # -- reads (no signer required) -------------------------------------------
+
+    def latest_ledger(self) -> int:
+        """Current Soroban RPC ledger sequence."""
+        return self.server.get_latest_ledger().sequence
+
+    def list_limit_orders(
+        self,
+        *,
+        maker: str | None = None,
+        status: str | None = None,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> LimitOrderPage:
+        """Read one validated cursor page from the public order registry."""
+        self._require_limit_order_config()
+        if not 1 <= limit <= 100:
+            raise AquariusError("limit-order page size must be between 1 and 100")
+        params: dict[str, str | int] = {"limit": limit}
+        if maker is not None:
+            params["maker"] = maker
+        if status is not None:
+            params["status"] = status
+        if cursor is not None:
+            params["cursor"] = cursor
+        page = self.api.list_limit_orders(self._limit_order_api_url(), params)
+        payloads = page.get("orders") if isinstance(page, dict) else None
+        if not isinstance(payloads, list):
+            raise AquariusError("limit-order registry returned an invalid page")
+        return LimitOrderPage(
+            orders=[self._parse_limit_order_record(item) for item in payloads],
+            next_cursor=(
+                None
+                if page.get("next_cursor") is None
+                else str(page["next_cursor"])
+            ),
+        )
+
+    def open_limit_orders(self, *, maker: str | None = None) -> list[LimitOrderRecord]:
+        """Read every open order, following cursor pages defensively."""
+        records: list[LimitOrderRecord] = []
+        seen_order_ids: set[str] = set()
+        seen_cursors: set[str] = set()
+        cursor = None
+        for _ in range(10_000):
+            page = self.list_limit_orders(
+                maker=maker,
+                status="open",
+                cursor=cursor,
+            )
+            for order in page.orders:
+                if order.order_id in seen_order_ids:
+                    raise AquariusError(
+                        "limit-order registry repeated an order across pages"
+                    )
+                seen_order_ids.add(order.order_id)
+                records.append(order)
+            cursor = page.next_cursor
+            if cursor is None:
+                return records
+            if not cursor or cursor in seen_cursors:
+                raise AquariusError(
+                    "limit-order registry returned an invalid pagination cursor"
+                )
+            seen_cursors.add(cursor)
+        raise AquariusError("limit-order pagination exceeded the safety limit")
+
+    def get_limit_order(self, order_id: str) -> LimitOrderRecord:
+        """Read and validate one public order-registry record."""
+        payload = self.api.get_limit_order(self._limit_order_api_url(), order_id)
+        return self._parse_limit_order_record(payload)
 
     def quote(
         self,
@@ -282,6 +370,82 @@ class AquariusClient:
         )
         address = Address.from_xdr_sc_address(confirmed.return_value.address).address
         return FeeCollector(address=address, _client=self)
+    def create_onchain_limit_order(
+        self,
+        from_: Asset,
+        to: Asset,
+        *,
+        sell_amount: int,
+        min_buy_amount: int,
+        valid_after_ledger: int,
+        expires_at_ledger: int,
+        allowance_expiration_ledger: int,
+    ) -> OnchainLimitOrder:
+        """Create a canonical API draft for programmatic G-account placement.
+
+        allowance_expiration_ledger is explicit because SEP-41 allowance()
+        exposes the amount but not the current expiration. Callers reusing an
+        allowance should choose a horizon no earlier than their other orders.
+        """
+        signer = self._require_signer()
+        maker = signer_public_key(signer)
+        if not maker.startswith("G"):
+            raise AquariusError(
+                "generic SDK on-chain placement requires a G-account signer"
+            )
+        if (
+            min(sell_amount, min_buy_amount) <= 0
+            or max(sell_amount, min_buy_amount) > 2**127 - 1
+            or not 0 <= valid_after_ledger <= 2**32 - 1
+            or not 0 <= expires_at_ledger <= 2**32 - 1
+            or valid_after_ledger > expires_at_ledger
+        ):
+            raise AquariusError(
+                "on-chain limit-order amounts must fit positive i128 values "
+                "and ledgers must fit u32"
+            )
+        if (
+            not isinstance(allowance_expiration_ledger, int)
+            or not expires_at_ledger <= allowance_expiration_ledger <= 2**32 - 1
+        ):
+            raise AquariusError(
+                "allowance expiration must be a u32 ledger at or after order expiration"
+            )
+        sell_token = from_.contract_id(self.network.passphrase)
+        buy_token = to.contract_id(self.network.passphrase)
+        if sell_token == buy_token:
+            raise AquariusError("limit-order sell and buy tokens must differ")
+        config = self._require_limit_order_config(require_batcher=True)
+        request = {
+            "placement_mode": "CONTRACT_ONCHAIN",
+            "maker": maker,
+            "sell_token": sell_token,
+            "sell_amount": str(sell_amount),
+            "buy_token": buy_token,
+            "min_buy_amount": str(min_buy_amount),
+            "valid_after_ledger": valid_after_ledger,
+            "expires_at_ledger": expires_at_ledger,
+        }
+        payload = self.api.create_limit_order_draft(
+            self._limit_order_api_url(),
+            request,
+        )
+        return validate_onchain_limit_order_draft(
+            payload,
+            expected_network_passphrase=self.network.passphrase,
+            expected_settlement=config.settlement,
+            expected_maker=maker,
+            expected_order={
+                "sell_token": sell_token,
+                "sell_amount": sell_amount,
+                "buy_token": buy_token,
+                "min_buy_amount": min_buy_amount,
+                "valid_after_ledger": valid_after_ledger,
+                "expires_at_ledger": expires_at_ledger,
+            },
+            allowance_expiration_ledger=allowance_expiration_ledger,
+            client=self,
+        )
 
     # -- Stellar quirks, absorbed --------------------------------------------------
 
@@ -477,13 +641,15 @@ class AquariusClient:
     def _read_router(self, fn: str, args: list[SCVal]) -> SCVal:
         return self._read_contract(self.network.router, fn, args)
 
-    def _read_contract(self, contract_id: str, fn: str, args: list[SCVal]) -> SCVal:
+    def _read_contract(
+        self, contract_id: str, fn: str, args: list[SCVal], *, allow_restore: bool = True,
+    ) -> SCVal:
         return self.engine.read(
             self._read_source(),
             lambda b: b.append_invoke_contract_function_op(
                 contract_id=contract_id, function_name=fn, parameters=args
             ),
-            self.signer,
+            self.signer if allow_restore else None,
         )
 
     def _submit_router(
@@ -587,6 +753,191 @@ class AquariusClient:
             ))
             raise
 
+    def _prepare_limit_order_fill(
+        self,
+        record: LimitOrderRecord,
+        swap_chain_xdr: str,
+        *,
+        reward_to: str | None = None,
+    ) -> PreparedLimitOrderFill:
+        """Simulate and assemble a permissionless V1 fill without submitting it."""
+        self._validate_limit_order_context(record)
+        if record.status != "OPEN":
+            raise AquariusError("only an open limit order can be filled")
+        signer = self._require_signer()
+        filler = signer_public_key(signer)
+        recipient = reward_to or filler
+        if recipient != filler:
+            raise AquariusError(
+                "the SDK requires the execution fee to pay the transaction signer"
+            )
+        auth = [record.authorization] if record.authorization is not None else []
+        transaction = self.engine.build_transaction(
+            filler,
+            lambda builder: builder.append_invoke_contract_function_op(
+                contract_id=record.settlement_address,
+                function_name="fill",
+                parameters=fill_parameters(record, recipient, swap_chain_xdr),
+                auth=auth,
+            ),
+        )
+        expected_operations = self.engine._operation_xdr(transaction)
+        simulation = self.server.simulate_transaction(transaction, auth_mode=AuthMode.ENFORCE)
+        if simulation.restore_preamble is not None:
+            raise AquariusError("limit-order fill requires footprint restoration")
+        if simulation.error is not None:
+            raise AquariusError(f"limit-order fill simulation failed: {simulation.error}")
+        if not isinstance(simulation.results, list) or len(simulation.results) != 1:
+            raise AquariusError(
+                "limit-order fill simulation returned an invalid result count"
+            )
+        try:
+            result_value = SCVal.from_xdr(simulation.results[0].xdr)
+        except Exception as exc:
+            raise AquariusError(
+                "limit-order fill simulation returned an invalid receipt"
+            ) from exc
+        receipt = validate_fill_receipt(record, recipient, result_value)
+        expected_auth = [entry.to_xdr() for entry in auth]
+        rpc_auth = simulation.results[0].auth or []
+        if rpc_auth and rpc_auth != expected_auth:
+            raise AquariusError("limit-order simulation changed authorization")
+        prepared = self.engine._assemble(transaction, simulation, expected_operations)
+        maximum_fee = prepared.transaction.fee
+        if maximum_fee >= record.order.executor_reward_xlm:
+            raise AquariusError(
+                f"fill maximum fee {maximum_fee} is not below execution fee "
+                f"{record.order.executor_reward_xlm}"
+            )
+        return PreparedLimitOrderFill(
+            order=record,
+            receipt=receipt,
+            maximum_fee=maximum_fee,
+            transaction_xdr=prepared.to_xdr(),
+            _transaction=prepared,
+            _client=self,
+        )
+
+    def _build_limit_order_cancel(self, record: LimitOrderRecord) -> str:
+        self._limit_order_maker_signer(record)
+        transaction = self.engine.prepare(
+            record.order.maker,
+            self._limit_order_cancel_append(record),
+        )
+        return transaction.to_xdr()
+
+    def _cancel_limit_order(
+        self, record: LimitOrderRecord
+    ) -> OnchainLimitOrderReceipt:
+        signer = self._limit_order_maker_signer(record)
+        transaction = self.engine.prepare(
+            record.order.maker,
+            self._limit_order_cancel_append(record),
+            signer,
+        )
+        result = self.engine.sign_and_submit(transaction, signer)
+        return OnchainLimitOrderReceipt(record.order_id, result.tx_hash)
+
+    def _limit_order_cancel_append(self, record: LimitOrderRecord):
+        args = [record.order.order_scval]
+        auth = [source_account_entry(authorized_invocation(record.settlement_address, "cancel", args))]
+        return lambda builder: builder.append_invoke_contract_function_op(
+            contract_id=record.settlement_address,
+            function_name="cancel",
+            parameters=args,
+            auth=auth,
+        )
+
+    def _limit_order_maker_signer(self, record: LimitOrderRecord):
+        self._validate_limit_order_context(record)
+        signer = self._require_signer()
+        if signer_public_key(signer) != record.order.maker:
+            raise AquariusError("the signer is not the limit-order maker")
+        return signer
+
+    def _onchain_limit_order_append(self, order: OnchainLimitOrder, *, allow_restore: bool = True):
+        config = self._require_limit_order_config(require_batcher=True)
+        xlm_token = Asset.native().contract_id(self.network.passphrase)
+        current_allowances = {}
+        for token in order.required_allowances(xlm_token):
+            value = self._read_contract(
+                token,
+                "allowance",
+                [
+                    scval.to_address(order.maker),
+                    scval.to_address(order.settlement_address),
+                ],
+                allow_restore=allow_restore,
+            )
+            current_allowances[token] = scval.from_int128(value)
+        args = build_onchain_placement_args(order, current_allowances, xlm_token)
+        calls = []
+        for call in scval.from_vec(args[1]):
+            target, name, parameters = scval.from_vec(call)
+            calls.append(authorized_invocation(
+                Address.from_xdr_sc_address(target.address).address,
+                scval.from_symbol(name), scval.from_vec(parameters),
+            ))
+        auth = [source_account_entry(authorized_invocation(config.batcher, "batch", args, calls))]
+        return lambda builder: builder.append_invoke_contract_function_op(
+            contract_id=config.batcher,
+            function_name="batch",
+            parameters=args,
+            auth=auth,
+        )
+
+    def _build_onchain_limit_order(self, order: OnchainLimitOrder) -> str:
+        source = signer_public_key(self._require_signer())
+        tx = self.engine.prepare(
+            source,
+            self._onchain_limit_order_append(order, allow_restore=False),
+        )
+        return tx.to_xdr()
+
+    def _place_onchain_limit_order(
+        self, order: OnchainLimitOrder
+    ) -> OnchainLimitOrderReceipt:
+        signer = self._require_signer()
+        source = signer_public_key(signer)
+        tx = self.engine.prepare(
+            source,
+            self._onchain_limit_order_append(order),
+            signer,
+        )
+        result = self.engine.sign_and_submit(tx, signer)
+        return OnchainLimitOrderReceipt(order.order_id, result.tx_hash)
+
+    def _onchain_limit_order_cancel_append(self, order: OnchainLimitOrder):
+        args = [order.order_scval]
+        auth = [source_account_entry(authorized_invocation(order.settlement_address, "cancel", args))]
+        return lambda builder: builder.append_invoke_contract_function_op(
+            contract_id=order.settlement_address,
+            function_name="cancel",
+            parameters=args,
+            auth=auth,
+        )
+
+    def _build_onchain_limit_order_cancel(self, order: OnchainLimitOrder) -> str:
+        source = signer_public_key(self._require_signer())
+        tx = self.engine.prepare(
+            source,
+            self._onchain_limit_order_cancel_append(order),
+        )
+        return tx.to_xdr()
+
+    def _cancel_onchain_limit_order(
+        self, order: OnchainLimitOrder
+    ) -> OnchainLimitOrderReceipt:
+        signer = self._require_signer()
+        source = signer_public_key(signer)
+        tx = self.engine.prepare(
+            source,
+            self._onchain_limit_order_cancel_append(order),
+            signer,
+        )
+        result = self.engine.sign_and_submit(tx, signer)
+        return OnchainLimitOrderReceipt(order.order_id, result.tx_hash)
+
     def _fetch_horizon_account(self, public_key: str) -> dict:
         response = requests.get(f"{self.network.horizon_url}/accounts/{public_key}", timeout=30)
         if not response.ok:
@@ -597,3 +948,61 @@ class AquariusClient:
         if self.signer is None:
             raise AquariusError("This operation requires a signer — pass one in the client config")
         return self.signer
+
+    def _limit_order_api_url(self) -> str:
+        config = self._require_limit_order_config()
+        url = config.api_url or self.network.limit_orders_api_url
+        if url is None:
+            raise AquariusError("No limit-order API URL configured for this network")
+        return url
+
+    def _parse_limit_order_record(self, payload: dict) -> LimitOrderRecord:
+        config = self._require_limit_order_config()
+        return parse_limit_order_record(
+            payload,
+            network_passphrase=self.network.passphrase,
+            settlement_address=config.settlement,
+            xlm_token=Asset.native().contract_id(self.network.passphrase),
+            client=self,
+        )
+
+    def _validate_limit_order_context(self, record: LimitOrderRecord) -> None:
+        config = self._require_limit_order_config()
+        if record.settlement_address != config.settlement:
+            raise AquariusError("limit order targets another settlement contract")
+        expected_network_id = Network(self.network.passphrase).network_id().hex()
+        if record.network_id != expected_network_id:
+            raise AquariusError("limit order targets another network")
+        if not record.raw:
+            raise AquariusError("limit-order record has no canonical registry payload")
+        validated = self._parse_limit_order_record(record.raw)
+        if (
+            validated.order_id != record.order_id
+            or validated.status != record.status
+            or validated.order.order_scval.to_xdr_bytes()
+            != record.order.order_scval.to_xdr_bytes()
+            or (
+                validated.authorization.to_xdr()
+                if validated.authorization is not None
+                else None
+            )
+            != (
+                record.authorization.to_xdr()
+                if record.authorization is not None
+                else None
+            )
+        ):
+            raise AquariusError("limit-order record differs from its canonical payload")
+
+    def _require_limit_order_config(
+        self, *, require_batcher: bool = False
+    ) -> LimitOrderConfig:
+        if self.limit_order_config is None:
+            raise AquariusError(
+                "Limit orders require trusted settlement configuration"
+            )
+        if require_batcher and self.limit_order_config.batcher is None:
+            raise AquariusError(
+                "On-chain placement requires trusted batcher configuration"
+            )
+        return self.limit_order_config

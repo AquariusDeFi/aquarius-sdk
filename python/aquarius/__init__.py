@@ -34,9 +34,27 @@ from .errors import (
     UserRejectedError,
 )
 from .networks import NETWORKS, NetworkConfig
+from .limit_orders import (
+    LimitOrder,
+    LimitOrderConfig,
+    LimitOrderFillReceipt,
+    LimitOrderFillResult,
+    LimitOrderPage,
+    LimitOrderRecord,
+    OnchainLimitOrder,
+    OnchainLimitOrderReceipt,
+    PreparedLimitOrderFill,
+    build_onchain_placement_args,
+    fill_parameters,
+    parse_limit_order_record,
+    route_scval_from_swap_chain,
+    validate_authorization_tree,
+    validate_fill_receipt,
+    validate_onchain_limit_order_draft,
+)
 from .pool import ClaimResult, DepositResult, Pool, PoolQuote, Position, WithdrawResult
 
-__version__ = "0.6.0a2"
+__version__ = "0.6.0a3"
 
 __all__ = [
     "ApiClient",
@@ -47,6 +65,22 @@ __all__ = [
     "NetworkConfig",
     "ClaimFeesResult",
     "ClaimedFees",
+    "LimitOrder",
+    "LimitOrderConfig",
+    "LimitOrderFillReceipt",
+    "LimitOrderFillResult",
+    "LimitOrderPage",
+    "LimitOrderRecord",
+    "OnchainLimitOrder",
+    "OnchainLimitOrderReceipt",
+    "PreparedLimitOrderFill",
+    "build_onchain_placement_args",
+    "fill_parameters",
+    "parse_limit_order_record",
+    "route_scval_from_swap_chain",
+    "validate_authorization_tree",
+    "validate_fill_receipt",
+    "validate_onchain_limit_order_draft",
     "ClaimResult",
     "ConcentratedDepositResult",
     "ConcentratedPosition",

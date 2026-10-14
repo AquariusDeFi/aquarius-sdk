@@ -1,5 +1,7 @@
 # @aquariusdefi/sdk
 
+Alpha installation: `npm install @aquariusdefi/sdk@0.6.0-alpha.3 @stellar/stellar-sdk@^17.1.0`.
+
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
 **Status: 0.6.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
@@ -295,6 +297,101 @@ The client does not see transactions you submit yourself, so
 `waitForNextLedger()` does not default to their ledger. Before a dependent
 build (e.g. a withdraw after a deposit into a pool with rewards), pass the
 ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
+
+## Programmatic on-chain limit orders
+
+The limit-order surface is available in alpha `0.6.0-alpha.3`. Configure trusted
+settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
+
+```ts
+const aqua = new AquariusClient({
+  network: "testnet",
+  signer,
+  limitOrders: {
+    settlement: process.env.AQUARIUS_LIMIT_ORDER_SETTLEMENT!,
+    batcher: process.env.AQUARIUS_BATCHER!,
+  },
+});
+
+const currentLedger = await aqua.latestLedger();
+const order = await aqua.createOnchainLimitOrder({
+  from: XLM,
+  to: AQUA,
+  sellAmount: 100_0000000n,
+  minBuyAmount: 500_0000000n,
+  validAfterLedger: currentLedger,
+  expiresAtLedger: currentLedger + 17_280,
+  allowanceExpirationLedger: currentLedger + 17_280,
+});
+const receipt = await order.place();
+```
+
+`allowanceExpirationLedger` is explicit because SEP-41 `allowance()` does not
+return the existing expiration. Keep it at or beyond this order and every other
+open order sharing the settlement allowance. It does not affect the order ID.
+For custom C accounts, use `validateOnchainLimitOrderDraft()` and
+`buildOnchainPlacementArgs()` with the account's own authorization policy.
+
+`batcher` is required only for `CONTRACT_ONCHAIN` placement. Registry reads,
+cancellation, and filling need the trusted settlement address:
+
+```ts
+const aqua = new AquariusClient({
+  network: "testnet",
+  signer,
+  limitOrders: {
+    settlement: process.env.AQUARIUS_LIMIT_ORDER_SETTLEMENT!,
+  },
+});
+
+const orders = await aqua.openLimitOrders(signer.publicKey());
+const order = await aqua.getLimitOrder(orders[0].orderId);
+await order.cancel();
+```
+
+An independent filler can request an exact-send route and prepare execution:
+
+```ts
+const response = await aqua.api.findPath({
+  token_in_address: order.order.sellToken,
+  token_out_address: order.order.buyToken,
+  amount: order.order.sellAmount.toString(),
+}, true);
+const route = parseFindPathResponse(response, {
+  amountIn: order.order.sellAmount,
+  slippageBps: 0,
+  pairLabel: `${order.order.sellToken} -> ${order.order.buyToken}`,
+});
+const xlmToken = XLM.contractId(aqua.network.passphrase);
+if (route.amountOut < order.order.requiredRouterMin(xlmToken)) {
+  throw new NoRouteError("Current route does not meet the order minimum");
+}
+
+const prepared = await order.prepareFill(route.swapChainXdr);
+const result = await prepared.execute();
+```
+
+The existing generic path lookup and parser are reused unchanged. Route lookup
+and limit policy are separate primitives. Before returning `prepared`, the SDK
+validates the registry record, detached
+`ADDRESS_V2` invocation tree or confirmed on-chain placement, settlement
+receipt, maker minimum, exact execution fee, and maximum transaction fee.
+
+Preparation uses enforced authorization, preserves the maker's signed proof,
+and applies the configured CPU and resource fee headroom before checking that
+the maximum transaction fee is below the execution reward. A restore preamble
+aborts fill preparation without signing or submitting. Unsigned placement and
+cancellation builders also never sign or submit a restore transaction.
+
+The prepared receipt is a simulation preview. Execution returns the validated
+receipt from the confirmed transaction and fails if that receipt is absent or
+violates the order's payout commitments.
+
+Use the registry's current network and product lifetime limits. Expiration must
+be at or below `current_ledger + max_entry_ttl - 1`, including for orders whose
+valid-after ledger is in the future. The allowance horizon must satisfy the
+network's current allowance limit and cover the order. Annual orders are not
+supported by the agreed one-signature flow.
 
 ## What the SDK handles for you
 

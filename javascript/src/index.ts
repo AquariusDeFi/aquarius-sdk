@@ -16,6 +16,7 @@ export {
   type IncentivesConfig,
   type PoolCreationFee,
   type ProviderFeeConfig,
+  type OnchainLimitOrderParams,
   type Quote,
   type QuoteParams,
   type Receipt,
@@ -27,6 +28,29 @@ export { FeeCollector, type ClaimedFees } from "./collector.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
 export type { FindPathRequest, FindPathResponse, ParsedRoute } from "./api.js";
 export { NETWORKS, type NetworkConfig } from "./networks.js";
+export {
+  LimitOrder,
+  LimitOrderConfig,
+  LimitOrderRecord,
+  OnchainLimitOrder,
+  PreparedLimitOrderFill,
+  buildOnchainPlacementArgs,
+  fillParameters,
+  parseLimitOrderRecord,
+  routeScValFromSwapChain,
+  validateAuthorizationTree,
+  validateFillReceipt,
+  validateOnchainLimitOrderDraft,
+  type LimitOrderConfigInput,
+  type LimitOrderFillReceipt,
+  type LimitOrderFillResult,
+  type LimitOrderPage,
+  type LimitOrderStatus,
+  type OnchainLimitOrderActions,
+  type OnchainLimitOrderDraftPayload,
+  type OnchainLimitOrderReceipt,
+  type ValidateOnchainDraftContext,
+} from "./limit-orders.js";
 export {
   ConcentratedDepositEstimate,
   Pool,
