@@ -27,11 +27,14 @@ const AQUA = Asset.classic("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5P
 const EXPLORER = "https://stellar.expert/explorer/public/tx/";
 const SWAP_XLM = 10_000_000n;
 const DEPOSIT_XLM = 5_000_000n;
-// 0.6 XLM: the costliest step is the concentrated deposit, ~0.17 XLM in
-// resource fees for the position's new persistent entry (its bounds reuse
-// initialized ticks, so no fresh tick storage); everything else totals well
-// under 0.1.
-const MAX_ACCEPTABLE_LOSS = 6_000_000n;
+// 0.9 XLM: a normal run costs ~0.22-0.25 XLM, ~0.155 of it rent for the
+// concentrated position's new persistent entry (its bounds reuse initialized
+// ticks, so no fresh tick storage). The volatile pool keeps reward invariants
+// in shared pages of 100 reward blocks (RewardInvDataV2, ~2.1 KB), and the
+// deposit or withdraw that crosses a page boundary pays ~0.54 XLM rent to
+// create the next page. The budget admits one such page and still fails on
+// anything beyond it, e.g. fresh tick storage on top of a normal run.
+const MAX_ACCEPTABLE_LOSS = 9_000_000n;
 
 const secret = process.env.MAINNET_E2E_SECRET ?? "";
 if (!secret) {
