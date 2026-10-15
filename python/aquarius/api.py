@@ -1,10 +1,37 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import requests
 
-from .errors import AquariusError, NoRouteError
+from .errors import APIHTTPError, NoRouteError
+
+
+def _parse_retry_after(value: str | None, *, now: datetime | None = None) -> float | None:
+    if value is None:
+        return None
+    try:
+        delay = float(value)
+    except (ValueError, TypeError):
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0.0, (retry_at - (now or datetime.now(timezone.utc))).total_seconds())
+        except (ValueError, TypeError, OverflowError):
+            return None
+    return delay if math.isfinite(delay) and delay >= 0 else None
+
+
+def _http_error(message: str, response: requests.Response) -> APIHTTPError:
+    return APIHTTPError(
+        f"{message}: HTTP {response.status_code}",
+        status_code=response.status_code,
+        retry_after=_parse_retry_after(response.headers.get("Retry-After")),
+    )
 
 
 @dataclass
@@ -26,7 +53,7 @@ class ApiClient:
         endpoint = "/find-path/" if exact_input else "/find-path-strict-receive/"
         response = requests.post(f"{self.base_url}{endpoint}", json=request, timeout=30)
         if not response.ok:
-            raise AquariusError(f"Find-path request failed: HTTP {response.status_code}")
+            raise _http_error("Find-path request failed", response)
         return response.json()
 
     def pools_by_addresses(self, addresses: list[str]) -> list[dict]:
@@ -37,7 +64,7 @@ class ApiClient:
             timeout=30,
         )
         if not response.ok:
-            raise AquariusError(f"Pools request failed: HTTP {response.status_code}")
+            raise _http_error("Pools request failed", response)
         return response.json().get("results", [])
 
     def user_pools(self, address: str) -> list[dict]:
@@ -46,7 +73,7 @@ class ApiClient:
         if response.status_code == 404:
             return []
         if not response.ok:
-            raise AquariusError(f"User pools request failed: HTTP {response.status_code}")
+            raise _http_error("User pools request failed", response)
         data = response.json()
         return data.get("results", data) if isinstance(data, dict) else data
 
@@ -57,15 +84,7 @@ class ApiClient:
             timeout=30,
         )
         if not response.ok:
-            detail = None
-            try:
-                detail = response.json().get("detail")
-            except Exception:  # noqa: BLE001 - best-effort API detail
-                pass
-            suffix = f": {detail}" if detail else ""
-            raise AquariusError(
-                f"Limit-order draft request failed: HTTP {response.status_code}{suffix}"
-            )
+            raise _http_error("Limit-order draft request failed", response)
         return response.json()
 
     def list_limit_orders(self, base_url: str, params: dict) -> dict:
@@ -75,9 +94,7 @@ class ApiClient:
             timeout=30,
         )
         if not response.ok:
-            raise AquariusError(
-                f"Limit-order list request failed: HTTP {response.status_code}"
-            )
+            raise _http_error("Limit-order list request failed", response)
         return response.json()
 
     def get_limit_order(self, base_url: str, order_id: str) -> dict:
@@ -86,9 +103,7 @@ class ApiClient:
             timeout=30,
         )
         if not response.ok:
-            raise AquariusError(
-                f"Limit-order detail request failed: HTTP {response.status_code}"
-            )
+            raise _http_error("Limit-order detail request failed", response)
         return response.json()
 
 

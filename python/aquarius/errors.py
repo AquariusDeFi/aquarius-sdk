@@ -12,6 +12,18 @@ class AquariusError(Exception):
         self.tx_hash = tx_hash
 
 
+class APIHTTPError(AquariusError):
+    """A public API HTTP failure; retry_after is seconds, or None when unavailable.
+
+    The SDK does not retry the request. Response bodies and headers are not retained.
+    """
+
+    def __init__(self, message: str, *, status_code: int, retry_after: float | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
 class NoRouteError(AquariusError):
     """The find-path API found no route for the requested pair and amount."""
 

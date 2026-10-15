@@ -24,6 +24,7 @@ from .concentrated import (
     tick_from_price,
 )
 from .errors import (
+    APIHTTPError,
     AquariusError,
     NoRouteError,
     NoTrustlineError,
@@ -54,9 +55,10 @@ from .limit_orders import (
 )
 from .pool import ClaimResult, DepositResult, Pool, PoolQuote, Position, WithdrawResult
 
-__version__ = "0.6.0a3"
+__version__ = "0.6.0a4"
 
 __all__ = [
+    "APIHTTPError",
     "ApiClient",
     "AquariusClient",
     "AquariusError",
