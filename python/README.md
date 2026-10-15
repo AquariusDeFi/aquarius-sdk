@@ -1,6 +1,10 @@
 # aquarius-sdk
 
-Alpha installation: `pip install aquarius-sdk==0.6.0a3`.
+Alpha installation: `pip install aquarius-sdk==0.6.0a4`.
+
+Public API HTTP failures raise `APIHTTPError`, a subclass of `AquariusError`,
+with `status_code` and `retry_after` in seconds (`None` when unavailable).
+Response bodies, including draft-error details, are omitted; callers control retries.
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
@@ -135,7 +139,7 @@ its own.
 
 ## Programmatic on-chain limit orders
 
-The limit-order surface is available in alpha `0.6.0a3`. Configure trusted
+The limit-order surface is available in alpha `0.6.0a4`. Configure trusted
 settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
 
 ```python
