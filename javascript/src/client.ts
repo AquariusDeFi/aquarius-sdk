@@ -22,6 +22,7 @@ import {
   buildOnchainPlacementArgs,
   fillParameters,
   parseLimitOrderRecord,
+  validateExecutorReward,
   validateFillReceipt,
   validateNetworkLifetime,
   validateOnchainLimitOrderDraft,
@@ -255,6 +256,8 @@ export class AquariusClient {
   private readonly signer?: Signer;
   private readonly limitOrderConfig?: LimitOrderConfig;
   private networkMaxTtlCache?: { fetchedAt: number; value: Promise<number> };
+  /** The settlement contract has no reward setter: one read serves the client. */
+  private executorRewardCache?: Promise<bigint>;
 
   constructor(config: AquariusConfig) {
     const preset = NETWORKS[config.network];
@@ -343,6 +346,26 @@ export class AquariusClient {
   private async maxLiveUntilLedger(): Promise<number> {
     const [ledger, maxTtl] = await Promise.all([this.latestLedger(), this.networkMaxTtl()]);
     return ledger + maxTtl;
+  }
+
+  /** The configured settlement contract's fixed executor reward. */
+  private limitOrderExecutorReward(): Promise<bigint> {
+    if (this.executorRewardCache) return this.executorRewardCache;
+    const settlement = this.requireLimitOrderConfig().settlement;
+    const value = this.readContract(settlement, "get_executor_reward", [])
+      .then(result => {
+        if (result.type !== "scvU128") {
+          throw new AquariusError("settlement get_executor_reward returned an invalid value");
+        }
+        return scValToNative(result) as bigint;
+      })
+      .catch((error: unknown) => {
+        // a failed read must not poison later ones
+        if (this.executorRewardCache === value) this.executorRewardCache = undefined;
+        throw error;
+      });
+    this.executorRewardCache = value;
+    return value;
   }
 
   /** Read one validated cursor page from the public order registry. */
@@ -618,6 +641,7 @@ export class AquariusClient {
       params.allowanceExpirationLedger,
       maxLiveUntilLedger,
     );
+    const executorRewardXlm = await this.limitOrderExecutorReward();
     const payload = await this.api.createLimitOrderDraft(
       this.limitOrderApiUrl(),
       {
@@ -647,6 +671,7 @@ export class AquariusClient {
         },
         allowanceExpirationLedger: params.allowanceExpirationLedger,
         maxLiveUntilLedger,
+        expectedExecutorRewardXlm: executorRewardXlm,
         actions: this.onchainLimitOrderActions(),
       },
     );
@@ -1545,6 +1570,8 @@ export class AquariusClient {
       order.allowanceExpirationLedger,
       await this.maxLiveUntilLedger(),
     );
+    // The XLM approval below is derived from this reward.
+    validateExecutorReward(order.executorRewardXlm, await this.limitOrderExecutorReward());
     const xlmToken = Asset.native().contractId(this.network.passphrase);
     const currentAllowances = new Map<string, bigint>();
     for (const token of order.requiredAllowances(xlmToken).keys()) {

@@ -30,6 +30,7 @@ from .limit_orders import (
     OnchainLimitOrder,
     OnchainLimitOrderReceipt,
     PreparedLimitOrderFill,
+    _validate_executor_reward,
     _validate_network_lifetime,
     build_onchain_placement_args,
     fill_parameters,
@@ -185,6 +186,8 @@ class AquariusClient:
         self.signer = signer
         self.limit_order_config = limit_orders
         self._network_max_ttl_cache: tuple[float, int] | None = None
+        # (settlement address, reward): the contract has no reward setter.
+        self._executor_reward_cache: tuple[str, int] | None = None
 
     # -- reads (no signer required) -------------------------------------------
 
@@ -469,6 +472,7 @@ class AquariusClient:
         _validate_network_lifetime(
             expires_at_ledger, allowance_expiration_ledger, max_live_until_ledger
         )
+        executor_reward_xlm = self._limit_order_executor_reward(allow_restore=False)
         request = {
             "placement_mode": "CONTRACT_ONCHAIN",
             "maker": maker,
@@ -498,6 +502,7 @@ class AquariusClient:
             },
             allowance_expiration_ledger=allowance_expiration_ledger,
             max_live_until_ledger=max_live_until_ledger,
+            expected_executor_reward_xlm=executor_reward_xlm,
             client=self,
         )
 
@@ -916,6 +921,11 @@ class AquariusClient:
             order.allowance_expiration_ledger,
             self._max_live_until_ledger(),
         )
+        # The XLM approval below is derived from this reward.
+        _validate_executor_reward(
+            order.executor_reward_xlm,
+            self._limit_order_executor_reward(allow_restore=allow_restore),
+        )
         xlm_token = Asset.native().contract_id(self.network.passphrase)
         current_allowances = {}
         for token in order.required_allowances(xlm_token):
@@ -1005,6 +1015,24 @@ class AquariusClient:
 
     def _max_live_until_ledger(self) -> int:
         return self.latest_ledger() + self.network_max_ttl()
+
+    def _limit_order_executor_reward(self, *, allow_restore: bool = True) -> int:
+        """The configured settlement contract's fixed executor reward."""
+        settlement = self._require_limit_order_config().settlement
+        cached = self._executor_reward_cache
+        if cached is not None and cached[0] == settlement:
+            return cached[1]
+        value = self._read_contract(
+            settlement, "get_executor_reward", [], allow_restore=allow_restore
+        )
+        try:
+            reward = scval.from_uint128(value)
+        except Exception as exc:
+            raise AquariusError(
+                "settlement get_executor_reward returned an invalid value"
+            ) from exc
+        self._executor_reward_cache = (settlement, reward)
+        return reward
 
     def _require_signer(self):
         if self.signer is None:

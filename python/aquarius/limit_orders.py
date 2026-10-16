@@ -216,13 +216,16 @@ def validate_onchain_limit_order_draft(
     expected_order: dict,
     allowance_expiration_ledger: int,
     max_live_until_ledger: int,
+    expected_executor_reward_xlm: int,
     client: AquariusClient | None = None,
 ) -> OnchainLimitOrder:
     """Validate the registry JSON against its canonical OrderV1 ScVal.
 
     max_live_until_ledger is the current ledger plus the network max TTL
     (``AquariusClient.latest_ledger() + AquariusClient.network_max_ttl()``);
-    neither expiration may exceed it.
+    neither expiration may exceed it. expected_executor_reward_xlm is the
+    trusted settlement contract's ``get_executor_reward()``; the order must
+    carry exactly that reward.
     """
     try:
         order_scval = xdr.SCVal.from_xdr(payload["order_xdr"])
@@ -302,6 +305,9 @@ def validate_onchain_limit_order_draft(
         allowance_expiration_ledger,
         max_live_until_ledger,
     )
+    _validate_executor_reward(
+        projection["executor_reward_xlm"], expected_executor_reward_xlm
+    )
 
     return OnchainLimitOrder(
         order_id=order_id,
@@ -344,6 +350,19 @@ def _validate_network_lifetime(
             f"allowance expiration ledger {allowance_expiration_ledger} is beyond "
             f"the network limit {max_live_until_ledger} (current ledger plus the "
             "network max TTL)"
+        )
+
+
+def _validate_executor_reward(order_reward: int, settlement_reward: int) -> None:
+    # The settlement contract fixes the reward at construction and rejects any
+    # other value, so a different reward would only inflate the maker's XLM
+    # approval for an order that can never fill.
+    if isinstance(settlement_reward, bool) or not isinstance(settlement_reward, int):
+        raise AquariusError("expected_executor_reward_xlm must be an integer")
+    if order_reward != settlement_reward:
+        raise AquariusError(
+            f"limit-order executor reward {order_reward} does not match the "
+            f"settlement contract's {settlement_reward}"
         )
 
 

@@ -62,12 +62,31 @@ function onNetwork(client, { currentLedger = 100, maxEntryTtl = MAX_ENTRY_TTL } 
   return client;
 }
 
+// Answers get_executor_reward from the configured settlement; other reads
+// return `allowance`, or go through the RPC when it is undefined.
+function settlementReads(client, { executorReward = 5_000_000n, allowance } = {}) {
+  const read = client.readContract.bind(client);
+  client.rewardReads = 0;
+  client.readContract = async (contractId, fn, args) => {
+    if (fn === "get_executor_reward") {
+      assert.equal(contractId, draft.settlement_address);
+      client.rewardReads += 1;
+      return nativeToScVal(executorReward, { type: "u128" });
+    }
+    return allowance === undefined
+      ? read(contractId, fn, args)
+      : nativeToScVal(allowance, { type: "i128" });
+  };
+  client.executorRewardCache = undefined;
+  return client;
+}
+
 function onchainClient() {
-  return new AquariusClient({
+  return settlementReads(new AquariusClient({
     network: "testnet",
     signer: { publicKey: () => draft.maker, sign: value => value },
     limitOrders: { settlement: draft.settlement_address, batcher },
-  });
+  }), { allowance: 0n });
 }
 
 function create(client, overrides = {}) {
@@ -83,7 +102,7 @@ function create(client, overrides = {}) {
   });
 }
 
-function validate(payload = draft, maxLiveUntilLedger = 250) {
+function validate(payload = draft, maxLiveUntilLedger = 250, executorReward = 5_000_000n) {
   return validateOnchainLimitOrderDraft(payload, {
     expectedNetworkPassphrase: Networks.TESTNET,
     expectedSettlement: draft.settlement_address,
@@ -98,6 +117,7 @@ function validate(payload = draft, maxLiveUntilLedger = 250) {
     },
     allowanceExpirationLedger: 250,
     maxLiveUntilLedger,
+    expectedExecutorRewardXlm: executorReward,
   });
 }
 
@@ -150,6 +170,7 @@ test("on-chain draft validates canonical XDR and JSON projection", () => {
       },
       allowanceExpirationLedger: 199,
       maxLiveUntilLedger: 250,
+      expectedExecutorRewardXlm: 5_000_000n,
     }),
     /allowance expiration/,
   );
@@ -225,7 +246,7 @@ test("client creates a validated draft and builds batcher and cancel transaction
     draftRequest = { url, request };
     return draft;
   };
-  onNetwork(client);
+  settlementReads(onNetwork(client), { allowance: 0n });
   client.server.getLatestLedger = async () => assert.fail("getLatestLedger");
   assert.equal(await client.latestLedger(), 100);
 
@@ -369,6 +390,68 @@ for (const [name, read] of [
   });
 }
 
+test("draft executor reward must match the settlement contract", async () => {
+  const client = onNetwork(onchainClient());
+  client.api.createLimitOrderDraft = async () => draft;
+  assert.equal((await create(client)).executorRewardXlm, 5_000_000n);
+  assert.equal((await create(client)).executorRewardXlm, 5_000_000n);
+  assert.equal(client.rewardReads, 1);
+
+  settlementReads(client, { executorReward: 4_000_000n });
+  await assert.rejects(
+    create(client),
+    /executor reward 5000000 does not match the settlement contract's 4000000/,
+  );
+
+  assert.throws(() => validate(draft, 250, 4_999_999n), /executor reward 5000000 does not match/);
+  assert.throws(() => validate(draft, 250, null), /expectedExecutorRewardXlm/);
+});
+
+test("placement rejects an inflated reward and approves the verified one", async () => {
+  const client = onNetwork(onchainClient());
+  client.api.createLimitOrderDraft = async () => draft;
+  const verified = await create(client);
+  const inflated = new OnchainLimitOrder(
+    verified.orderId, verified.settlementAddress, verified.maker,
+    verified.sellToken, verified.sellAmount, verified.buyToken, verified.minBuyAmount,
+    verified.validAfterLedger, verified.expiresAtLedger, verified.allowanceExpirationLedger,
+    50_000_000n, verified.orderScVal, client.onchainLimitOrderActions(),
+  );
+  client.engine.prepare = async () => assert.fail("must not build");
+  client.engine.signAndSubmit = async () => assert.fail("must not submit");
+  for (const build of [() => inflated.buildTransaction(), () => inflated.place()]) {
+    await assert.rejects(
+      build(),
+      /executor reward 50000000 does not match the settlement contract's 5000000/,
+    );
+  }
+
+  const operations = [];
+  client.engine.prepare = async (_source, buildOperation) => {
+    operations.push(buildOperation());
+    return { toXDR: () => "unsigned-xdr" };
+  };
+  assert.equal(await verified.buildTransaction(), "unsigned-xdr");
+  const placement = operations.at(-1).body.invokeHostFunctionOp.hostFunction.invokeContract;
+  assert.deepEqual(scValToNative(placement.args[1])[1], [
+    Asset.native().contractId(Networks.TESTNET),
+    "approve",
+    [draft.maker, draft.settlement_address, 5_000_000n, 250],
+  ]);
+});
+
+for (const [name, read, message] of [
+  ["a failed read", async () => { throw new AquariusError("simulation failed"); }, /simulation failed/],
+  ["a non-u128 value", async () => nativeToScVal(5_000_000n, { type: "i128" }), /invalid value/],
+]) {
+  test(`executor reward read fails closed on ${name}`, async () => {
+    const client = onNetwork(onchainClient());
+    client.readContract = read;
+    client.api.createLimitOrderDraft = async () => assert.fail("must not request a draft");
+    await assert.rejects(create(client), message);
+  });
+}
+
 test("unsigned placement and cancellation require restore without signing", async () => {
   const { Account, SorobanDataBuilder } = await import("@stellar/stellar-sdk");
   const { RestoreRequiredError } = await import("../dist/index.js");
@@ -377,7 +460,7 @@ test("unsigned placement and cancellation require restore without signing", asyn
     signer: { publicKey: () => draft.maker, sign: () => { throw new Error("unsigned builder must not sign"); } },
     limitOrders: { settlement: draft.settlement_address, batcher },
   });
-  onNetwork(client);
+  settlementReads(onNetwork(client));
   client.api.createLimitOrderDraft = async () => draft;
   const order = await client.createOnchainLimitOrder({
     from: Asset.contract(draft.sell_token), to: Asset.contract(draft.buy_token),

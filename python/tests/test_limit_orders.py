@@ -67,7 +67,25 @@ def on_network(client, *, current_ledger=100, max_entry_ttl=MAX_ENTRY_TTL):
     return client
 
 
-def validate(payload=None, max_live_until_ledger=250):
+def settlement_reads(client, *, executor_reward=5_000_000, allowance=None):
+    """Answer get_executor_reward from the configured settlement; other reads
+    return ``allowance``, or go through the RPC when it is None."""
+    read = client._read_contract
+
+    def fake(contract_id, fn, args, **kwargs):
+        if fn == "get_executor_reward":
+            assert contract_id == client.limit_order_config.settlement
+            return scval.to_uint128(executor_reward)
+        if allowance is None:
+            return read(contract_id, fn, args, **kwargs)
+        return scval.to_int128(allowance)
+
+    client._read_contract = Mock(side_effect=fake)
+    client._executor_reward_cache = None
+    return client
+
+
+def validate(payload=None, max_live_until_ledger=250, executor_reward=5_000_000):
     return validate_onchain_limit_order_draft(
         payload or DRAFT,
         expected_network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
@@ -83,6 +101,7 @@ def validate(payload=None, max_live_until_ledger=250):
         },
         allowance_expiration_ledger=250,
         max_live_until_ledger=max_live_until_ledger,
+        expected_executor_reward_xlm=executor_reward,
     )
 
 
@@ -137,6 +156,7 @@ def test_onchain_draft_validates_canonical_xdr_and_json_projection():
             },
             allowance_expiration_ledger=199,
             max_live_until_ledger=250,
+            expected_executor_reward_xlm=5_000_000,
         )
 
 
@@ -203,7 +223,7 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
         ),
     )
     client.api.create_limit_order_draft = Mock(return_value=DRAFT)
-    on_network(client)
+    settlement_reads(on_network(client), allowance=0)
     client.server.get_latest_ledger = Mock(side_effect=AssertionError("getLatestLedger"))
     assert client.latest_ledger() == 100
 
@@ -287,7 +307,7 @@ def onchain_client():
     class Signer:
         public_key = DRAFT["maker"]
 
-    return AquariusClient(
+    client = AquariusClient(
         network="testnet",
         signer=Signer(),
         limit_orders=LimitOrderConfig(
@@ -295,6 +315,7 @@ def onchain_client():
             batcher=BATCHER,
         ),
     )
+    return settlement_reads(client, allowance=0)
 
 
 def create(client, *, valid_after_ledger=100, expires_at_ledger=200, allowance_expiration_ledger=250):
@@ -367,6 +388,70 @@ def test_network_limit_read_failure_fails_closed(response):
     client.api.create_limit_order_draft.assert_not_called()
 
 
+def test_draft_executor_reward_must_match_the_settlement_contract():
+    client = on_network(onchain_client())
+    client.api.create_limit_order_draft = Mock(return_value=DRAFT)
+    assert create(client).executor_reward_xlm == 5_000_000
+    assert create(client).executor_reward_xlm == 5_000_000
+    reward_reads = [
+        call for call in client._read_contract.call_args_list
+        if call.args[1] == "get_executor_reward"
+    ]
+    assert len(reward_reads) == 1
+
+    settlement_reads(client, executor_reward=4_000_000)
+    with pytest.raises(AquariusError, match="executor reward 5000000 does not match the settlement contract's 4000000"):
+        create(client)
+
+    with pytest.raises(AquariusError, match="executor reward 5000000 does not match"):
+        validate(executor_reward=4_999_999)
+    with pytest.raises(AquariusError, match="expected_executor_reward_xlm"):
+        validate(executor_reward=None)
+
+
+def test_placement_rejects_an_inflated_reward_and_approves_the_verified_one():
+    client = on_network(onchain_client())
+    client.engine.sign_and_submit = Mock(side_effect=AssertionError("must not submit"))
+    client.engine.prepare = Mock(side_effect=AssertionError("must not build"))
+    inflated = replace(validate(), executor_reward_xlm=50_000_000, _client=client)
+    for build in [inflated.build_transaction, inflated.place]:
+        with pytest.raises(AquariusError, match="executor reward 50000000 does not match the settlement contract's 5000000"):
+            build()
+
+    captured = []
+
+    class Builder:
+        def append_invoke_contract_function_op(self, **kwargs):
+            captured.append(kwargs)
+            return self
+
+    def prepare(_source, append, _signer=None):
+        append(Builder())
+        return SimpleNamespace(to_xdr=lambda: "unsigned-xdr")
+
+    client.engine.prepare = prepare
+    assert replace(validate(), _client=client).build_transaction() == "unsigned-xdr"
+    calls = native(scval.to_native(captured[-1]["parameters"][1]))
+    xlm = Asset.native().contract_id(client.network.passphrase)
+    assert calls[1] == [
+        xlm,
+        "approve",
+        [DRAFT["maker"], DRAFT["settlement_address"], 5_000_000, 250],
+    ]
+
+
+@pytest.mark.parametrize("read,message", [
+    (Mock(side_effect=AquariusError("simulation failed")), "simulation failed"),
+    (Mock(return_value=scval.to_int128(5_000_000)), "invalid value"),
+])
+def test_executor_reward_read_failure_fails_closed(read, message):
+    client = on_network(onchain_client())
+    client._read_contract = read
+    client.api.create_limit_order_draft = Mock(side_effect=AssertionError("must not request a draft"))
+    with pytest.raises(AquariusError, match=message):
+        create(client)
+
+
 def test_unsigned_placement_and_cancel_do_not_restore_or_submit():
     from stellar_sdk import Account, Keypair
 
@@ -382,7 +467,7 @@ def test_unsigned_placement_and_cancel_do_not_restore_or_submit():
         settlement=DRAFT["settlement_address"], batcher=BATCHER,
     ))
     order = replace(validate(), _client=on_network(client))
-    client._read_contract = Mock(return_value=scval.to_int128(0))
+    settlement_reads(client, allowance=0)
     client.server.load_account = Mock(side_effect=lambda source: Account(source, 42))
     client.server.simulate_transaction = Mock(return_value=SimpleNamespace(restore_preamble=object()))
     client.engine.sign_and_submit = Mock(side_effect=AssertionError("unsigned builder must not submit"))
@@ -399,7 +484,7 @@ def test_unsigned_placement_does_not_restore_archived_allowance_read():
     client = AquariusClient(network="testnet", signer=Keypair.random(), limit_orders=LimitOrderConfig(
         settlement=DRAFT["settlement_address"], batcher=BATCHER,
     ))
-    order = replace(validate(), _client=on_network(client))
+    order = replace(validate(), _client=settlement_reads(on_network(client)))
     client.server.load_account = Mock(side_effect=lambda source: Account(source, 42))
     # Read simulation can return both an allowance and a restore preamble.
     client.server.simulate_transaction = Mock(return_value=SimpleNamespace(

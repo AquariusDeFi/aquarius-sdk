@@ -270,6 +270,11 @@ export interface ValidateOnchainDraftContext {
    * may exceed it.
    */
   maxLiveUntilLedger: number;
+  /**
+   * The trusted settlement contract's `get_executor_reward()`; the order must
+   * carry exactly that reward.
+   */
+  expectedExecutorRewardXlm: bigint;
   actions?: OnchainLimitOrderActions;
 }
 
@@ -366,6 +371,10 @@ export function validateOnchainLimitOrderDraft(
     context.allowanceExpirationLedger,
     context.maxLiveUntilLedger,
   );
+  validateExecutorReward(
+    BigInt(payload.executor_reward_xlm),
+    context.expectedExecutorRewardXlm,
+  );
 
   return new OnchainLimitOrder(
     orderId,
@@ -407,6 +416,22 @@ export function validateNetworkLifetime(
     throw new AquariusError(
       `allowance expiration ledger ${allowanceExpirationLedger} is beyond the network limit ` +
       `${maxLiveUntilLedger} (current ledger plus the network max TTL)`,
+    );
+  }
+}
+
+/** @internal */
+export function validateExecutorReward(orderReward: bigint, settlementReward: bigint): void {
+  // The settlement contract fixes the reward at construction and rejects any
+  // other value, so a different reward would only inflate the maker's XLM
+  // approval for an order that can never fill.
+  if (typeof settlementReward !== "bigint") {
+    throw new AquariusError("expectedExecutorRewardXlm must be a bigint");
+  }
+  if (orderReward !== settlementReward) {
+    throw new AquariusError(
+      `limit-order executor reward ${orderReward} does not match the ` +
+      `settlement contract's ${settlementReward}`,
     );
   }
 }
