@@ -354,9 +354,9 @@ def _validate_network_lifetime(
 
 
 def _validate_executor_reward(order_reward: int, settlement_reward: int) -> None:
-    # The settlement contract fixes the reward at construction and rejects any
-    # other value, so a different reward would only inflate the maker's XLM
-    # approval for an order that can never fill.
+    # The settlement contract rejects any order whose reward differs from its
+    # current one, so a different reward would only inflate the maker's XLM
+    # approval for an order that cannot fill.
     if isinstance(settlement_reward, bool) or not isinstance(settlement_reward, int):
         raise AquariusError("expected_executor_reward_xlm must be an integer")
     if order_reward != settlement_reward:

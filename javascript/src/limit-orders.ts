@@ -422,9 +422,9 @@ export function validateNetworkLifetime(
 
 /** @internal */
 export function validateExecutorReward(orderReward: bigint, settlementReward: bigint): void {
-  // The settlement contract fixes the reward at construction and rejects any
-  // other value, so a different reward would only inflate the maker's XLM
-  // approval for an order that can never fill.
+  // The settlement contract rejects any order whose reward differs from its
+  // current one, so a different reward would only inflate the maker's XLM
+  // approval for an order that cannot fill.
   if (typeof settlementReward !== "bigint") {
     throw new AquariusError("expectedExecutorRewardXlm must be a bigint");
   }

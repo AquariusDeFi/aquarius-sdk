@@ -62,16 +62,18 @@ function onNetwork(client, { currentLedger = 100, maxEntryTtl = MAX_ENTRY_TTL } 
   return client;
 }
 
-// Answers get_executor_reward from the configured settlement; other reads
+// Answers get_executor_reward from the configured settlement with
+// `client.settlementReward` (tests change it as the Admin would); other reads
 // return `allowance`, or go through the RPC when it is undefined.
 function settlementReads(client, { executorReward = 5_000_000n, allowance } = {}) {
   const read = client.readContract.bind(client);
   client.rewardReads = 0;
+  client.settlementReward = executorReward;
   client.readContract = async (contractId, fn, args) => {
     if (fn === "get_executor_reward") {
       assert.equal(contractId, draft.settlement_address);
       client.rewardReads += 1;
-      return nativeToScVal(executorReward, { type: "u128" });
+      return nativeToScVal(client.settlementReward, { type: "u128" });
     }
     return allowance === undefined
       ? read(contractId, fn, args)
@@ -287,7 +289,7 @@ test("client creates a validated draft and builds batcher and cancel transaction
     /i128/,
   );
 
-  client.readContract = async () => nativeToScVal(0n, { type: "i128" });
+  settlementReads(client, { allowance: 0n });
   const operations = [];
   client.engine.prepare = async (_source, buildOperation) => {
     operations.push(buildOperation());
@@ -440,6 +442,37 @@ test("placement rejects an inflated reward and approves the verified one", async
   ]);
 });
 
+test("executor reward cache expires after ten minutes", async t => {
+  let now = 1_000_000;
+  t.mock.method(Date, "now", () => now);
+  const client = onchainClient();
+  assert.equal(await client.limitOrderExecutorReward(), 5_000_000n);
+  client.settlementReward = 4_000_000n;
+  now += 599_999;
+  assert.equal(await client.limitOrderExecutorReward(), 5_000_000n);
+  now += 1;
+  assert.equal(await client.limitOrderExecutorReward(), 4_000_000n);
+});
+
+test("placement reads the executor reward fresh", async () => {
+  const client = onNetwork(onchainClient());
+  client.api.createLimitOrderDraft = async () => draft;
+  const order = await create(client);
+  client.settlementReward = 4_000_000n;
+  client.engine.prepare = async () => assert.fail("must not build");
+  await assert.rejects(order.buildTransaction(), /settlement contract's 4000000/);
+});
+
+test("draft mismatch re-reads a stale cached reward", async () => {
+  const client = onNetwork(onchainClient());
+  client.settlementReward = 4_000_000n;
+  assert.equal(await client.limitOrderExecutorReward(), 4_000_000n);
+  client.settlementReward = 5_000_000n;
+  client.api.createLimitOrderDraft = async () => draft;
+  assert.equal((await create(client)).executorRewardXlm, 5_000_000n);
+  assert.equal(client.rewardReads, 2);
+});
+
 for (const [name, read, message] of [
   ["a failed read", async () => { throw new AquariusError("simulation failed"); }, /simulation failed/],
   ["a non-u128 value", async () => nativeToScVal(5_000_000n, { type: "i128" }), /invalid value/],
@@ -467,7 +500,7 @@ test("unsigned placement and cancellation require restore without signing", asyn
     sellAmount: 1000n, minBuyAmount: 900n, validAfterLedger: 100,
     expiresAtLedger: 200, allowanceExpirationLedger: 250,
   });
-  client.readContract = async () => nativeToScVal(0n, { type: "i128" });
+  settlementReads(client, { allowance: 0n });
   client.server.getAccount = async source => new Account(source, "42");
   const data = new SorobanDataBuilder();
   client.server.simulateTransaction = async () => ({

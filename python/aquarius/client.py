@@ -50,6 +50,10 @@ _U32_MAX = 2**32 - 1
 # change only through validator-voted network upgrades.
 _NETWORK_MAX_TTL_REUSE_S = 10 * 60
 
+# How long draft creation reuses the settlement's executor reward. The Admin
+# can change it; placement always reads it fresh.
+_EXECUTOR_REWARD_REUSE_S = 10 * 60
+
 
 @dataclass(frozen=True)
 class ProviderFeeConfig:
@@ -186,8 +190,8 @@ class AquariusClient:
         self.signer = signer
         self.limit_order_config = limit_orders
         self._network_max_ttl_cache: tuple[float, int] | None = None
-        # (settlement address, reward): the contract has no reward setter.
-        self._executor_reward_cache: tuple[str, int] | None = None
+        # (settlement address, read at, reward)
+        self._executor_reward_cache: tuple[str, float, int] | None = None
 
     # -- reads (no signer required) -------------------------------------------
 
@@ -487,6 +491,14 @@ class AquariusClient:
             self._limit_order_api_url(),
             request,
         )
+        if isinstance(payload, dict) and payload.get("executor_reward_xlm") != str(
+            executor_reward_xlm
+        ):
+            # The cached reward may predate an Admin change; the validator
+            # still decides against the fresh value.
+            executor_reward_xlm = self._limit_order_executor_reward(
+                allow_restore=False, fresh=True
+            )
         return validate_onchain_limit_order_draft(
             payload,
             expected_network_passphrase=self.network.passphrase,
@@ -921,10 +933,11 @@ class AquariusClient:
             order.allowance_expiration_ledger,
             self._max_live_until_ledger(),
         )
-        # The XLM approval below is derived from this reward.
+        # The XLM approval below is derived from this reward, so it is read
+        # fresh rather than from the cache.
         _validate_executor_reward(
             order.executor_reward_xlm,
-            self._limit_order_executor_reward(allow_restore=allow_restore),
+            self._limit_order_executor_reward(allow_restore=allow_restore, fresh=True),
         )
         xlm_token = Asset.native().contract_id(self.network.passphrase)
         current_allowances = {}
@@ -1016,12 +1029,20 @@ class AquariusClient:
     def _max_live_until_ledger(self) -> int:
         return self.latest_ledger() + self.network_max_ttl()
 
-    def _limit_order_executor_reward(self, *, allow_restore: bool = True) -> int:
-        """The configured settlement contract's fixed executor reward."""
+    def _limit_order_executor_reward(
+        self, *, allow_restore: bool = True, fresh: bool = False
+    ) -> int:
+        """The configured settlement contract's current executor reward."""
         settlement = self._require_limit_order_config().settlement
+        now = time.monotonic()
         cached = self._executor_reward_cache
-        if cached is not None and cached[0] == settlement:
-            return cached[1]
+        if (
+            not fresh
+            and cached is not None
+            and cached[0] == settlement
+            and now - cached[1] < _EXECUTOR_REWARD_REUSE_S
+        ):
+            return cached[2]
         value = self._read_contract(
             settlement, "get_executor_reward", [], allow_restore=allow_restore
         )
@@ -1031,7 +1052,7 @@ class AquariusClient:
             raise AquariusError(
                 "settlement get_executor_reward returned an invalid value"
             ) from exc
-        self._executor_reward_cache = (settlement, reward)
+        self._executor_reward_cache = (settlement, now, reward)
         return reward
 
     def _require_signer(self):

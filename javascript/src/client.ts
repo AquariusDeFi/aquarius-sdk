@@ -235,6 +235,12 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  */
 const NETWORK_MAX_TTL_REUSE_MS = 10 * 60 * 1_000;
 
+/**
+ * How long draft creation reuses the settlement's executor reward. The Admin
+ * can change it; placement always reads it fresh.
+ */
+const EXECUTOR_REWARD_REUSE_MS = 10 * 60 * 1_000;
+
 export class AquariusClient {
   /**
    * Pauses before re-quotes in swap(), indexed by retry attempt (the last
@@ -256,8 +262,7 @@ export class AquariusClient {
   private readonly signer?: Signer;
   private readonly limitOrderConfig?: LimitOrderConfig;
   private networkMaxTtlCache?: { fetchedAt: number; value: Promise<number> };
-  /** The settlement contract has no reward setter: one read serves the client. */
-  private executorRewardCache?: Promise<bigint>;
+  private executorRewardCache?: { fetchedAt: number; value: Promise<bigint> };
 
   constructor(config: AquariusConfig) {
     const preset = NETWORKS[config.network];
@@ -348,9 +353,13 @@ export class AquariusClient {
     return ledger + maxTtl;
   }
 
-  /** The configured settlement contract's fixed executor reward. */
-  private limitOrderExecutorReward(): Promise<bigint> {
-    if (this.executorRewardCache) return this.executorRewardCache;
+  /** The configured settlement contract's current executor reward. */
+  private limitOrderExecutorReward(fresh = false): Promise<bigint> {
+    const now = Date.now();
+    const cached = this.executorRewardCache;
+    if (!fresh && cached && now - cached.fetchedAt < EXECUTOR_REWARD_REUSE_MS) {
+      return cached.value;
+    }
     const settlement = this.requireLimitOrderConfig().settlement;
     const value = this.readContract(settlement, "get_executor_reward", [])
       .then(result => {
@@ -361,10 +370,10 @@ export class AquariusClient {
       })
       .catch((error: unknown) => {
         // a failed read must not poison later ones
-        if (this.executorRewardCache === value) this.executorRewardCache = undefined;
+        if (this.executorRewardCache?.value === value) this.executorRewardCache = undefined;
         throw error;
       });
-    this.executorRewardCache = value;
+    this.executorRewardCache = { fetchedAt: now, value };
     return value;
   }
 
@@ -641,7 +650,7 @@ export class AquariusClient {
       params.allowanceExpirationLedger,
       maxLiveUntilLedger,
     );
-    const executorRewardXlm = await this.limitOrderExecutorReward();
+    let executorRewardXlm = await this.limitOrderExecutorReward();
     const payload = await this.api.createLimitOrderDraft(
       this.limitOrderApiUrl(),
       {
@@ -655,6 +664,11 @@ export class AquariusClient {
         expires_at_ledger: params.expiresAtLedger,
       },
     );
+    if (payload?.executor_reward_xlm !== executorRewardXlm.toString()) {
+      // The cached reward may predate an Admin change; the validator still
+      // decides against the fresh value.
+      executorRewardXlm = await this.limitOrderExecutorReward(true);
+    }
     return validateOnchainLimitOrderDraft(
       payload as OnchainLimitOrderDraftPayload,
       {
@@ -1570,8 +1584,9 @@ export class AquariusClient {
       order.allowanceExpirationLedger,
       await this.maxLiveUntilLedger(),
     );
-    // The XLM approval below is derived from this reward.
-    validateExecutorReward(order.executorRewardXlm, await this.limitOrderExecutorReward());
+    // The XLM approval below is derived from this reward, so it is read fresh
+    // rather than from the cache.
+    validateExecutorReward(order.executorRewardXlm, await this.limitOrderExecutorReward(true));
     const xlmToken = Asset.native().contractId(this.network.passphrase);
     const currentAllowances = new Map<string, bigint>();
     for (const token of order.requiredAllowances(xlmToken).keys()) {

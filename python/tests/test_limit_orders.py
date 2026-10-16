@@ -68,14 +68,16 @@ def on_network(client, *, current_ledger=100, max_entry_ttl=MAX_ENTRY_TTL):
 
 
 def settlement_reads(client, *, executor_reward=5_000_000, allowance=None):
-    """Answer get_executor_reward from the configured settlement; other reads
-    return ``allowance``, or go through the RPC when it is None."""
+    """Answer get_executor_reward from the configured settlement with
+    ``client.settlement_reward`` (tests change it as the Admin would); other
+    reads return ``allowance``, or go through the RPC when it is None."""
     read = client._read_contract
+    client.settlement_reward = executor_reward
 
     def fake(contract_id, fn, args, **kwargs):
         if fn == "get_executor_reward":
             assert contract_id == client.limit_order_config.settlement
-            return scval.to_uint128(executor_reward)
+            return scval.to_uint128(client.settlement_reward)
         if allowance is None:
             return read(contract_id, fn, args, **kwargs)
         return scval.to_int128(allowance)
@@ -261,7 +263,7 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
             allowance_expiration_ledger=250,
         )
 
-    client._read_contract = Mock(return_value=scval.to_int128(0))
+    settlement_reads(client, allowance=0)
     captured = []
 
     class Builder:
@@ -438,6 +440,40 @@ def test_placement_rejects_an_inflated_reward_and_approves_the_verified_one():
         "approve",
         [DRAFT["maker"], DRAFT["settlement_address"], 5_000_000, 250],
     ]
+
+
+def test_executor_reward_cache_expires_after_ten_minutes(monkeypatch):
+    import aquarius.client as client_module
+
+    now = [1_000.0]
+    monkeypatch.setattr(client_module.time, "monotonic", lambda: now[0])
+    client = onchain_client()
+    assert client._limit_order_executor_reward() == 5_000_000
+    client.settlement_reward = 4_000_000
+    now[0] += 599
+    assert client._limit_order_executor_reward() == 5_000_000
+    now[0] += 1
+    assert client._limit_order_executor_reward() == 4_000_000
+
+
+def test_placement_reads_the_executor_reward_fresh():
+    client = on_network(onchain_client())
+    client.api.create_limit_order_draft = Mock(return_value=DRAFT)
+    order = create(client)
+    client.settlement_reward = 4_000_000
+    client.engine.prepare = Mock(side_effect=AssertionError("must not build"))
+    with pytest.raises(AquariusError, match="settlement contract's 4000000"):
+        order.build_transaction()
+
+
+def test_draft_mismatch_rereads_a_stale_cached_reward():
+    client = on_network(onchain_client())
+    client.settlement_reward = 4_000_000
+    assert client._limit_order_executor_reward() == 4_000_000
+    client.settlement_reward = 5_000_000
+    client.api.create_limit_order_draft = Mock(return_value=DRAFT)
+    assert create(client).executor_reward_xlm == 5_000_000
+    assert client._read_contract.call_count == 2
 
 
 @pytest.mark.parametrize("read,message", [
