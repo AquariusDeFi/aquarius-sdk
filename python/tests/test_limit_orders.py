@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from stellar_sdk import Address, Network, StrKey, scval
+from stellar_sdk import Address, Network, StrKey, scval, xdr
 
 from aquarius import (
     AquariusClient,
@@ -21,6 +21,8 @@ TESTDATA = pathlib.Path(__file__).resolve().parents[2] / "testdata"
 DRAFT = json.loads((TESTDATA / "limit_order_onchain_draft.json").read_text())
 BATCHER = StrKey.encode_contract(bytes([5]) * 32)
 XLM_TOKEN = StrKey.encode_contract(bytes([4]) * 32)
+# Mainnet's max_entry_ttl: a network max TTL of 3,110,399 ledgers.
+MAX_ENTRY_TTL = 3_110_400
 
 
 def native(value):
@@ -31,7 +33,41 @@ def native(value):
     return value
 
 
-def validate(payload=None):
+def archival_settings(max_entry_ttl):
+    u32 = xdr.Uint32
+    entry = xdr.LedgerEntryData(
+        type=xdr.LedgerEntryType.CONFIG_SETTING,
+        config_setting=xdr.ConfigSettingEntry(
+            config_setting_id=xdr.ConfigSettingID.CONFIG_SETTING_STATE_ARCHIVAL,
+            state_archival_settings=xdr.StateArchivalSettings(
+                max_entry_ttl=u32(max_entry_ttl),
+                min_temporary_ttl=u32(17_280),
+                min_persistent_ttl=u32(2_073_600),
+                persistent_rent_rate_denominator=xdr.Int64(1_215),
+                temp_rent_rate_denominator=xdr.Int64(2_430),
+                max_entries_to_archive=u32(1_000),
+                live_soroban_state_size_window_sample_size=u32(30),
+                live_soroban_state_size_window_sample_period=u32(64),
+                eviction_scan_size=u32(100_000),
+                starting_eviction_scan_level=u32(7),
+            ),
+        ),
+    )
+    return SimpleNamespace(entries=[SimpleNamespace(xdr=entry.to_xdr())])
+
+
+def on_network(client, *, current_ledger=100, max_entry_ttl=MAX_ENTRY_TTL):
+    client.server.get_health = Mock(
+        return_value=SimpleNamespace(latest_ledger=current_ledger)
+    )
+    client.server.get_ledger_entries = Mock(
+        return_value=archival_settings(max_entry_ttl)
+    )
+    client._network_max_ttl_cache = None
+    return client
+
+
+def validate(payload=None, max_live_until_ledger=250):
     return validate_onchain_limit_order_draft(
         payload or DRAFT,
         expected_network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
@@ -46,6 +82,7 @@ def validate(payload=None):
             "expires_at_ledger": 200,
         },
         allowance_expiration_ledger=250,
+        max_live_until_ledger=max_live_until_ledger,
     )
 
 
@@ -99,6 +136,7 @@ def test_onchain_draft_validates_canonical_xdr_and_json_projection():
                 "expires_at_ledger": 200,
             },
             allowance_expiration_ledger=199,
+            max_live_until_ledger=250,
         )
 
 
@@ -165,8 +203,8 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
         ),
     )
     client.api.create_limit_order_draft = Mock(return_value=DRAFT)
+    on_network(client)
     client.server.get_latest_ledger = Mock(side_effect=AssertionError("getLatestLedger"))
-    client.server.get_health = Mock(return_value=SimpleNamespace(latest_ledger=100))
     assert client.latest_ledger() == 100
 
     order = client.create_onchain_limit_order(
@@ -245,6 +283,90 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
     assert receipt.tx_hash == "ab" * 32
 
 
+def onchain_client():
+    class Signer:
+        public_key = DRAFT["maker"]
+
+    return AquariusClient(
+        network="testnet",
+        signer=Signer(),
+        limit_orders=LimitOrderConfig(
+            settlement=DRAFT["settlement_address"],
+            batcher=BATCHER,
+        ),
+    )
+
+
+def create(client, *, valid_after_ledger=100, expires_at_ledger=200, allowance_expiration_ledger=250):
+    return client.create_onchain_limit_order(
+        Asset.contract(DRAFT["sell_token"]),
+        Asset.contract(DRAFT["buy_token"]),
+        sell_amount=1_000,
+        min_buy_amount=900,
+        valid_after_ledger=valid_after_ledger,
+        expires_at_ledger=expires_at_ledger,
+        allowance_expiration_ledger=allowance_expiration_ledger,
+    )
+
+
+def test_network_max_ttl_is_max_entry_ttl_minus_one_and_cached():
+    client = on_network(onchain_client())
+    assert client.network_max_ttl() == 3_110_399
+    assert client.network_max_ttl() == 3_110_399
+    client.server.get_ledger_entries.assert_called_once()
+    (key,), = client.server.get_ledger_entries.call_args.args
+    assert key.config_setting.config_setting_id == xdr.ConfigSettingID.CONFIG_SETTING_STATE_ARCHIVAL
+
+
+def test_draft_lifetime_is_capped_at_current_ledger_plus_network_max_ttl():
+    # current ledger 100 and max TTL 150: nothing may expire after ledger 250
+    client = on_network(onchain_client(), current_ledger=100, max_entry_ttl=151)
+    client.api.create_limit_order_draft = Mock(return_value=DRAFT)
+    assert create(client, allowance_expiration_ledger=250).order_id == DRAFT["order_id"]
+
+    with pytest.raises(AquariusError, match="limit-order expiration ledger 251 is beyond the network limit 250"):
+        create(client, expires_at_ledger=251, allowance_expiration_ledger=251)
+    with pytest.raises(AquariusError, match="limit-order expiration ledger 251"):
+        create(client, valid_after_ledger=200, expires_at_ledger=251, allowance_expiration_ledger=251)
+    with pytest.raises(AquariusError, match="allowance expiration ledger 251 is beyond the network limit 250"):
+        create(client, allowance_expiration_ledger=251)
+    client.api.create_limit_order_draft.assert_called_once()
+
+
+def test_draft_validation_rejects_lifetimes_beyond_the_given_network_limit():
+    assert validate(max_live_until_ledger=250).allowance_expiration_ledger == 250
+    with pytest.raises(AquariusError, match="allowance expiration ledger 250"):
+        validate(max_live_until_ledger=249)
+    with pytest.raises(AquariusError, match="limit-order expiration ledger 200"):
+        validate(max_live_until_ledger=199)
+    with pytest.raises(AquariusError, match="max_live_until_ledger"):
+        validate(max_live_until_ledger=None)
+
+
+def test_placement_rechecks_the_network_limit_before_building():
+    client = on_network(onchain_client(), current_ledger=100, max_entry_ttl=150)
+    order = replace(validate(), _client=client)
+    client._read_contract = Mock(side_effect=AssertionError("must not read allowances"))
+    client.engine.prepare = Mock(side_effect=AssertionError("must not build"))
+    client.engine.sign_and_submit = Mock(side_effect=AssertionError("must not submit"))
+    for build in [order.build_transaction, order.place]:
+        with pytest.raises(AquariusError, match="allowance expiration ledger 250 is beyond the network limit 249"):
+            build()
+
+
+@pytest.mark.parametrize("response", [
+    SimpleNamespace(entries=[]),
+    RuntimeError("rpc unavailable"),
+])
+def test_network_limit_read_failure_fails_closed(response):
+    client = on_network(onchain_client())
+    client.server.get_ledger_entries = Mock(side_effect=[response])
+    client.api.create_limit_order_draft = Mock(side_effect=AssertionError("must not request a draft"))
+    with pytest.raises((AquariusError, RuntimeError), match="STATE_ARCHIVAL|rpc unavailable"):
+        create(client)
+    client.api.create_limit_order_draft.assert_not_called()
+
+
 def test_unsigned_placement_and_cancel_do_not_restore_or_submit():
     from stellar_sdk import Account, Keypair
 
@@ -259,7 +381,7 @@ def test_unsigned_placement_and_cancel_do_not_restore_or_submit():
     client = AquariusClient(network="testnet", signer=signer, limit_orders=LimitOrderConfig(
         settlement=DRAFT["settlement_address"], batcher=BATCHER,
     ))
-    order = replace(validate(), _client=client)
+    order = replace(validate(), _client=on_network(client))
     client._read_contract = Mock(return_value=scval.to_int128(0))
     client.server.load_account = Mock(side_effect=lambda source: Account(source, 42))
     client.server.simulate_transaction = Mock(return_value=SimpleNamespace(restore_preamble=object()))
@@ -277,7 +399,7 @@ def test_unsigned_placement_does_not_restore_archived_allowance_read():
     client = AquariusClient(network="testnet", signer=Keypair.random(), limit_orders=LimitOrderConfig(
         settlement=DRAFT["settlement_address"], batcher=BATCHER,
     ))
-    order = replace(validate(), _client=client)
+    order = replace(validate(), _client=on_network(client))
     client.server.load_account = Mock(side_effect=lambda source: Account(source, 42))
     # Read simulation can return both an allowance and a restore preamble.
     client.server.simulate_transaction = Mock(return_value=SimpleNamespace(

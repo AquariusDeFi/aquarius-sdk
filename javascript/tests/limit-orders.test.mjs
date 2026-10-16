@@ -8,6 +8,7 @@ import {
   StrKey,
   nativeToScVal,
   scValToNative,
+  xdr,
 } from "@stellar/stellar-sdk";
 
 import {
@@ -28,8 +29,61 @@ const draft = JSON.parse(
 );
 const batcher = StrKey.encodeContract(Buffer.alloc(32, 5));
 const xlmToken = StrKey.encodeContract(Buffer.alloc(32, 4));
+// Mainnet's maxEntryTtl: a network max TTL of 3,110,399 ledgers.
+const MAX_ENTRY_TTL = 3_110_400;
 
-function validate(payload = draft) {
+function archivalSettings(maxEntryTtl) {
+  const settings = new xdr.StateArchivalSettings({
+    maxEntryTtl,
+    minTemporaryTtl: 17_280,
+    minPersistentTtl: 2_073_600,
+    persistentRentRateDenominator: xdr.Int64.fromString("1215"),
+    tempRentRateDenominator: xdr.Int64.fromString("2430"),
+    maxEntriesToArchive: 1_000,
+    liveSorobanStateSizeWindowSampleSize: 30,
+    liveSorobanStateSizeWindowSamplePeriod: 64,
+    evictionScanSize: 100_000,
+    startingEvictionScanLevel: 7,
+  });
+  const val = xdr.LedgerEntryData.configSetting(
+    xdr.ConfigSettingEntry.configSettingStateArchival(settings),
+  );
+  return { entries: [{ val }], latestLedger: 100 };
+}
+
+function onNetwork(client, { currentLedger = 100, maxEntryTtl = MAX_ENTRY_TTL } = {}) {
+  client.ledgerEntryReads = [];
+  client.server.getHealth = async () => ({ latestLedger: currentLedger });
+  client.server.getLedgerEntries = async (...keys) => {
+    client.ledgerEntryReads.push(keys);
+    return archivalSettings(maxEntryTtl);
+  };
+  client.networkMaxTtlCache = undefined;
+  return client;
+}
+
+function onchainClient() {
+  return new AquariusClient({
+    network: "testnet",
+    signer: { publicKey: () => draft.maker, sign: value => value },
+    limitOrders: { settlement: draft.settlement_address, batcher },
+  });
+}
+
+function create(client, overrides = {}) {
+  return client.createOnchainLimitOrder({
+    from: Asset.contract(draft.sell_token),
+    to: Asset.contract(draft.buy_token),
+    sellAmount: 1_000n,
+    minBuyAmount: 900n,
+    validAfterLedger: 100,
+    expiresAtLedger: 200,
+    allowanceExpirationLedger: 250,
+    ...overrides,
+  });
+}
+
+function validate(payload = draft, maxLiveUntilLedger = 250) {
   return validateOnchainLimitOrderDraft(payload, {
     expectedNetworkPassphrase: Networks.TESTNET,
     expectedSettlement: draft.settlement_address,
@@ -43,6 +97,7 @@ function validate(payload = draft) {
       expiresAtLedger: 200,
     },
     allowanceExpirationLedger: 250,
+    maxLiveUntilLedger,
   });
 }
 
@@ -94,6 +149,7 @@ test("on-chain draft validates canonical XDR and JSON projection", () => {
         expiresAtLedger: 200,
       },
       allowanceExpirationLedger: 199,
+      maxLiveUntilLedger: 250,
     }),
     /allowance expiration/,
   );
@@ -169,8 +225,8 @@ test("client creates a validated draft and builds batcher and cancel transaction
     draftRequest = { url, request };
     return draft;
   };
+  onNetwork(client);
   client.server.getLatestLedger = async () => assert.fail("getLatestLedger");
-  client.server.getHealth = async () => ({ latestLedger: 100 });
   assert.equal(await client.latestLedger(), 100);
 
   const order = await client.createOnchainLimitOrder({
@@ -244,6 +300,75 @@ test("client creates a validated draft and builds batcher and cancel transaction
   assert.deepEqual(receipt, { orderId: draft.order_id, txHash: "ab".repeat(32) });
 });
 
+test("network max TTL is maxEntryTtl minus one and cached", async () => {
+  const client = onNetwork(onchainClient());
+  assert.equal(await client.networkMaxTtl(), 3_110_399);
+  assert.equal(await client.networkMaxTtl(), 3_110_399);
+  assert.equal(client.ledgerEntryReads.length, 1);
+  const [[key]] = client.ledgerEntryReads;
+  assert.equal(key.configSetting.configSettingId.name, "configSettingStateArchival");
+});
+
+test("draft lifetime is capped at current ledger plus network max TTL", async () => {
+  // current ledger 100 and max TTL 150: nothing may expire after ledger 250
+  const client = onNetwork(onchainClient(), { currentLedger: 100, maxEntryTtl: 151 });
+  let draftRequests = 0;
+  client.api.createLimitOrderDraft = async () => {
+    draftRequests += 1;
+    return draft;
+  };
+  assert.equal((await create(client)).orderId, draft.order_id);
+
+  await assert.rejects(
+    create(client, { expiresAtLedger: 251, allowanceExpirationLedger: 251 }),
+    /limit-order expiration ledger 251 is beyond the network limit 250/,
+  );
+  await assert.rejects(
+    create(client, { validAfterLedger: 200, expiresAtLedger: 251, allowanceExpirationLedger: 251 }),
+    /limit-order expiration ledger 251/,
+  );
+  await assert.rejects(
+    create(client, { allowanceExpirationLedger: 251 }),
+    /allowance expiration ledger 251 is beyond the network limit 250/,
+  );
+  assert.equal(draftRequests, 1);
+});
+
+test("draft validation rejects lifetimes beyond the given network limit", () => {
+  assert.equal(validate(draft, 250).allowanceExpirationLedger, 250);
+  assert.throws(() => validate(draft, 249), /allowance expiration ledger 250/);
+  assert.throws(() => validate(draft, 199), /limit-order expiration ledger 200/);
+  assert.throws(() => validate(draft, null), /maxLiveUntilLedger/);
+});
+
+test("placement rechecks the network limit before building", async () => {
+  const client = onNetwork(onchainClient(), { currentLedger: 100, maxEntryTtl: 151 });
+  client.api.createLimitOrderDraft = async () => draft;
+  const order = await create(client);
+  onNetwork(client, { currentLedger: 100, maxEntryTtl: 150 });
+  client.readContract = async () => assert.fail("must not read allowances");
+  client.engine.prepare = async () => assert.fail("must not build");
+  client.engine.signAndSubmit = async () => assert.fail("must not submit");
+  for (const build of [() => order.buildTransaction(), () => order.place()]) {
+    await assert.rejects(
+      build(),
+      /allowance expiration ledger 250 is beyond the network limit 249/,
+    );
+  }
+});
+
+for (const [name, read] of [
+  ["no config entry", async () => ({ entries: [], latestLedger: 100 })],
+  ["an RPC error", async () => { throw new Error("rpc unavailable"); }],
+]) {
+  test(`network limit read failure fails closed on ${name}`, async () => {
+    const client = onNetwork(onchainClient());
+    client.server.getLedgerEntries = read;
+    client.api.createLimitOrderDraft = async () => assert.fail("must not request a draft");
+    await assert.rejects(create(client), /STATE_ARCHIVAL|rpc unavailable/);
+  });
+}
+
 test("unsigned placement and cancellation require restore without signing", async () => {
   const { Account, SorobanDataBuilder } = await import("@stellar/stellar-sdk");
   const { RestoreRequiredError } = await import("../dist/index.js");
@@ -252,6 +377,7 @@ test("unsigned placement and cancellation require restore without signing", asyn
     signer: { publicKey: () => draft.maker, sign: () => { throw new Error("unsigned builder must not sign"); } },
     limitOrders: { settlement: draft.settlement_address, batcher },
   });
+  onNetwork(client);
   client.api.createLimitOrderDraft = async () => draft;
   const order = await client.createOnchainLimitOrder({
     from: Asset.contract(draft.sell_token), to: Asset.contract(draft.buy_token),

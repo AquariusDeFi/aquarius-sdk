@@ -23,6 +23,7 @@ import {
   fillParameters,
   parseLimitOrderRecord,
   validateFillReceipt,
+  validateNetworkLifetime,
   validateOnchainLimitOrderDraft,
 } from "./limit-orders.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
@@ -227,6 +228,12 @@ function grossBeforeProviderFee(net: bigint, config: ProviderFeeConfig): bigint 
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * How long networkMaxTtl() reuses the network's archival settings. They
+ * change only through validator-voted network upgrades.
+ */
+const NETWORK_MAX_TTL_REUSE_MS = 10 * 60 * 1_000;
+
 export class AquariusClient {
   /**
    * Pauses before re-quotes in swap(), indexed by retry attempt (the last
@@ -247,6 +254,7 @@ export class AquariusClient {
   private readonly engine: SubmitEngine;
   private readonly signer?: Signer;
   private readonly limitOrderConfig?: LimitOrderConfig;
+  private networkMaxTtlCache?: { fetchedAt: number; value: Promise<number> };
 
   constructor(config: AquariusConfig) {
     const preset = NETWORKS[config.network];
@@ -289,6 +297,52 @@ export class AquariusClient {
     // getHealth, not getLatestLedger: the latter also returns the ledger's
     // full LedgerCloseMeta.
     return (await this.server.getHealth()).latestLedger;
+  }
+
+  /**
+   * Most ledgers past the current one that the network lets a ledger entry,
+   * an authorization signature, or a SAC allowance live:
+   * StateArchivalSettings.maxEntryTtl - 1, Soroban's `storage().max_ttl()`.
+   * Read from the RPC and reused for ten minutes.
+   */
+  networkMaxTtl(): Promise<number> {
+    const now = Date.now();
+    const cached = this.networkMaxTtlCache;
+    if (cached && now - cached.fetchedAt < NETWORK_MAX_TTL_REUSE_MS) return cached.value;
+    const value = this.fetchNetworkMaxTtl().catch((error: unknown) => {
+      // a failed read must not poison later ones
+      if (this.networkMaxTtlCache?.value === value) this.networkMaxTtlCache = undefined;
+      throw error;
+    });
+    this.networkMaxTtlCache = { fetchedAt: now, value };
+    return value;
+  }
+
+  private async fetchNetworkMaxTtl(): Promise<number> {
+    const key = xdr.LedgerKey.configSetting(
+      new xdr.LedgerKeyConfigSetting({
+        configSettingId: xdr.ConfigSettingId.configSettingStateArchival,
+      }),
+    );
+    const { entries } = await this.server.getLedgerEntries(key);
+    const data = entries[0]?.val;
+    if (
+      !data ||
+      data.type !== "configSetting" ||
+      data.configSetting.type !== "configSettingStateArchival"
+    ) {
+      throw new AquariusError("The RPC returned no STATE_ARCHIVAL config setting");
+    }
+    const maxEntryTtl = data.configSetting.stateArchivalSettings.maxEntryTtl;
+    if (!Number.isInteger(maxEntryTtl) || maxEntryTtl < 1) {
+      throw new AquariusError("The RPC returned an invalid network max entry TTL");
+    }
+    return maxEntryTtl - 1;
+  }
+
+  private async maxLiveUntilLedger(): Promise<number> {
+    const [ledger, maxTtl] = await Promise.all([this.latestLedger(), this.networkMaxTtl()]);
+    return ledger + maxTtl;
   }
 
   /** Read one validated cursor page from the public order registry. */
@@ -558,6 +612,12 @@ export class AquariusClient {
       throw new AquariusError("limit-order sell and buy tokens must differ");
     }
     const config = this.requireLimitOrderConfig(true);
+    const maxLiveUntilLedger = await this.maxLiveUntilLedger();
+    validateNetworkLifetime(
+      params.expiresAtLedger,
+      params.allowanceExpirationLedger,
+      maxLiveUntilLedger,
+    );
     const payload = await this.api.createLimitOrderDraft(
       this.limitOrderApiUrl(),
       {
@@ -586,6 +646,7 @@ export class AquariusClient {
           expiresAtLedger: params.expiresAtLedger,
         },
         allowanceExpirationLedger: params.allowanceExpirationLedger,
+        maxLiveUntilLedger,
         actions: this.onchainLimitOrderActions(),
       },
     );
@@ -1479,6 +1540,11 @@ export class AquariusClient {
     order: OnchainLimitOrder,
   ): Promise<xdr.Operation> {
     const config = this.requireLimitOrderConfig(true);
+    validateNetworkLifetime(
+      order.expiresAtLedger,
+      order.allowanceExpirationLedger,
+      await this.maxLiveUntilLedger(),
+    );
     const xlmToken = Asset.native().contractId(this.network.passphrase);
     const currentAllowances = new Map<string, bigint>();
     for (const token of order.requiredAllowances(xlmToken).keys()) {

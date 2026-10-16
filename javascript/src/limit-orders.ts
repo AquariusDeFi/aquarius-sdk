@@ -264,6 +264,12 @@ export interface ValidateOnchainDraftContext {
     expiresAtLedger: number;
   };
   allowanceExpirationLedger: number;
+  /**
+   * The current ledger plus the network max TTL
+   * (`client.latestLedger() + client.networkMaxTtl()`); neither expiration
+   * may exceed it.
+   */
+  maxLiveUntilLedger: number;
   actions?: OnchainLimitOrderActions;
 }
 
@@ -355,6 +361,11 @@ export function validateOnchainLimitOrderDraft(
       "allowance expiration must be a u32 ledger at or after order expiration",
     );
   }
+  validateNetworkLifetime(
+    payload.expires_at_ledger,
+    context.allowanceExpirationLedger,
+    context.maxLiveUntilLedger,
+  );
 
   return new OnchainLimitOrder(
     orderId,
@@ -371,6 +382,33 @@ export function validateOnchainLimitOrderDraft(
     orderScVal,
     context.actions,
   );
+}
+
+/** @internal */
+export function validateNetworkLifetime(
+  expiresAtLedger: number,
+  allowanceExpirationLedger: number,
+  maxLiveUntilLedger: number,
+): void {
+  // The maker's signature expires at expiresAtLedger, the order marker and
+  // the SAC allowances live until their expirations, and the network refuses
+  // any of them beyond the current ledger plus its max TTL: while beyond it,
+  // a signed order can be neither placed, filled nor cancelled.
+  if (!Number.isInteger(maxLiveUntilLedger)) {
+    throw new AquariusError("maxLiveUntilLedger must be a ledger sequence");
+  }
+  if (expiresAtLedger > maxLiveUntilLedger) {
+    throw new AquariusError(
+      `limit-order expiration ledger ${expiresAtLedger} is beyond the network limit ` +
+      `${maxLiveUntilLedger} (current ledger plus the network max TTL)`,
+    );
+  }
+  if (allowanceExpirationLedger > maxLiveUntilLedger) {
+    throw new AquariusError(
+      `allowance expiration ledger ${allowanceExpirationLedger} is beyond the network limit ` +
+      `${maxLiveUntilLedger} (current ledger plus the network max TTL)`,
+    );
+  }
 }
 
 export function buildOnchainPlacementArgs(

@@ -215,9 +215,15 @@ def validate_onchain_limit_order_draft(
     expected_maker: str,
     expected_order: dict,
     allowance_expiration_ledger: int,
+    max_live_until_ledger: int,
     client: AquariusClient | None = None,
 ) -> OnchainLimitOrder:
-    """Validate the registry JSON against its canonical OrderV1 ScVal."""
+    """Validate the registry JSON against its canonical OrderV1 ScVal.
+
+    max_live_until_ledger is the current ledger plus the network max TTL
+    (``AquariusClient.latest_ledger() + AquariusClient.network_max_ttl()``);
+    neither expiration may exceed it.
+    """
     try:
         order_scval = xdr.SCVal.from_xdr(payload["order_xdr"])
         order_id = hashlib.sha256(order_scval.to_xdr_bytes()).hexdigest()
@@ -291,6 +297,11 @@ def validate_onchain_limit_order_draft(
         raise AquariusError(
             "allowance expiration must be a u32 ledger at or after order expiration"
         )
+    _validate_network_lifetime(
+        projection["expires_at_ledger"],
+        allowance_expiration_ledger,
+        max_live_until_ledger,
+    )
 
     return OnchainLimitOrder(
         order_id=order_id,
@@ -307,6 +318,33 @@ def validate_onchain_limit_order_draft(
         order_scval=order_scval,
         _client=client,
     )
+
+
+def _validate_network_lifetime(
+    expires_at_ledger: int,
+    allowance_expiration_ledger: int,
+    max_live_until_ledger: int,
+) -> None:
+    # The maker's signature expires at expires_at_ledger, the order marker and
+    # the SAC allowances live until their expirations, and the network refuses
+    # any of them beyond the current ledger plus its max TTL: while beyond it,
+    # a signed order can be neither placed, filled nor cancelled.
+    if isinstance(max_live_until_ledger, bool) or not isinstance(
+        max_live_until_ledger, int
+    ):
+        raise AquariusError("max_live_until_ledger must be a ledger sequence")
+    if expires_at_ledger > max_live_until_ledger:
+        raise AquariusError(
+            f"limit-order expiration ledger {expires_at_ledger} is beyond the "
+            f"network limit {max_live_until_ledger} (current ledger plus the "
+            "network max TTL)"
+        )
+    if allowance_expiration_ledger > max_live_until_ledger:
+        raise AquariusError(
+            f"allowance expiration ledger {allowance_expiration_ledger} is beyond "
+            f"the network limit {max_live_until_ledger} (current ledger plus the "
+            "network max TTL)"
+        )
 
 
 def build_onchain_placement_args(

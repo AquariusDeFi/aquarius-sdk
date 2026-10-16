@@ -7,7 +7,15 @@ import requests
 from stellar_sdk import Address, Network, SorobanServer, scval
 from stellar_sdk.client.requests_client import RequestsClient
 from stellar_sdk.exceptions import AccountNotFoundException
-from stellar_sdk.xdr import SCVal, SorobanAuthorizationEntry
+from stellar_sdk.xdr import (
+    ConfigSettingID,
+    LedgerEntryData,
+    LedgerEntryType,
+    LedgerKey,
+    LedgerKeyConfigSetting,
+    SCVal,
+    SorobanAuthorizationEntry,
+)
 from stellar_sdk.soroban_rpc import AuthMode
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
@@ -22,6 +30,7 @@ from .limit_orders import (
     OnchainLimitOrder,
     OnchainLimitOrderReceipt,
     PreparedLimitOrderFill,
+    _validate_network_lifetime,
     build_onchain_placement_args,
     fill_parameters,
     parse_limit_order_record,
@@ -35,6 +44,10 @@ from .submit import SubmitEngine
 
 _FRIENDBOT_URL = "https://friendbot.stellar.org"
 _U32_MAX = 2**32 - 1
+
+# How long network_max_ttl() reuses the network's archival settings. They
+# change only through validator-voted network upgrades.
+_NETWORK_MAX_TTL_REUSE_S = 10 * 60
 
 
 @dataclass(frozen=True)
@@ -171,6 +184,7 @@ class AquariusClient:
         )
         self.signer = signer
         self.limit_order_config = limit_orders
+        self._network_max_ttl_cache: tuple[float, int] | None = None
 
     # -- reads (no signer required) -------------------------------------------
 
@@ -179,6 +193,39 @@ class AquariusClient:
         # getHealth, not getLatestLedger: the latter also returns the ledger's
         # full LedgerCloseMeta.
         return self.server.get_health().latest_ledger
+
+    def network_max_ttl(self) -> int:
+        """Most ledgers past the current one that the network lets a ledger
+        entry, an authorization signature, or a SAC allowance live.
+
+        StateArchivalSettings.max_entry_ttl - 1, Soroban's
+        ``storage().max_ttl()``. Read from the RPC and reused for ten minutes.
+        """
+        now = time.monotonic()
+        cached = self._network_max_ttl_cache
+        if cached is not None and now - cached[0] < _NETWORK_MAX_TTL_REUSE_S:
+            return cached[1]
+        key = LedgerKey(
+            type=LedgerEntryType.CONFIG_SETTING,
+            config_setting=LedgerKeyConfigSetting(
+                config_setting_id=ConfigSettingID.CONFIG_SETTING_STATE_ARCHIVAL
+            ),
+        )
+        entries = self.server.get_ledger_entries([key]).entries
+        try:
+            settings = LedgerEntryData.from_xdr(
+                entries[0].xdr
+            ).config_setting.state_archival_settings
+            max_entry_ttl = settings.max_entry_ttl.uint32
+        except Exception as exc:
+            raise AquariusError(
+                "The RPC returned no STATE_ARCHIVAL config setting"
+            ) from exc
+        if max_entry_ttl < 1:
+            raise AquariusError("The RPC returned an invalid network max entry TTL")
+        max_ttl = max_entry_ttl - 1
+        self._network_max_ttl_cache = (now, max_ttl)
+        return max_ttl
 
     def list_limit_orders(
         self,
@@ -418,6 +465,10 @@ class AquariusClient:
         if sell_token == buy_token:
             raise AquariusError("limit-order sell and buy tokens must differ")
         config = self._require_limit_order_config(require_batcher=True)
+        max_live_until_ledger = self._max_live_until_ledger()
+        _validate_network_lifetime(
+            expires_at_ledger, allowance_expiration_ledger, max_live_until_ledger
+        )
         request = {
             "placement_mode": "CONTRACT_ONCHAIN",
             "maker": maker,
@@ -446,6 +497,7 @@ class AquariusClient:
                 "expires_at_ledger": expires_at_ledger,
             },
             allowance_expiration_ledger=allowance_expiration_ledger,
+            max_live_until_ledger=max_live_until_ledger,
             client=self,
         )
 
@@ -859,6 +911,11 @@ class AquariusClient:
 
     def _onchain_limit_order_append(self, order: OnchainLimitOrder, *, allow_restore: bool = True):
         config = self._require_limit_order_config(require_batcher=True)
+        _validate_network_lifetime(
+            order.expires_at_ledger,
+            order.allowance_expiration_ledger,
+            self._max_live_until_ledger(),
+        )
         xlm_token = Asset.native().contract_id(self.network.passphrase)
         current_allowances = {}
         for token in order.required_allowances(xlm_token):
@@ -945,6 +1002,9 @@ class AquariusClient:
         if not response.ok:
             raise AquariusError(f"Account lookup failed: HTTP {response.status_code}")
         return response.json()
+
+    def _max_live_until_ledger(self) -> int:
+        return self.latest_ledger() + self.network_max_ttl()
 
     def _require_signer(self):
         if self.signer is None:
