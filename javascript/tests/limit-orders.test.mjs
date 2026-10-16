@@ -169,7 +169,8 @@ test("client creates a validated draft and builds batcher and cancel transaction
     draftRequest = { url, request };
     return draft;
   };
-  client.server.getLatestLedger = async () => ({ sequence: 100 });
+  client.server.getLatestLedger = async () => assert.fail("getLatestLedger");
+  client.server.getHealth = async () => ({ latestLedger: 100 });
   assert.equal(await client.latestLedger(), 100);
 
   const order = await client.createOnchainLimitOrder({

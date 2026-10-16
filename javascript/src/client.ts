@@ -286,7 +286,9 @@ export class AquariusClient {
 
   /** Current Soroban RPC ledger sequence. */
   async latestLedger(): Promise<number> {
-    return (await this.server.getLatestLedger()).sequence;
+    // getHealth, not getLatestLedger: the latter also returns the ledger's
+    // full LedgerCloseMeta.
+    return (await this.server.getHealth()).latestLedger;
   }
 
   /** Read one validated cursor page from the public order registry. */

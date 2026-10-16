@@ -176,7 +176,9 @@ class AquariusClient:
 
     def latest_ledger(self) -> int:
         """Current Soroban RPC ledger sequence."""
-        return self.server.get_latest_ledger().sequence
+        # getHealth, not getLatestLedger: the latter also returns the ledger's
+        # full LedgerCloseMeta.
+        return self.server.get_health().latest_ledger
 
     def list_limit_orders(
         self,
