@@ -333,14 +333,80 @@ def test_placement_authorization_matches_shared_wire_vector():
 
 
 def test_onchain_auto_trust_is_in_the_same_placement_batch():
-    legacy = validate()
+    asset = Asset.classic("USD", StrKey.encode_ed25519_public_key(bytes([6]) * 32))
+    legacy = replace(
+        validate(),
+        buy_token=asset.contract_id(Network.TESTNET_NETWORK_PASSPHRASE),
+        buy_asset=asset,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+    )
     order = replace(legacy, auto_trust=True)
     args = build_onchain_placement_args(order, {}, XLM_TOKEN)
     calls = scval.to_native(args[1])
-    assert native(calls[0]) == [DRAFT["buy_token"], "trust", [DRAFT["maker"]]]
+    assert native(calls[0]) == [legacy.buy_token, "trust", [DRAFT["maker"]]]
     assert (
         len(calls)
         == len(scval.to_native(build_onchain_placement_args(legacy, {}, XLM_TOKEN)[1]))
         + 1
     )
     assert order.order_id == legacy.order_id
+
+
+@pytest.mark.parametrize("asset", [None, Asset.contract(DRAFT["buy_token"]), Asset.native()])
+def test_onchain_auto_trust_skips_assets_without_classic_issuer(asset):
+    legacy = replace(validate(), buy_asset=asset)
+    if asset is not None and asset.is_native:
+        legacy = replace(legacy, buy_token=XLM_TOKEN)
+    automatic = replace(legacy, auto_trust=True)
+    assert [arg.to_xdr() for arg in build_onchain_placement_args(automatic, {}, XLM_TOKEN)] == [
+        arg.to_xdr() for arg in build_onchain_placement_args(legacy, {}, XLM_TOKEN)
+    ]
+
+
+@pytest.mark.parametrize("passphrase", [None, Network.PUBLIC_NETWORK_PASSPHRASE, Network.TESTNET_NETWORK_PASSPHRASE])
+def test_onchain_auto_trust_rejects_unverified_classic_metadata(passphrase):
+    asset = Asset.classic("USD", StrKey.encode_ed25519_public_key(bytes([6]) * 32))
+    buy_token = (
+        DRAFT["buy_token"] if passphrase == Network.TESTNET_NETWORK_PASSPHRASE
+        else asset.contract_id(Network.TESTNET_NETWORK_PASSPHRASE)
+    )
+    order = replace(validate(), auto_trust=True, buy_asset=asset,
+                    buy_token=buy_token, network_passphrase=passphrase)
+    with pytest.raises(AquariusError, match="classic receive asset"):
+        build_onchain_placement_args(order, {}, XLM_TOKEN)
+
+
+def test_onchain_auto_trust_skips_the_receive_asset_issuer():
+    asset = Asset.classic("USD", DRAFT["maker"])
+    order = replace(validate(), auto_trust=True, buy_asset=asset,
+                    buy_token=asset.contract_id(Network.TESTNET_NETWORK_PASSPHRASE),
+                    network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE)
+    calls = native(scval.to_native(build_onchain_placement_args(order, {}, XLM_TOKEN)[1]))
+    assert [call[1] for call in calls] == ["approve", "approve", "place_contract_order"]
+
+
+def test_client_preserves_classic_receive_metadata_for_the_placement_builder():
+    import hashlib
+    from stellar_sdk import xdr
+
+    asset = Asset.classic("USD", StrKey.encode_ed25519_public_key(bytes([6]) * 32))
+    buy_token = asset.contract_id(Network.TESTNET_NETWORK_PASSPHRASE)
+    payload = copy.deepcopy(DRAFT)
+    order_scval = xdr.SCVal.from_xdr(payload["order_xdr"])
+    for entry in order_scval.map.sc_map:
+        if scval.from_symbol(entry.key) == "buy_token":
+            entry.val = scval.to_address(buy_token)
+    payload.update(buy_token=buy_token, order_xdr=order_scval.to_xdr(),
+                   order_id=hashlib.sha256(order_scval.to_xdr_bytes()).hexdigest())
+    client = AquariusClient(
+        network="testnet", signer=SimpleNamespace(public_key=DRAFT["maker"]),
+        limit_orders=LimitOrderConfig(settlement=DRAFT["settlement_address"], batcher=BATCHER),
+    )
+    client.api.create_limit_order_draft = Mock(return_value=payload)
+    order = client.create_onchain_limit_order(
+        Asset.contract(DRAFT["sell_token"]), asset, sell_amount=1_000,
+        min_buy_amount=900, valid_after_ledger=100, expires_at_ledger=200,
+        allowance_expiration_ledger=250,
+    )
+    calls = native(scval.to_native(build_onchain_placement_args(order, {}, XLM_TOKEN)[1]))
+    assert calls[0] == [buy_token, "trust", [DRAFT["maker"]]]

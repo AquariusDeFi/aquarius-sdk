@@ -58,17 +58,85 @@ test("limit-order config requires contract addresses", () => {
   );
 });
 
+function withAutoTrust(order, buyAsset, networkPassphrase = Networks.TESTNET, buyToken = order.buyToken) {
+  return new OnchainLimitOrder(
+    order.orderId, order.settlementAddress, order.maker, order.sellToken, order.sellAmount,
+    buyToken, order.minBuyAmount, order.validAfterLedger, order.expiresAtLedger,
+    order.allowanceExpirationLedger, order.executorRewardXlm, order.orderScVal, undefined, true,
+    buyAsset, networkPassphrase,
+  );
+}
+
 test("on-chain auto-trust shares the existing placement transaction", () => {
   const order = validate();
-  const automatic = new OnchainLimitOrder(
-    order.orderId, order.settlementAddress, order.maker, order.sellToken, order.sellAmount,
-    order.buyToken, order.minBuyAmount, order.validAfterLedger, order.expiresAtLedger,
-    order.allowanceExpirationLedger, order.executorRewardXlm, order.orderScVal, undefined, true,
-  );
+  const asset = Asset.classic("USD", StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 6)));
+  const buyToken = asset.contractId(Networks.TESTNET);
+  const automatic = withAutoTrust(order, asset, Networks.TESTNET, buyToken);
   const calls = scValToNative(buildOnchainPlacementArgs(automatic, new Map(), xlmToken)[1]);
-  assert.deepEqual(calls[0], [draft.buy_token, "trust", [draft.maker]]);
+  assert.deepEqual(calls[0], [buyToken, "trust", [draft.maker]]);
   assert.equal(calls.length, scValToNative(buildOnchainPlacementArgs(order, new Map(), xlmToken)[1]).length + 1);
   assert.equal(automatic.orderId, order.orderId);
+});
+
+for (const [name, asset] of [
+  ["unknown", undefined],
+  ["pure Soroban", Asset.contract(draft.buy_token)],
+  ["native", Asset.native()],
+]) {
+  test(`on-chain auto-trust skips ${name} receive assets`, () => {
+    const legacy = validate();
+    const automatic = withAutoTrust(legacy, asset);
+    assert.deepEqual(
+      buildOnchainPlacementArgs(automatic, new Map(), xlmToken).map(arg => arg.toXDR("base64")),
+      buildOnchainPlacementArgs(legacy, new Map(), xlmToken).map(arg => arg.toXDR("base64")),
+    );
+  });
+}
+
+for (const [name, passphrase, useClassicToken] of [
+  ["missing network", null, true],
+  ["wrong network", Networks.PUBLIC, true],
+  ["different token", Networks.TESTNET, false],
+]) {
+  test(`on-chain auto-trust rejects classic metadata with ${name}`, () => {
+    const asset = Asset.classic("USD", StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 6)));
+    const order = validate();
+    const automatic = withAutoTrust(order, asset, passphrase,
+      useClassicToken ? asset.contractId(Networks.TESTNET) : order.buyToken);
+    assert.throws(() => buildOnchainPlacementArgs(automatic, new Map(), xlmToken), /classic receive asset/);
+  });
+}
+
+test("on-chain auto-trust skips the receive asset issuer", () => {
+  const asset = Asset.classic("USD", draft.maker);
+  const order = withAutoTrust(validate(), asset, Networks.TESTNET, asset.contractId(Networks.TESTNET));
+  const calls = scValToNative(buildOnchainPlacementArgs(order, new Map(), xlmToken)[1]);
+  assert.deepEqual(calls.map(call => call[1]), ["approve", "approve", "place_contract_order"]);
+});
+
+test("client preserves classic receive metadata for the placement builder", async () => {
+  const { hash, xdr } = await import("@stellar/stellar-sdk");
+  const asset = Asset.classic("USD", StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 6)));
+  const buyToken = asset.contractId(Networks.TESTNET);
+  const orderScVal = xdr.ScVal.fromXDR(draft.order_xdr, "base64");
+  const canonical = xdr.ScVal.scvMap(orderScVal.map.map(entry => new xdr.ScMapEntry({
+    key: entry.key,
+    val: scValToNative(entry.key) === "buy_token" ? new Address(buyToken).toScVal() : entry.val,
+  })));
+  const payload = { ...draft, buy_token: buyToken, order_xdr: canonical.toXDR("base64"),
+    order_id: Buffer.from(hash(canonical.toXDR())).toString("hex") };
+  const client = new AquariusClient({
+    network: "testnet", signer: { publicKey: () => draft.maker, sign: value => value },
+    limitOrders: { settlement: draft.settlement_address, batcher },
+  });
+  client.api.createLimitOrderDraft = async () => payload;
+  const order = await client.createOnchainLimitOrder({
+    from: Asset.contract(draft.sell_token), to: asset, sellAmount: 1_000n,
+    minBuyAmount: 900n, validAfterLedger: 100, expiresAtLedger: 200,
+    allowanceExpirationLedger: 250,
+  });
+  const calls = scValToNative(buildOnchainPlacementArgs(order, new Map(), xlmToken)[1]);
+  assert.deepEqual(calls[0], [buyToken, "trust", [draft.maker]]);
 });
 
 test("on-chain draft validates canonical XDR and JSON projection", () => {

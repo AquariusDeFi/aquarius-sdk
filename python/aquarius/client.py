@@ -446,6 +446,7 @@ class AquariusClient:
             allowance_expiration_ledger=allowance_expiration_ledger,
             client=self,
             auto_trust=to.issuer is not None and to.issuer != maker,
+            buy_asset=to,
         )
 
     # -- Stellar quirks, absorbed --------------------------------------------------
