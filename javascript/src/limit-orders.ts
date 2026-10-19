@@ -8,6 +8,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 
+import type { Asset } from "./assets.js";
 import { AquariusError } from "./errors.js";
 
 const ORDER_FIELDS = [
@@ -196,6 +197,8 @@ export class OnchainLimitOrder {
     readonly orderScVal: xdr.ScVal,
     private readonly actions?: OnchainLimitOrderActions,
     readonly autoTrust = false,
+    readonly buyAsset?: Asset,
+    readonly networkPassphrase?: string,
   ) {}
 
   requiredAllowances(xlmToken: string): Map<string, bigint> {
@@ -267,6 +270,7 @@ export interface ValidateOnchainDraftContext {
   allowanceExpirationLedger: number;
   actions?: OnchainLimitOrderActions;
   autoTrust?: boolean;
+  buyAsset?: Asset;
 }
 
 export function validateOnchainLimitOrderDraft(
@@ -373,6 +377,8 @@ export function validateOnchainLimitOrderDraft(
     orderScVal,
     context.actions,
     context.autoTrust ?? false,
+    context.buyAsset,
+    context.expectedNetworkPassphrase,
   );
 }
 
@@ -382,14 +388,21 @@ export function buildOnchainPlacementArgs(
   xlmToken: string,
 ): xdr.ScVal[] {
   const calls: xdr.ScVal[] = [];
-  if (order.autoTrust) {
+  // A contract ID alone does not establish that the receive token is a SAC.
+  if (order.autoTrust && order.buyAsset?.issuer !== undefined) {
+    const classic = order.buyAsset.toClassic();
+    if (!order.networkPassphrase || classic.contractId(order.networkPassphrase) !== order.buyToken) {
+      throw new AquariusError("classic receive asset does not match the buy token and network");
+    }
     if (!order.maker.startsWith("G") || order.buyToken === xlmToken) {
       throw new AquariusError("automatic trust requires an account maker and a non-native buy token");
     }
-    calls.push(xdr.ScVal.scvVec([
-      new Address(order.buyToken).toScVal(), nativeToScVal("trust", { type: "symbol" }),
-      xdr.ScVal.scvVec([new Address(order.maker).toScVal()]),
-    ]));
+    if (classic.getIssuer() !== order.maker) {
+      calls.push(xdr.ScVal.scvVec([
+        new Address(order.buyToken).toScVal(), nativeToScVal("trust", { type: "symbol" }),
+        xdr.ScVal.scvVec([new Address(order.maker).toScVal()]),
+      ]));
+    }
   }
   for (const [token, required] of order.requiredAllowances(xlmToken)) {
     const current = currentAllowances.get(token) ?? 0n;

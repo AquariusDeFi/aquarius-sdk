@@ -10,6 +10,7 @@ from stellar_sdk.xdr import SCVal, TransactionEnvelope
 from .errors import AquariusError
 
 if TYPE_CHECKING:
+    from .assets import Asset
     from .client import AquariusClient
 
 
@@ -177,6 +178,8 @@ class OnchainLimitOrder:
     order_scval: xdr.SCVal = field(repr=False)
     _client: AquariusClient | None = field(default=None, repr=False)
     auto_trust: bool = False
+    buy_asset: Asset | None = field(default=None, repr=False)
+    network_passphrase: str | None = field(default=None, repr=False)
 
     def required_allowances(self, xlm_token: str) -> dict[str, int]:
         if self.sell_token == xlm_token:
@@ -218,6 +221,7 @@ def validate_onchain_limit_order_draft(
     allowance_expiration_ledger: int,
     client: AquariusClient | None = None,
     auto_trust: bool = False,
+    buy_asset: Asset | None = None,
 ) -> OnchainLimitOrder:
     """Validate the registry JSON against its canonical OrderV1 ScVal."""
     try:
@@ -309,6 +313,8 @@ def validate_onchain_limit_order_draft(
         order_scval=order_scval,
         _client=client,
         auto_trust=auto_trust,
+        buy_asset=buy_asset,
+        network_passphrase=expected_network_passphrase,
     )
 
 
@@ -321,19 +327,33 @@ def build_onchain_placement_args(
 
     Approvals are absolute and never reduce the observed allowance. The caller
     supplies the expiration explicitly because SEP-41 allowance() does not
-    expose the existing expiration ledger.
+    expose the existing expiration ledger. Auto-trust requires classic receive
+    asset metadata whose network-derived SAC address matches the buy token.
     """
     calls = []
-    if order.auto_trust:
+    if (
+        order.auto_trust
+        and order.buy_asset is not None
+        and order.buy_asset.issuer is not None
+    ):
+        classic = order.buy_asset.to_classic()
+        if (
+            not order.network_passphrase
+            or classic.contract_id(order.network_passphrase) != order.buy_token
+        ):
+            raise AquariusError(
+                "classic receive asset does not match the buy token and network"
+            )
         if not order.maker.startswith("G") or order.buy_token == xlm_token:
             raise AquariusError(
                 "automatic trust requires an account maker and a non-native buy token"
             )
-        calls.append(scval.to_vec([
-            scval.to_address(order.buy_token),
-            scval.to_symbol("trust"),
-            scval.to_vec([scval.to_address(order.maker)]),
-        ]))
+        if classic.issuer != order.maker:
+            calls.append(scval.to_vec([
+                scval.to_address(order.buy_token),
+                scval.to_symbol("trust"),
+                scval.to_vec([scval.to_address(order.maker)]),
+            ]))
     for token, required in order.required_allowances(xlm_token).items():
         current = current_allowances.get(token, 0)
         if current < 0:

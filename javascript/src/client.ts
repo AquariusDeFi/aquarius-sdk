@@ -586,6 +586,7 @@ export class AquariusClient {
         allowanceExpirationLedger: params.allowanceExpirationLedger,
         actions: this.onchainLimitOrderActions(),
         autoTrust: params.to.issuer !== undefined && params.to.issuer !== maker,
+        buyAsset: params.to,
       },
     );
   }

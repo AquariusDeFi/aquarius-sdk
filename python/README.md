@@ -149,8 +149,15 @@ For programmatic placement from a G account, passing a classic receive asset
 (code and issuer) automatically prepends `trust` to the same approvals/placement
 batch, covered by one transaction signature. Native assets, issuer accounts and
 assets known only by contract ID keep the previous behavior. Lower-level draft
-builders default to the previous batch; `auto_trust` (Python) / `autoTrust`
-(JavaScript) explicitly enables the trust call for a known classic asset.
+builders default to the previous batch. To enable auto-trust, pass both
+`auto_trust=True` and `buy_asset=Asset.classic(code, issuer)` to
+`validate_onchain_limit_order_draft` (JavaScript: `autoTrust: true` and
+`buyAsset: Asset.classic(code, issuer)` in the validation context). The builder
+derives the classic asset's SAC address using the validated network passphrase
+and rejects mismatched metadata. A flag alone, native assets and assets known
+only by contract ID never add `trust`. Direct `OnchainLimitOrder` construction
+also requires `network_passphrase` (JavaScript: `networkPassphrase`) for a classic
+receive asset.
 Creation still requires account reserve and issuer approval where applicable.
 
 
