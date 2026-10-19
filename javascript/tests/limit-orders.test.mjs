@@ -58,6 +58,19 @@ test("limit-order config requires contract addresses", () => {
   );
 });
 
+test("on-chain auto-trust shares the existing placement transaction", () => {
+  const order = validate();
+  const automatic = new OnchainLimitOrder(
+    order.orderId, order.settlementAddress, order.maker, order.sellToken, order.sellAmount,
+    order.buyToken, order.minBuyAmount, order.validAfterLedger, order.expiresAtLedger,
+    order.allowanceExpirationLedger, order.executorRewardXlm, order.orderScVal, undefined, true,
+  );
+  const calls = scValToNative(buildOnchainPlacementArgs(automatic, new Map(), xlmToken)[1]);
+  assert.deepEqual(calls[0], [draft.buy_token, "trust", [draft.maker]]);
+  assert.equal(calls.length, scValToNative(buildOnchainPlacementArgs(order, new Map(), xlmToken)[1]).length + 1);
+  assert.equal(automatic.orderId, order.orderId);
+});
+
 test("on-chain draft validates canonical XDR and JSON projection", () => {
   const order = validate();
   assert.equal(order.orderId, draft.order_id);

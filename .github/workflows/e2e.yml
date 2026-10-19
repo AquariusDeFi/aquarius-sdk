@@ -14,6 +14,8 @@ jobs:
   # each other's slippage guards (observed between the py and js jobs of a
   # single run).
   testnet:
+    # Pull requests are verified offline; public-network writes require a separate run.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     concurrency:

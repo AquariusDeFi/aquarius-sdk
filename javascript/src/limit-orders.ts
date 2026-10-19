@@ -195,6 +195,7 @@ export class OnchainLimitOrder {
     readonly executorRewardXlm: bigint,
     readonly orderScVal: xdr.ScVal,
     private readonly actions?: OnchainLimitOrderActions,
+    readonly autoTrust = false,
   ) {}
 
   requiredAllowances(xlmToken: string): Map<string, bigint> {
@@ -265,6 +266,7 @@ export interface ValidateOnchainDraftContext {
   };
   allowanceExpirationLedger: number;
   actions?: OnchainLimitOrderActions;
+  autoTrust?: boolean;
 }
 
 export function validateOnchainLimitOrderDraft(
@@ -370,6 +372,7 @@ export function validateOnchainLimitOrderDraft(
     BigInt(payload.executor_reward_xlm),
     orderScVal,
     context.actions,
+    context.autoTrust ?? false,
   );
 }
 
@@ -379,6 +382,15 @@ export function buildOnchainPlacementArgs(
   xlmToken: string,
 ): xdr.ScVal[] {
   const calls: xdr.ScVal[] = [];
+  if (order.autoTrust) {
+    if (!order.maker.startsWith("G") || order.buyToken === xlmToken) {
+      throw new AquariusError("automatic trust requires an account maker and a non-native buy token");
+    }
+    calls.push(xdr.ScVal.scvVec([
+      new Address(order.buyToken).toScVal(), nativeToScVal("trust", { type: "symbol" }),
+      xdr.ScVal.scvVec([new Address(order.maker).toScVal()]),
+    ]));
+  }
   for (const [token, required] of order.requiredAllowances(xlmToken)) {
     const current = currentAllowances.get(token) ?? 0n;
     if (current < 0n) throw new AquariusError("token allowance cannot be negative");
@@ -626,8 +638,11 @@ export function validateAuthorizationTree(
   if (credentials.signature.type === "scvVoid") {
     throw new AquariusError("limit-order authorization is not signed");
   }
-  const expected = authorizationInvocation(order, settlementAddress, xlmToken);
-  if (!Buffer.from(entry.rootInvocation.toXDR()).equals(Buffer.from(expected.toXDR()))) {
+  const candidates = [false];
+  if (order.maker.startsWith("G") && order.buyToken !== xlmToken) candidates.push(true);
+  if (!candidates.some(autoTrust => Buffer.from(entry.rootInvocation.toXDR()).equals(
+    Buffer.from(authorizationInvocation(order, settlementAddress, xlmToken, autoTrust).toXDR()),
+  ))) {
     throw new AquariusError(
       "limit-order authorization invocation tree does not match the order",
     );
@@ -638,6 +653,7 @@ function authorizationInvocation(
   order: LimitOrder,
   settlementAddress: string,
   xlmToken: string,
+  autoTrust = false,
 ): xdr.SorobanAuthorizedInvocation {
   const maker = new Address(order.maker).toScVal();
   const settlement = new Address(settlementAddress).toScVal();
@@ -662,6 +678,7 @@ function authorizationInvocation(
     "fill",
     [order.orderScVal],
     [
+      ...(autoTrust ? [contractCall(order.buyToken, "trust", [maker])] : []),
       contractCall(order.sellToken, "transfer", [
         maker,
         settlement,

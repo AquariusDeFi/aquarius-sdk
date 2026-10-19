@@ -330,3 +330,17 @@ def test_placement_authorization_matches_shared_wire_vector():
     auth = source_account_entry(authorized_invocation(BATCHER, "batch", args, calls))
     assert [value.to_xdr() for value in args] == vectors["placement_args_xdr"]
     assert auth.to_xdr() == vectors["placement_auth_xdr"]
+
+
+def test_onchain_auto_trust_is_in_the_same_placement_batch():
+    legacy = validate()
+    order = replace(legacy, auto_trust=True)
+    args = build_onchain_placement_args(order, {}, XLM_TOKEN)
+    calls = scval.to_native(args[1])
+    assert native(calls[0]) == [DRAFT["buy_token"], "trust", [DRAFT["maker"]]]
+    assert (
+        len(calls)
+        == len(scval.to_native(build_onchain_placement_args(legacy, {}, XLM_TOKEN)[1]))
+        + 1
+    )
+    assert order.order_id == legacy.order_id

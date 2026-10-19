@@ -447,3 +447,45 @@ def test_detached_auth_and_route_match_shared_wire_vectors():
     assert order.to_xdr() == vectors["detached_order_xdr"]
     assert entry.root_invocation.to_xdr_bytes() == authorization_invocation(order, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF").to_xdr_bytes()
     assert route_scval_from_swap_chain(vectors["route_xdr"]).to_xdr() == vectors["route_scval_xdr"]
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "recipient", "token", "duplicate", "nested"]
+)
+def test_detached_trust_authorization_is_exact_and_keeps_the_order_id(mutation):
+    payload, maker = detached_payload()
+    entry = xdr.SorobanAuthorizationEntry.from_xdr(payload["authorization_xdr"])
+    trust = authorization_invocation(
+        order_scval(maker.public_key), maker.public_key
+    ).sub_invocations[0]
+    trust.function.contract_fn.contract_address = Address(BUY_TOKEN).to_xdr_sc_address()
+    trust.function.contract_fn.function_name = xdr.SCSymbol(b"trust")
+    trust.function.contract_fn.args = [scval.to_address(maker.public_key)]
+    if mutation == "recipient":
+        trust.function.contract_fn.args = [
+            scval.to_address(Keypair.random().public_key)
+        ]
+    elif mutation == "token":
+        trust.function.contract_fn.contract_address = Address(
+            SELL_TOKEN
+        ).to_xdr_sc_address()
+    elif mutation == "nested":
+        trust.sub_invocations = [entry.root_invocation.sub_invocations[0]]
+    entry.root_invocation.sub_invocations.insert(0, trust)
+    if mutation == "duplicate":
+        entry.root_invocation.sub_invocations.insert(0, trust)
+    payload["authorization_xdr"] = authorize_entry(entry, maker, 200, NETWORK).to_xdr()
+
+    def parse():
+        return parse_limit_order_record(
+            payload,
+            network_passphrase=NETWORK,
+            settlement_address=SETTLEMENT,
+            xlm_token=XLM_TOKEN,
+        )
+
+    if mutation is None:
+        assert parse().order_id == payload["order_id"]
+    else:
+        with pytest.raises(AquariusError, match="invocation tree"):
+            parse()
