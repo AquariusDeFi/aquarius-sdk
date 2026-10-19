@@ -139,7 +139,7 @@ its own.
 
 ## Programmatic on-chain limit orders
 
-Source-checkout receive-trustline support (not yet in the published alpha):
+Python `0.6.0a5` in this branch is unreleased. Receive-trustline support:
 registry validation accepts both the legacy proof and the exact
 `trust(maker)` + input/reward transfer proof. The latter needs the upgraded
 settlement for missing classic trustlines; it retains the same order body and ID.
