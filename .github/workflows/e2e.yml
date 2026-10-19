@@ -14,8 +14,6 @@ jobs:
   # each other's slippage guards (observed between the py and js jobs of a
   # single run).
   testnet:
-    # Pull requests are verified offline; public-network writes require a separate run.
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     concurrency:
@@ -62,10 +60,17 @@ jobs:
         working-directory: javascript
       - run: node javascript/e2e/mainnet_readonly.mjs
 
-  # Real-fund lifecycles require a manual or scheduled run. Pull requests
-  # execute offline and read-only checks without public-network writes.
+  # Real funds, pull requests included — deliberately. A testnet pass proves
+  # nothing about the production contracts (the two networks can run
+  # different versions), so every PR must carry a live mainnet write proof;
+  # that is the default gate for write-path changes, not an afterthought.
+  # Safe on PRs because GitHub withholds secrets from fork PRs (the script
+  # then self-skips), and the shared non-cancelling concurrency group keeps
+  # any two lifecycle jobs — within a run or across runs — from trading
+  # against each other on the shared wallet. Post-merge pushes are excluded:
+  # the PR already proved the exact commits, and the nightly covers drift.
   mainnet-lifecycle-python:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
@@ -84,7 +89,7 @@ jobs:
   # Runs after the Python lifecycle: both share the wallet, and each starts
   # from the flat state the other leaves behind.
   mainnet-lifecycle-javascript:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    if: github.event_name != 'push'
     needs: mainnet-lifecycle-python
     runs-on: ubuntu-latest
     timeout-minutes: 15
