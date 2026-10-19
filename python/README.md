@@ -148,8 +148,7 @@ An old proof cannot gain trustline permission after signing.
 For programmatic placement from a G account, passing a classic receive asset
 (code and issuer) automatically prepends `trust` to the same approvals/placement
 batch, covered by one transaction signature. Native assets and assets known only by contract ID do not add `trust`.
-Lower-level draft
-builders automatically add the call when `buy_asset=Asset.classic(code, issuer)`
+Lower-level draft builders automatically add the call when `buy_asset=Asset.classic(code, issuer)`
 is passed to `validate_onchain_limit_order_draft` (JavaScript: `buyAsset` in the
 validation context). There is no auto-trust opt-in or opt-out flag. The builder
 derives the SAC address from code/issuer and the validated network passphrase,
@@ -158,6 +157,10 @@ requires `network_passphrase` (JavaScript: `networkPassphrase`) for a classic
 receive asset. SAC itself handles an existing line or contract maker as a no-op
 and rejects unsupported issuer receivers.
 Creation still requires account reserve and issuer approval where applicable.
+
+When migrating from the previous alpha, remove `auto_trust` / `autoTrust`
+arguments. Direct JavaScript `OnchainLimitOrder` construction no longer has the
+boolean parameter before `buyAsset`; prefer the validated draft/client methods.
 
 
 The limit-order surface is available in alpha `0.6.0a6`. Configure trusted
