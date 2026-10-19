@@ -120,6 +120,27 @@ function openPayload() {
   };
 }
 
+test("detached trust permits only the exact receive token and maker", () => {
+  for (const mutation of [null, "recipient", "token", "duplicate", "nested"]) {
+    const payload = detachedPayload();
+    const entry = xdr.SorobanAuthorizationEntry.fromXDR(payload.authorization_xdr, "base64");
+    const root = entry.rootInvocation;
+    const trust = contractCall(
+      mutation === "token" ? draft.sell_token : draft.buy_token,
+      "trust", [new Address(mutation === "recipient" ? Keypair.random().publicKey() : draft.maker).toScVal()],
+      mutation === "nested" ? [root.subInvocations[0]] : [],
+    );
+    root.subInvocations = [trust, ...root.subInvocations];
+    if (mutation === "duplicate") root.subInvocations = [trust, ...root.subInvocations];
+    payload.authorization_xdr = entry.toXDR("base64");
+    const parse = () => parseLimitOrderRecord(payload, {
+      networkPassphrase: Networks.TESTNET, settlementAddress: draft.settlement_address, xlmToken,
+    });
+    if (mutation === null) assert.equal(parse().orderId, payload.order_id);
+    else assert.throws(parse, /invocation tree/);
+  }
+});
+
 function routeXdr() {
   return Buffer.from(xdr.ScVal.scvVec([
     xdr.ScVal.scvVec([
@@ -393,4 +414,15 @@ test("detached auth and route match the shared canonical wire vectors", async ()
   assert.equal(payload.order_id, vectors.detached_order_id);
   assert.equal(payload.authorization_xdr, vectors.detached_auth_xdr);
   assert.equal(Buffer.from(routeScValFromSwapChain(vectors.route_xdr).toXDR()).toString("base64"), vectors.route_scval_xdr);
+});
+
+test("shared auto-trust and legacy vectors preserve the same order", () => {
+  const vector = JSON.parse(readFileSync(new URL("../../testdata/limit_order_auto_trust.json", import.meta.url), "utf8"));
+  for (const proof of ["authorization_xdr", "legacy_authorization_xdr"]) {
+    const record = parseLimitOrderRecord({ ...vector, authorization_xdr: vector[proof] }, {
+      networkPassphrase: Networks.TESTNET, settlementAddress: vector.settlement_address,
+      xlmToken: vector.sell_token,
+    });
+    assert.equal(record.orderId, "deb93819e99e5863c9d179da91d395699b01dccf0e88869c0d6353e76c9f1f28");
+  }
 });

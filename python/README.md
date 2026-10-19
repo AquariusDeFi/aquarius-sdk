@@ -139,6 +139,21 @@ its own.
 
 ## Programmatic on-chain limit orders
 
+Source-checkout receive-trustline support (not yet in the published alpha):
+registry validation accepts both the legacy proof and the exact
+`trust(maker)` + input/reward transfer proof. The latter needs the upgraded
+settlement for missing classic trustlines; it retains the same order body and ID.
+An old proof cannot gain trustline permission after signing.
+
+For programmatic placement from a G account, passing a classic receive asset
+(code and issuer) automatically prepends `trust` to the same approvals/placement
+batch, covered by one transaction signature. Native assets, issuer accounts and
+assets known only by contract ID keep the previous behavior. Lower-level draft
+builders default to the previous batch; `auto_trust` (Python) / `autoTrust`
+(JavaScript) explicitly enables the trust call for a known classic asset.
+Creation still requires account reserve and issuer approval where applicable.
+
+
 The limit-order surface is available in alpha `0.6.0a4`. Configure trusted
 settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
 
