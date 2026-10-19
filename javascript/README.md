@@ -1,6 +1,6 @@
 # @aquariusdefi/sdk
 
-Alpha installation: `npm install @aquariusdefi/sdk@0.6.0-alpha.3 @stellar/stellar-sdk@^17.1.0`.
+Alpha installation: `npm install @aquariusdefi/sdk@0.6.0-alpha.4 @stellar/stellar-sdk@^17.1.0`.
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
@@ -300,7 +300,7 @@ ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
 
 ## Programmatic on-chain limit orders
 
-Source-checkout receive-trustline support (not yet in the published alpha):
+Receive-trustline support in JavaScript `0.6.0-alpha.4`:
 registry validation accepts both the legacy proof and the exact
 `trust(maker)` + input/reward transfer proof. The latter needs the upgraded
 settlement for missing classic trustlines; it retains the same order body and ID.
@@ -322,7 +322,7 @@ receive asset.
 Creation still requires account reserve and issuer approval where applicable.
 
 
-The limit-order surface is available in alpha `0.6.0-alpha.3`. Configure trusted
+The limit-order surface is available in alpha `0.6.0-alpha.4`. Configure trusted
 settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
 
 ```ts

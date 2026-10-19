@@ -1,6 +1,6 @@
 # aquarius-sdk
 
-Alpha installation: `pip install aquarius-sdk==0.6.0a4`.
+Alpha installation: `pip install aquarius-sdk==0.6.0a5`.
 
 Public API HTTP failures raise `APIHTTPError`, a subclass of `AquariusError`,
 with `status_code` and `retry_after` in seconds (`None` when unavailable).
@@ -139,7 +139,7 @@ its own.
 
 ## Programmatic on-chain limit orders
 
-Python `0.6.0a5` in this branch is unreleased. Receive-trustline support:
+Receive-trustline support in Python `0.6.0a5`:
 registry validation accepts both the legacy proof and the exact
 `trust(maker)` + input/reward transfer proof. The latter needs the upgraded
 settlement for missing classic trustlines; it retains the same order body and ID.
@@ -161,7 +161,7 @@ receive asset.
 Creation still requires account reserve and issuer approval where applicable.
 
 
-The limit-order surface is available in alpha `0.6.0a4`. Configure trusted
+The limit-order surface is available in alpha `0.6.0a5`. Configure trusted
 settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
 
 ```python
