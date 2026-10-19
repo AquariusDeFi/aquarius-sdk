@@ -334,33 +334,29 @@ def test_placement_authorization_matches_shared_wire_vector():
 
 def test_onchain_auto_trust_is_in_the_same_placement_batch():
     asset = Asset.classic("USD", StrKey.encode_ed25519_public_key(bytes([6]) * 32))
-    legacy = replace(
+    order = replace(
         validate(),
         buy_token=asset.contract_id(Network.TESTNET_NETWORK_PASSPHRASE),
         buy_asset=asset,
         network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
     )
-    order = replace(legacy, auto_trust=True)
     args = build_onchain_placement_args(order, {}, XLM_TOKEN)
     calls = scval.to_native(args[1])
-    assert native(calls[0]) == [legacy.buy_token, "trust", [DRAFT["maker"]]]
+    assert native(calls[0]) == [order.buy_token, "trust", [DRAFT["maker"]]]
     assert (
         len(calls)
-        == len(scval.to_native(build_onchain_placement_args(legacy, {}, XLM_TOKEN)[1]))
+        == len(scval.to_native(build_onchain_placement_args(validate(), {}, XLM_TOKEN)[1]))
         + 1
     )
-    assert order.order_id == legacy.order_id
 
 
 @pytest.mark.parametrize("asset", [None, Asset.contract(DRAFT["buy_token"]), Asset.native()])
 def test_onchain_auto_trust_skips_assets_without_classic_issuer(asset):
-    legacy = replace(validate(), buy_asset=asset)
+    order = replace(validate(), buy_asset=asset)
     if asset is not None and asset.is_native:
-        legacy = replace(legacy, buy_token=XLM_TOKEN)
-    automatic = replace(legacy, auto_trust=True)
-    assert [arg.to_xdr() for arg in build_onchain_placement_args(automatic, {}, XLM_TOKEN)] == [
-        arg.to_xdr() for arg in build_onchain_placement_args(legacy, {}, XLM_TOKEN)
-    ]
+        order = replace(order, buy_token=XLM_TOKEN)
+    calls = native(scval.to_native(build_onchain_placement_args(order, {}, XLM_TOKEN)[1]))
+    assert [call[1] for call in calls] == ["approve", "approve", "place_contract_order"]
 
 
 @pytest.mark.parametrize("passphrase", [None, Network.PUBLIC_NETWORK_PASSPHRASE, Network.TESTNET_NETWORK_PASSPHRASE])
@@ -370,19 +366,19 @@ def test_onchain_auto_trust_rejects_unverified_classic_metadata(passphrase):
         DRAFT["buy_token"] if passphrase == Network.TESTNET_NETWORK_PASSPHRASE
         else asset.contract_id(Network.TESTNET_NETWORK_PASSPHRASE)
     )
-    order = replace(validate(), auto_trust=True, buy_asset=asset,
+    order = replace(validate(), buy_asset=asset,
                     buy_token=buy_token, network_passphrase=passphrase)
     with pytest.raises(AquariusError, match="classic receive asset"):
         build_onchain_placement_args(order, {}, XLM_TOKEN)
 
 
-def test_onchain_auto_trust_skips_the_receive_asset_issuer():
+def test_onchain_trust_is_not_optional_for_a_classic_receive_asset_issuer():
     asset = Asset.classic("USD", DRAFT["maker"])
-    order = replace(validate(), auto_trust=True, buy_asset=asset,
+    order = replace(validate(), buy_asset=asset,
                     buy_token=asset.contract_id(Network.TESTNET_NETWORK_PASSPHRASE),
                     network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE)
     calls = native(scval.to_native(build_onchain_placement_args(order, {}, XLM_TOKEN)[1]))
-    assert [call[1] for call in calls] == ["approve", "approve", "place_contract_order"]
+    assert calls[0] == [order.buy_token, "trust", [order.maker]]
 
 
 def test_client_preserves_classic_receive_metadata_for_the_placement_builder():

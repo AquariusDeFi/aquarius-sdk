@@ -58,11 +58,11 @@ test("limit-order config requires contract addresses", () => {
   );
 });
 
-function withAutoTrust(order, buyAsset, networkPassphrase = Networks.TESTNET, buyToken = order.buyToken) {
+function withReceiveAsset(order, buyAsset, networkPassphrase = Networks.TESTNET, buyToken = order.buyToken) {
   return new OnchainLimitOrder(
     order.orderId, order.settlementAddress, order.maker, order.sellToken, order.sellAmount,
     buyToken, order.minBuyAmount, order.validAfterLedger, order.expiresAtLedger,
-    order.allowanceExpirationLedger, order.executorRewardXlm, order.orderScVal, undefined, true,
+    order.allowanceExpirationLedger, order.executorRewardXlm, order.orderScVal, undefined,
     buyAsset, networkPassphrase,
   );
 }
@@ -71,7 +71,7 @@ test("on-chain auto-trust shares the existing placement transaction", () => {
   const order = validate();
   const asset = Asset.classic("USD", StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 6)));
   const buyToken = asset.contractId(Networks.TESTNET);
-  const automatic = withAutoTrust(order, asset, Networks.TESTNET, buyToken);
+  const automatic = withReceiveAsset(order, asset, Networks.TESTNET, buyToken);
   const calls = scValToNative(buildOnchainPlacementArgs(automatic, new Map(), xlmToken)[1]);
   assert.deepEqual(calls[0], [buyToken, "trust", [draft.maker]]);
   assert.equal(calls.length, scValToNative(buildOnchainPlacementArgs(order, new Map(), xlmToken)[1]).length + 1);
@@ -85,7 +85,7 @@ for (const [name, asset] of [
 ]) {
   test(`on-chain auto-trust skips ${name} receive assets`, () => {
     const legacy = validate();
-    const automatic = withAutoTrust(legacy, asset);
+    const automatic = withReceiveAsset(legacy, asset);
     assert.deepEqual(
       buildOnchainPlacementArgs(automatic, new Map(), xlmToken).map(arg => arg.toXDR("base64")),
       buildOnchainPlacementArgs(legacy, new Map(), xlmToken).map(arg => arg.toXDR("base64")),
@@ -101,17 +101,17 @@ for (const [name, passphrase, useClassicToken] of [
   test(`on-chain auto-trust rejects classic metadata with ${name}`, () => {
     const asset = Asset.classic("USD", StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 6)));
     const order = validate();
-    const automatic = withAutoTrust(order, asset, passphrase,
+    const automatic = withReceiveAsset(order, asset, passphrase,
       useClassicToken ? asset.contractId(Networks.TESTNET) : order.buyToken);
     assert.throws(() => buildOnchainPlacementArgs(automatic, new Map(), xlmToken), /classic receive asset/);
   });
 }
 
-test("on-chain auto-trust skips the receive asset issuer", () => {
+test("on-chain trust is not optional for a classic receive asset issuer", () => {
   const asset = Asset.classic("USD", draft.maker);
-  const order = withAutoTrust(validate(), asset, Networks.TESTNET, asset.contractId(Networks.TESTNET));
+  const order = withReceiveAsset(validate(), asset, Networks.TESTNET, asset.contractId(Networks.TESTNET));
   const calls = scValToNative(buildOnchainPlacementArgs(order, new Map(), xlmToken)[1]);
-  assert.deepEqual(calls.map(call => call[1]), ["approve", "approve", "place_contract_order"]);
+  assert.deepEqual(calls[0], [order.buyToken, "trust", [order.maker]]);
 });
 
 test("client preserves classic receive metadata for the placement builder", async () => {

@@ -196,7 +196,6 @@ export class OnchainLimitOrder {
     readonly executorRewardXlm: bigint,
     readonly orderScVal: xdr.ScVal,
     private readonly actions?: OnchainLimitOrderActions,
-    readonly autoTrust = false,
     readonly buyAsset?: Asset,
     readonly networkPassphrase?: string,
   ) {}
@@ -269,7 +268,6 @@ export interface ValidateOnchainDraftContext {
   };
   allowanceExpirationLedger: number;
   actions?: OnchainLimitOrderActions;
-  autoTrust?: boolean;
   buyAsset?: Asset;
 }
 
@@ -376,7 +374,6 @@ export function validateOnchainLimitOrderDraft(
     BigInt(payload.executor_reward_xlm),
     orderScVal,
     context.actions,
-    context.autoTrust ?? false,
     context.buyAsset,
     context.expectedNetworkPassphrase,
   );
@@ -389,20 +386,15 @@ export function buildOnchainPlacementArgs(
 ): xdr.ScVal[] {
   const calls: xdr.ScVal[] = [];
   // A contract ID alone does not establish that the receive token is a SAC.
-  if (order.autoTrust && order.buyAsset?.issuer !== undefined) {
+  if (order.buyAsset?.issuer !== undefined && order.buyToken !== xlmToken) {
     const classic = order.buyAsset.toClassic();
     if (!order.networkPassphrase || classic.contractId(order.networkPassphrase) !== order.buyToken) {
       throw new AquariusError("classic receive asset does not match the buy token and network");
     }
-    if (!order.maker.startsWith("G") || order.buyToken === xlmToken) {
-      throw new AquariusError("automatic trust requires an account maker and a non-native buy token");
-    }
-    if (classic.getIssuer() !== order.maker) {
-      calls.push(xdr.ScVal.scvVec([
-        new Address(order.buyToken).toScVal(), nativeToScVal("trust", { type: "symbol" }),
-        xdr.ScVal.scvVec([new Address(order.maker).toScVal()]),
-      ]));
-    }
+    calls.push(xdr.ScVal.scvVec([
+      new Address(order.buyToken).toScVal(), nativeToScVal("trust", { type: "symbol" }),
+      xdr.ScVal.scvVec([new Address(order.maker).toScVal()]),
+    ]));
   }
   for (const [token, required] of order.requiredAllowances(xlmToken)) {
     const current = currentAllowances.get(token) ?? 0n;
@@ -653,8 +645,8 @@ export function validateAuthorizationTree(
   }
   const candidates = [false];
   if (order.maker.startsWith("G") && order.buyToken !== xlmToken) candidates.push(true);
-  if (!candidates.some(autoTrust => Buffer.from(entry.rootInvocation.toXDR()).equals(
-    Buffer.from(authorizationInvocation(order, settlementAddress, xlmToken, autoTrust).toXDR()),
+  if (!candidates.some(includeTrust => Buffer.from(entry.rootInvocation.toXDR()).equals(
+    Buffer.from(authorizationInvocation(order, settlementAddress, xlmToken, includeTrust).toXDR()),
   ))) {
     throw new AquariusError(
       "limit-order authorization invocation tree does not match the order",
@@ -666,7 +658,7 @@ function authorizationInvocation(
   order: LimitOrder,
   settlementAddress: string,
   xlmToken: string,
-  autoTrust = false,
+  includeTrust: boolean,
 ): xdr.SorobanAuthorizedInvocation {
   const maker = new Address(order.maker).toScVal();
   const settlement = new Address(settlementAddress).toScVal();
@@ -691,7 +683,7 @@ function authorizationInvocation(
     "fill",
     [order.orderScVal],
     [
-      ...(autoTrust ? [contractCall(order.buyToken, "trust", [maker])] : []),
+      ...(includeTrust ? [contractCall(order.buyToken, "trust", [maker])] : []),
       contractCall(order.sellToken, "transfer", [
         maker,
         settlement,

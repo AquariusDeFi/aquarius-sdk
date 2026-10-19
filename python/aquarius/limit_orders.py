@@ -177,7 +177,6 @@ class OnchainLimitOrder:
     executor_reward_xlm: int
     order_scval: xdr.SCVal = field(repr=False)
     _client: AquariusClient | None = field(default=None, repr=False)
-    auto_trust: bool = False
     buy_asset: Asset | None = field(default=None, repr=False)
     network_passphrase: str | None = field(default=None, repr=False)
 
@@ -220,7 +219,6 @@ def validate_onchain_limit_order_draft(
     expected_order: dict,
     allowance_expiration_ledger: int,
     client: AquariusClient | None = None,
-    auto_trust: bool = False,
     buy_asset: Asset | None = None,
 ) -> OnchainLimitOrder:
     """Validate the registry JSON against its canonical OrderV1 ScVal."""
@@ -312,7 +310,6 @@ def validate_onchain_limit_order_draft(
         executor_reward_xlm=projection["executor_reward_xlm"],
         order_scval=order_scval,
         _client=client,
-        auto_trust=auto_trust,
         buy_asset=buy_asset,
         network_passphrase=expected_network_passphrase,
     )
@@ -332,9 +329,9 @@ def build_onchain_placement_args(
     """
     calls = []
     if (
-        order.auto_trust
-        and order.buy_asset is not None
+        order.buy_asset is not None
         and order.buy_asset.issuer is not None
+        and order.buy_token != xlm_token
     ):
         classic = order.buy_asset.to_classic()
         if (
@@ -344,16 +341,11 @@ def build_onchain_placement_args(
             raise AquariusError(
                 "classic receive asset does not match the buy token and network"
             )
-        if not order.maker.startswith("G") or order.buy_token == xlm_token:
-            raise AquariusError(
-                "automatic trust requires an account maker and a non-native buy token"
-            )
-        if classic.issuer != order.maker:
-            calls.append(scval.to_vec([
-                scval.to_address(order.buy_token),
-                scval.to_symbol("trust"),
-                scval.to_vec([scval.to_address(order.maker)]),
-            ]))
+        calls.append(scval.to_vec([
+            scval.to_address(order.buy_token),
+            scval.to_symbol("trust"),
+            scval.to_vec([scval.to_address(order.maker)]),
+        ]))
     for token, required in order.required_allowances(xlm_token).items():
         current = current_allowances.get(token, 0)
         if current < 0:
@@ -638,9 +630,9 @@ def validate_authorization_tree(
             order,
             settlement_address=settlement_address,
             xlm_token=xlm_token,
-            auto_trust=auto_trust,
+            include_trust=include_trust,
         ).to_xdr_bytes()
-        for auto_trust in candidates
+        for include_trust in candidates
     ):
         raise AquariusError(
             "limit-order authorization invocation tree does not match the order"
@@ -652,7 +644,7 @@ def _authorization_invocation(
     *,
     settlement_address: str,
     xlm_token: str,
-    auto_trust: bool = False,
+    include_trust: bool,
 ) -> xdr.SorobanAuthorizedInvocation:
     maker = scval.to_address(order.maker)
     settlement = scval.to_address(settlement_address)
@@ -679,7 +671,7 @@ def _authorization_invocation(
         settlement_address,
         "fill",
         [order.order_scval],
-        ([contract_call(order.buy_token, "trust", [maker])] if auto_trust else []) + [
+        ([contract_call(order.buy_token, "trust", [maker])] if include_trust else []) + [
             contract_call(
                 order.sell_token,
                 "transfer",

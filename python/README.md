@@ -1,6 +1,6 @@
 # aquarius-sdk
 
-Alpha installation: `pip install aquarius-sdk==0.6.0a5`.
+Alpha installation: `pip install aquarius-sdk==0.6.0a6`.
 
 Public API HTTP failures raise `APIHTTPError`, a subclass of `AquariusError`,
 with `status_code` and `retry_after` in seconds (`None` when unavailable).
@@ -139,7 +139,7 @@ its own.
 
 ## Programmatic on-chain limit orders
 
-Receive-trustline support in Python `0.6.0a5`:
+Receive-trustline support in Python `0.6.0a6`:
 registry validation accepts both the legacy proof and the exact
 `trust(maker)` + input/reward transfer proof. The latter needs the upgraded
 settlement for missing classic trustlines; it retains the same order body and ID.
@@ -147,21 +147,20 @@ An old proof cannot gain trustline permission after signing.
 
 For programmatic placement from a G account, passing a classic receive asset
 (code and issuer) automatically prepends `trust` to the same approvals/placement
-batch, covered by one transaction signature. Native assets, issuer accounts and
-assets known only by contract ID keep the previous behavior. Lower-level draft
-builders default to the previous batch. To enable auto-trust, pass both
-`auto_trust=True` and `buy_asset=Asset.classic(code, issuer)` to
-`validate_onchain_limit_order_draft` (JavaScript: `autoTrust: true` and
-`buyAsset: Asset.classic(code, issuer)` in the validation context). The builder
-derives the classic asset's SAC address using the validated network passphrase
-and rejects mismatched metadata. A flag alone, native assets and assets known
-only by contract ID never add `trust`. Direct `OnchainLimitOrder` construction
-also requires `network_passphrase` (JavaScript: `networkPassphrase`) for a classic
-receive asset.
+batch, covered by one transaction signature. Native assets and assets known only by contract ID do not add `trust`.
+Lower-level draft
+builders automatically add the call when `buy_asset=Asset.classic(code, issuer)`
+is passed to `validate_onchain_limit_order_draft` (JavaScript: `buyAsset` in the
+validation context). There is no auto-trust opt-in or opt-out flag. The builder
+derives the SAC address from code/issuer and the validated network passphrase,
+and rejects mismatched metadata. Direct `OnchainLimitOrder` construction also
+requires `network_passphrase` (JavaScript: `networkPassphrase`) for a classic
+receive asset. SAC itself handles an existing line or contract maker as a no-op
+and rejects unsupported issuer receivers.
 Creation still requires account reserve and issuer approval where applicable.
 
 
-The limit-order surface is available in alpha `0.6.0a5`. Configure trusted
+The limit-order surface is available in alpha `0.6.0a6`. Configure trusted
 settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
 
 ```python
