@@ -23,6 +23,10 @@ BATCHER = StrKey.encode_contract(bytes([5]) * 32)
 XLM_TOKEN = StrKey.encode_contract(bytes([4]) * 32)
 
 
+def read_setting(_contract, fn, _args, **_kwargs):
+    return scval.to_uint128(5_000_000) if fn == "get_executor_reward" else scval.to_int128(0)
+
+
 def native(value):
     if isinstance(value, Address):
         return value.address
@@ -31,12 +35,13 @@ def native(value):
     return value
 
 
-def validate(payload=None):
+def validate(payload=None, **kwargs):
     return validate_onchain_limit_order_draft(
         payload or DRAFT,
         expected_network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
         expected_settlement=DRAFT["settlement_address"],
         expected_maker=DRAFT["maker"],
+        expected_executor_reward_xlm=5_000_000,
         expected_order={
             "sell_token": DRAFT["sell_token"],
             "sell_amount": 1_000,
@@ -46,6 +51,7 @@ def validate(payload=None):
             "expires_at_ledger": 200,
         },
         allowance_expiration_ledger=250,
+        **kwargs,
     )
 
 
@@ -57,6 +63,104 @@ def test_limit_order_config_requires_contract_addresses():
     assert config.settlement == DRAFT["settlement_address"]
     with pytest.raises(AquariusError, match="batcher"):
         LimitOrderConfig(settlement=DRAFT["settlement_address"], batcher=DRAFT["maker"])
+
+
+@pytest.mark.parametrize("reward", [5_000_001, 2**127 - 1])
+def test_draft_rejects_substituted_reward_with_consistent_xdr_and_hash(reward):
+    import hashlib
+    from stellar_sdk import xdr
+
+    payload = copy.deepcopy(DRAFT)
+    canonical = xdr.SCVal.from_xdr(payload["order_xdr"])
+    for entry in canonical.map.sc_map:
+        if scval.from_symbol(entry.key) == "executor_reward_xlm":
+            entry.val = scval.to_uint128(reward)
+    payload.update(executor_reward_xlm=str(reward), order_xdr=canonical.to_xdr(),
+                   order_id=hashlib.sha256(canonical.to_xdr_bytes()).hexdigest())
+    with pytest.raises(AquariusError, match="executor reward"):
+        validate(payload)
+
+
+@pytest.mark.parametrize("token", [DRAFT["sell_token"], XLM_TOKEN])
+def test_placement_does_not_renew_an_unapproved_large_allowance(token):
+    with pytest.raises(AquariusError, match="allowance limit"):
+        build_onchain_placement_args(validate(), {token: 2**127 - 1}, XLM_TOKEN)
+
+
+@pytest.mark.parametrize("action", ["build_transaction", "place"])
+def test_placement_rechecks_reward_before_preparing_or_signing(action):
+    signer = SimpleNamespace(public_key=DRAFT["maker"], sign=Mock())
+    client = AquariusClient(network="testnet", signer=signer, limit_orders=LimitOrderConfig(
+        settlement=DRAFT["settlement_address"], batcher=BATCHER,
+    ))
+    order = replace(validate(), _client=client)
+    client._read_contract = Mock(side_effect=lambda _contract, fn, _args, **_kwargs:
+        scval.to_uint128(5_000_001) if fn == "get_executor_reward" else scval.to_int128(0))
+    client.engine.prepare = Mock()
+    client.engine.sign_and_submit = Mock()
+    with pytest.raises(AquariusError, match="executor reward"):
+        getattr(order, action)()
+    client.engine.prepare.assert_not_called()
+    signer.sign.assert_not_called()
+    client.engine.sign_and_submit.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["rpc_error", "large_allowance"])
+@pytest.mark.parametrize("action", ["build_transaction", "place"])
+def test_placement_fails_closed_before_signing(failure, action):
+    signer = SimpleNamespace(public_key=DRAFT["maker"], sign=Mock())
+    client = AquariusClient(network="testnet", signer=signer, limit_orders=LimitOrderConfig(
+        settlement=DRAFT["settlement_address"], batcher=BATCHER,
+    ))
+    order = replace(validate(), _client=client)
+    def read(_contract, fn, _args, **kwargs):
+        assert kwargs["allow_restore"] is False
+        if failure == "rpc_error":
+            raise AquariusError("fixture RPC unavailable")
+        return scval.to_uint128(5_000_000) if fn == "get_executor_reward" else scval.to_int128(2**127 - 1)
+    client._read_contract = Mock(side_effect=read)
+    client.engine.prepare = Mock()
+    client.engine.sign_and_submit = Mock()
+    with pytest.raises(AquariusError, match="RPC unavailable|allowance limit"):
+        getattr(order, action)()
+    client.engine.prepare.assert_not_called()
+    signer.sign.assert_not_called()
+    client.engine.sign_and_submit.assert_not_called()
+
+
+def test_client_checks_approved_reward_before_requesting_a_draft():
+    client = AquariusClient(network="testnet", signer=SimpleNamespace(public_key=DRAFT["maker"]),
+                            limit_orders=LimitOrderConfig(settlement=DRAFT["settlement_address"], batcher=BATCHER))
+    client._read_contract = Mock(side_effect=read_setting)
+    client.api.create_limit_order_draft = Mock()
+    with pytest.raises(AquariusError, match="executor reward changed"):
+        client.create_onchain_limit_order(
+            Asset.contract(DRAFT["sell_token"]), Asset.contract(DRAFT["buy_token"]),
+            sell_amount=1000, min_buy_amount=900, valid_after_ledger=100, expires_at_ledger=200,
+            expected_executor_reward_xlm=5_000_001, allowance_expiration_ledger=250,
+        )
+    client.api.create_limit_order_draft.assert_not_called()
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5, 2**127, 999])
+def test_placement_rejects_invalid_or_insufficient_allowance_limits(limit):
+    order = validate(max_allowances={DRAFT["sell_token"]: limit})
+    with pytest.raises(AquariusError, match="allowance limit"):
+        build_onchain_placement_args(order, {}, XLM_TOKEN)
+
+
+def test_allowance_limits_are_copied_and_cannot_be_raised_by_mutating_input():
+    limits = {XLM_TOKEN: 5_000_000}
+    order = validate(max_allowances=limits)
+    limits[XLM_TOKEN] = 2**127 - 1
+    with pytest.raises(AquariusError, match="allowance limit"):
+        build_onchain_placement_args(order, {XLM_TOKEN: 5_000_001}, XLM_TOKEN)
+
+
+def test_native_sale_rejects_combined_amount_overflow():
+    order = replace(validate(), sell_token=XLM_TOKEN, sell_amount=2**127 - 1)
+    with pytest.raises(AquariusError, match="i128"):
+        build_onchain_placement_args(order, {}, XLM_TOKEN)
 
 
 def test_onchain_draft_validates_canonical_xdr_and_json_projection():
@@ -90,6 +194,7 @@ def test_onchain_draft_validates_canonical_xdr_and_json_projection():
             expected_network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
             expected_settlement=DRAFT["settlement_address"],
             expected_maker=DRAFT["maker"],
+            expected_executor_reward_xlm=5_000_000,
             expected_order={
                 "sell_token": DRAFT["sell_token"],
                 "sell_amount": 1_000,
@@ -103,7 +208,7 @@ def test_onchain_draft_validates_canonical_xdr_and_json_projection():
 
 
 def test_onchain_placement_uses_idempotent_absolute_approvals_and_exact_marker():
-    order = validate()
+    order = validate(max_allowances={DRAFT["sell_token"]: 1_500})
     args = build_onchain_placement_args(
         order,
         current_allowances={
@@ -136,7 +241,7 @@ def test_onchain_placement_uses_idempotent_absolute_approvals_and_exact_marker()
 
 
 def test_xlm_sale_uses_one_combined_allowance():
-    order = replace(validate(), sell_token=XLM_TOKEN)
+    order = replace(validate(), sell_token=XLM_TOKEN, max_allowances={XLM_TOKEN: 6_000_000})
 
     assert order.required_allowances(XLM_TOKEN) == {XLM_TOKEN: 5_001_000}
     calls = native(
@@ -164,6 +269,7 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
             batcher=BATCHER,
         ),
     )
+    client._read_contract = Mock(side_effect=read_setting)
     client.api.create_limit_order_draft = Mock(return_value=DRAFT)
     client.server.get_latest_ledger = Mock(return_value=SimpleNamespace(sequence=100))
     assert client.latest_ledger() == 100
@@ -171,6 +277,7 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
     order = client.create_onchain_limit_order(
         Asset.contract(DRAFT["sell_token"]),
         Asset.contract(DRAFT["buy_token"]),
+        expected_executor_reward_xlm=5_000_000,
         sell_amount=1_000,
         min_buy_amount=900,
         valid_after_ledger=100,
@@ -195,6 +302,7 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
         client.create_onchain_limit_order(
             Asset.contract(DRAFT["sell_token"]),
             Asset.contract(DRAFT["buy_token"]),
+            expected_executor_reward_xlm=5_000_000,
             sell_amount=2**127,
             min_buy_amount=900,
             valid_after_ledger=100,
@@ -202,7 +310,7 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
             allowance_expiration_ledger=250,
         )
 
-    client._read_contract = Mock(return_value=scval.to_int128(0))
+    client._read_contract = Mock(side_effect=read_setting)
     captured = []
 
     class Builder:
@@ -231,6 +339,9 @@ def test_client_creates_validated_draft_and_builds_batcher_and_cancel_transactio
     assert captured[-1]["auth"][0].root_invocation.function.contract_fn.function_name.sc_symbol == b"cancel"
     placement_auth = captured[-2]["auth"][0]
     assert [call.function.contract_fn.function_name.sc_symbol for call in placement_auth.root_invocation.sub_invocations] == [b"approve", b"approve", b"place_contract_order"]
+    assert placement_auth.root_invocation.sub_invocations[-1].function.contract_fn.args == [
+        scval.to_bytes(bytes.fromhex(order.order_id)), scval.to_uint32(order.expires_at_ledger),
+    ]
 
     client.engine.sign_and_submit = Mock(
         return_value=SimpleNamespace(tx_hash="ab" * 32)
@@ -259,7 +370,7 @@ def test_unsigned_placement_and_cancel_do_not_restore_or_submit():
         settlement=DRAFT["settlement_address"], batcher=BATCHER,
     ))
     order = replace(validate(), _client=client)
-    client._read_contract = Mock(return_value=scval.to_int128(0))
+    client._read_contract = Mock(side_effect=read_setting)
     client.server.load_account = Mock(side_effect=lambda source: Account(source, 42))
     client.server.simulate_transaction = Mock(return_value=SimpleNamespace(restore_preamble=object()))
     client.engine.sign_and_submit = Mock(side_effect=AssertionError("unsigned builder must not submit"))
@@ -273,11 +384,12 @@ def test_unsigned_placement_and_cancel_do_not_restore_or_submit():
 def test_unsigned_placement_does_not_restore_archived_allowance_read():
     from stellar_sdk import Account, Keypair
 
-    client = AquariusClient(network="testnet", signer=Keypair.random(), limit_orders=LimitOrderConfig(
+    client = AquariusClient(network="testnet", signer=SimpleNamespace(public_key=DRAFT["maker"]), limit_orders=LimitOrderConfig(
         settlement=DRAFT["settlement_address"], batcher=BATCHER,
     ))
     order = replace(validate(), _client=client)
     client.server.load_account = Mock(side_effect=lambda source: Account(source, 42))
+    client.get_limit_order_executor_reward = Mock(return_value=5_000_000)
     # Read simulation can return both an allowance and a restore preamble.
     client.server.simulate_transaction = Mock(return_value=SimpleNamespace(
         restore_preamble=object(), error=None,
@@ -326,7 +438,13 @@ def test_placement_authorization_matches_shared_wire_vector():
     calls = []
     for call in scval.from_vec(args[1]):
         target, name, parameters = scval.from_vec(call)
-        calls.append(authorized_invocation(Address.from_xdr_sc_address(target.address).address, scval.from_symbol(name), scval.from_vec(parameters)))
+        function_name = scval.from_symbol(name)
+        auth_args = scval.from_vec(parameters)
+        if function_name == "place_contract_order":
+            auth_args = auth_args[1:]
+        calls.append(authorized_invocation(
+            Address.from_xdr_sc_address(target.address).address, function_name, auth_args,
+        ))
     auth = source_account_entry(authorized_invocation(BATCHER, "batch", args, calls))
     assert [value.to_xdr() for value in args] == vectors["placement_args_xdr"]
     assert auth.to_xdr() == vectors["placement_auth_xdr"]
@@ -398,9 +516,11 @@ def test_client_preserves_classic_receive_metadata_for_the_placement_builder():
         network="testnet", signer=SimpleNamespace(public_key=DRAFT["maker"]),
         limit_orders=LimitOrderConfig(settlement=DRAFT["settlement_address"], batcher=BATCHER),
     )
+    client._read_contract = Mock(side_effect=read_setting)
     client.api.create_limit_order_draft = Mock(return_value=payload)
     order = client.create_onchain_limit_order(
         Asset.contract(DRAFT["sell_token"]), asset, sell_amount=1_000,
+        expected_executor_reward_xlm=5_000_000,
         min_buy_amount=900, valid_after_ledger=100, expires_at_ledger=200,
         allowance_expiration_ledger=250,
     )

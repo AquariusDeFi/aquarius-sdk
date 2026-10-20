@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import requests
@@ -16,6 +17,7 @@ from .assets import Asset
 from .collector import FeeCollector
 from .errors import AquariusError, SlippageError
 from .limit_orders import (
+    _validate_executor_reward,
     LimitOrderConfig,
     LimitOrderPage,
     LimitOrderRecord,
@@ -370,6 +372,19 @@ class AquariusClient:
         )
         address = Address.from_xdr_sc_address(confirmed.return_value.address).address
         return FeeCollector(address=address, _client=self)
+
+    def get_limit_order_executor_reward(self) -> int:
+        """Read the configured settlement fee without signing or restoring."""
+        config = self._require_limit_order_config()
+        value = self._read_contract(
+            config.settlement, "get_executor_reward", [], allow_restore=False,
+        )
+        try:
+            reward = scval.from_uint128(value)
+        except (TypeError, ValueError) as exc:
+            raise AquariusError("settlement returned an invalid executor reward") from exc
+        return _validate_executor_reward(reward)
+
     def create_onchain_limit_order(
         self,
         from_: Asset,
@@ -379,14 +394,19 @@ class AquariusClient:
         min_buy_amount: int,
         valid_after_ledger: int,
         expires_at_ledger: int,
+        expected_executor_reward_xlm: int,
         allowance_expiration_ledger: int,
+        max_allowances: Mapping[str, int] | None = None,
     ) -> OnchainLimitOrder:
         """Create a canonical API draft for programmatic G-account placement.
 
         allowance_expiration_ledger is explicit because SEP-41 allowance()
         exposes the amount but not the current expiration. Callers reusing an
         allowance should choose a horizon no earlier than their other orders.
+        expected_executor_reward_xlm must come from the caller's approved intent,
+        not the registry. max_allowances explicitly permits larger shared totals.
         """
+        _validate_executor_reward(expected_executor_reward_xlm)
         signer = self._require_signer()
         maker = signer_public_key(signer)
         if not maker.startswith("G"):
@@ -416,6 +436,8 @@ class AquariusClient:
         if sell_token == buy_token:
             raise AquariusError("limit-order sell and buy tokens must differ")
         config = self._require_limit_order_config(require_batcher=True)
+        if self.get_limit_order_executor_reward() != expected_executor_reward_xlm:
+            raise AquariusError("settlement executor reward changed; review the order again")
         request = {
             "placement_mode": "CONTRACT_ONCHAIN",
             "maker": maker,
@@ -443,7 +465,9 @@ class AquariusClient:
                 "valid_after_ledger": valid_after_ledger,
                 "expires_at_ledger": expires_at_ledger,
             },
+            expected_executor_reward_xlm=expected_executor_reward_xlm,
             allowance_expiration_ledger=allowance_expiration_ledger,
+            max_allowances=max_allowances,
             client=self,
             buy_asset=to,
         )
@@ -856,8 +880,16 @@ class AquariusClient:
             raise AquariusError("the signer is not the limit-order maker")
         return signer
 
-    def _onchain_limit_order_append(self, order: OnchainLimitOrder, *, allow_restore: bool = True):
+    def _onchain_limit_order_append(self, order: OnchainLimitOrder):
         config = self._require_limit_order_config(require_batcher=True)
+        if (
+            order.settlement_address != config.settlement
+            or order.network_passphrase != self.network.passphrase
+            or order.maker != signer_public_key(self._require_signer())
+        ):
+            raise AquariusError("limit order does not match the client execution context")
+        if self.get_limit_order_executor_reward() != order.executor_reward_xlm:
+            raise AquariusError("settlement executor reward changed; review the order again")
         xlm_token = Asset.native().contract_id(self.network.passphrase)
         current_allowances = {}
         for token in order.required_allowances(xlm_token):
@@ -868,16 +900,22 @@ class AquariusClient:
                     scval.to_address(order.maker),
                     scval.to_address(order.settlement_address),
                 ],
-                allow_restore=allow_restore,
+                # No signing (including restoration) before allowance limits pass.
+                allow_restore=False,
             )
             current_allowances[token] = scval.from_int128(value)
         args = build_onchain_placement_args(order, current_allowances, xlm_token)
         calls = []
         for call in scval.from_vec(args[1]):
             target, name, parameters = scval.from_vec(call)
+            function_name = scval.from_symbol(name)
+            auth_args = scval.from_vec(parameters)
+            # Settlement commits only (order_id, expires_at_ledger) in require_auth_for_args.
+            if function_name == "place_contract_order":
+                auth_args = auth_args[1:]
             calls.append(authorized_invocation(
                 Address.from_xdr_sc_address(target.address).address,
-                scval.from_symbol(name), scval.from_vec(parameters),
+                function_name, auth_args,
             ))
         auth = [source_account_entry(authorized_invocation(config.batcher, "batch", args, calls))]
         return lambda builder: builder.append_invoke_contract_function_op(
@@ -891,7 +929,7 @@ class AquariusClient:
         source = signer_public_key(self._require_signer())
         tx = self.engine.prepare(
             source,
-            self._onchain_limit_order_append(order, allow_restore=False),
+            self._onchain_limit_order_append(order),
         )
         return tx.to_xdr()
 

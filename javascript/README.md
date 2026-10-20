@@ -300,6 +300,21 @@ ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
 
 ## Programmatic on-chain limit orders
 
+**Unreleased security migration:** `createOnchainLimitOrder()` and
+`validateOnchainLimitOrderDraft()` now require `expectedExecutorRewardXlm`.
+Obtain it from `getLimitOrderExecutorReward()` on the trusted settlement and
+have the caller approve it before creating the order; never copy it from the
+registry draft. The SDK compares the draft's canonical fee to that approved
+value and reads the settlement fee again before building or placing.
+If the fee changes or cannot be read, the operation stops before signing.
+
+Each token's approval defaults to the amount this order needs (the XLM sale
+amount plus the fee when selling XLM). To preserve a larger shared allowance,
+pass an explicit `maxAllowances: new Map([[tokenContract, approvedTotal]])` ceiling.
+The SDK rejects existing or required allowances above that ceiling, without
+silently reducing or renewing them. Omitted token ceilings default to this
+order's requirement. Set the allowance expiration explicitly as described below.
+
 Receive-trustline support in JavaScript `0.6.0-alpha.5`:
 registry validation accepts both the legacy proof and the exact
 `trust(maker)` + input/reward transfer proof. The latter needs the upgraded
@@ -338,6 +353,8 @@ const aqua = new AquariusClient({
 });
 
 const currentLedger = await aqua.latestLedger();
+const expectedReward = await aqua.getLimitOrderExecutorReward();
+// Present this fee and the allowance horizon for approval before proceeding.
 const order = await aqua.createOnchainLimitOrder({
   from: XLM,
   to: AQUA,
@@ -345,6 +362,7 @@ const order = await aqua.createOnchainLimitOrder({
   minBuyAmount: 500_0000000n,
   validAfterLedger: currentLedger,
   expiresAtLedger: currentLedger + 17_280,
+  expectedExecutorRewardXlm: expectedReward,
   allowanceExpirationLedger: currentLedger + 17_280,
 });
 const receipt = await order.place();
@@ -355,6 +373,11 @@ return the existing expiration. Keep it at or beyond this order and every other
 open order sharing the settlement allowance. It does not affect the order ID.
 For custom C accounts, use `validateOnchainLimitOrderDraft()` and
 `buildOnchainPlacementArgs()` with the account's own authorization policy.
+These lower-level helpers do not query the network: supply an independently
+approved fee and recheck the settlement before signing.
+The existing contract is unchanged. A fee change after the transaction is signed
+can still leave an unfillable order and its bounded allowance; the SDK never
+silently increases the approved fee to compensate.
 
 `batcher` is required only for `CONTRACT_ONCHAIN` placement. Registry reads,
 cancellation, and filling need the trusted settlement address:
