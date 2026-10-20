@@ -1,6 +1,6 @@
 # aquarius-sdk
 
-Alpha installation: `pip install aquarius-sdk==0.6.0a6`.
+Alpha installation: `pip install aquarius-sdk==0.6.0a7`.
 
 Public API HTTP failures raise `APIHTTPError`, a subclass of `AquariusError`,
 with `status_code` and `retry_after` in seconds (`None` when unavailable).
@@ -139,7 +139,7 @@ its own.
 
 ## Programmatic on-chain limit orders
 
-**Unreleased security migration:** `create_onchain_limit_order()` and
+**Security migration in 0.6.0a7:** `create_onchain_limit_order()` and
 `validate_onchain_limit_order_draft()` now require `expected_executor_reward_xlm`.
 Obtain it from `get_limit_order_executor_reward()` on the trusted settlement and
 have the caller approve it before creating the order; never copy it from the
@@ -178,7 +178,7 @@ arguments. Direct JavaScript `OnchainLimitOrder` construction no longer has the
 boolean parameter before `buyAsset`; prefer the validated draft/client methods.
 
 
-The limit-order surface is available in alpha `0.6.0a6`. Configure trusted
+The examples below target alpha `0.6.0a7`. Configure trusted
 settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
 
 ```python

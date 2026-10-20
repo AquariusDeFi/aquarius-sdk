@@ -1,6 +1,6 @@
 # @aquariusdefi/sdk
 
-Alpha installation: `npm install @aquariusdefi/sdk@0.6.0-alpha.5 @stellar/stellar-sdk@^17.1.0`.
+Alpha installation: `npm install @aquariusdefi/sdk@0.6.0-alpha.6 @stellar/stellar-sdk@^17.1.0`.
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
@@ -300,7 +300,7 @@ ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
 
 ## Programmatic on-chain limit orders
 
-**Unreleased security migration:** `createOnchainLimitOrder()` and
+**Security migration in 0.6.0-alpha.6:** `createOnchainLimitOrder()` and
 `validateOnchainLimitOrderDraft()` now require `expectedExecutorRewardXlm`.
 Obtain it from `getLimitOrderExecutorReward()` on the trusted settlement and
 have the caller approve it before creating the order; never copy it from the
@@ -339,7 +339,7 @@ arguments. Direct JavaScript `OnchainLimitOrder` construction no longer has the
 boolean parameter before `buyAsset`; prefer the validated draft/client methods.
 
 
-The limit-order surface is available in alpha `0.6.0-alpha.5`. Configure trusted
+The examples below target alpha `0.6.0-alpha.6`. Configure trusted
 settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
 
 ```ts
