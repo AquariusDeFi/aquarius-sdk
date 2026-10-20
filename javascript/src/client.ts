@@ -24,6 +24,7 @@ import {
   parseLimitOrderRecord,
   validateFillReceipt,
   validateOnchainLimitOrderDraft,
+  validateExecutorReward,
 } from "./limit-orders.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
@@ -125,6 +126,10 @@ export interface OnchainLimitOrderParams {
   minBuyAmount: bigint;
   validAfterLedger: number;
   expiresAtLedger: number;
+  /** Fee approved by the caller, independently of the registry response. */
+  expectedExecutorRewardXlm: bigint;
+  /** Per-token total allowance ceilings; omitted tokens default to the order's requirement. */
+  maxAllowances?: ReadonlyMap<string, bigint>;
   /**
    * SEP-41 allowance horizon. Must cover this order and should be no earlier
    * than any other order sharing the same settlement allowance.
@@ -514,10 +519,19 @@ export class AquariusClient {
     };
   }
 
+  /** Read the configured settlement fee without signing or restoring. */
+  async getLimitOrderExecutorReward(): Promise<bigint> {
+    const config = this.requireLimitOrderConfig();
+    const value = await this.readContract(config.settlement, "get_executor_reward", []);
+    if (value.type !== "scvU128") throw new AquariusError("settlement returned an invalid executor reward");
+    return validateExecutorReward(scValToNative(value) as bigint);
+  }
+
   /** Create a canonical API draft for programmatic G-account placement. */
   async createOnchainLimitOrder(
     params: OnchainLimitOrderParams,
   ): Promise<OnchainLimitOrder> {
+    validateExecutorReward(params.expectedExecutorRewardXlm);
     const signer = this.requireSigner();
     const maker = signer.publicKey();
     if (!maker.startsWith("G")) {
@@ -556,6 +570,9 @@ export class AquariusClient {
       throw new AquariusError("limit-order sell and buy tokens must differ");
     }
     const config = this.requireLimitOrderConfig(true);
+    if (await this.getLimitOrderExecutorReward() !== params.expectedExecutorRewardXlm) {
+      throw new AquariusError("settlement executor reward changed; review the order again");
+    }
     const payload = await this.api.createLimitOrderDraft(
       this.limitOrderApiUrl(),
       {
@@ -575,6 +592,7 @@ export class AquariusClient {
         expectedNetworkPassphrase: this.network.passphrase,
         expectedSettlement: config.settlement,
         expectedMaker: maker,
+        expectedExecutorRewardXlm: params.expectedExecutorRewardXlm,
         expectedOrder: {
           sellToken,
           sellAmount: params.sellAmount,
@@ -584,6 +602,7 @@ export class AquariusClient {
           expiresAtLedger: params.expiresAtLedger,
         },
         allowanceExpirationLedger: params.allowanceExpirationLedger,
+        maxAllowances: params.maxAllowances,
         actions: this.onchainLimitOrderActions(),
         buyAsset: params.to,
       },
@@ -1478,6 +1497,14 @@ export class AquariusClient {
     order: OnchainLimitOrder,
   ): Promise<xdr.Operation> {
     const config = this.requireLimitOrderConfig(true);
+    if (order.settlementAddress !== config.settlement ||
+        order.networkPassphrase !== this.network.passphrase ||
+        order.maker !== this.requireSigner().publicKey()) {
+      throw new AquariusError("limit order does not match the client execution context");
+    }
+    if (await this.getLimitOrderExecutorReward() !== order.executorRewardXlm) {
+      throw new AquariusError("settlement executor reward changed; review the order again");
+    }
     const xlmToken = Asset.native().contractId(this.network.passphrase);
     const currentAllowances = new Map<string, bigint>();
     for (const token of order.requiredAllowances(xlmToken).keys()) {
@@ -1493,7 +1520,10 @@ export class AquariusClient {
       if (call.type !== "scvVec" || !call.vec) throw new AquariusError("Invalid placement batch");
       const [target, name, parameters] = call.vec;
       if (parameters.type !== "scvVec" || !parameters.vec) throw new AquariusError("Invalid placement arguments");
-      return authorizedInvocation(scValToNative(target) as string, scValToNative(name) as string, parameters.vec);
+      const functionName = scValToNative(name) as string;
+      // Settlement commits only (order_id, expires_at_ledger) in require_auth_for_args.
+      const authArgs = functionName === "place_contract_order" ? parameters.vec.slice(1) : parameters.vec;
+      return authorizedInvocation(scValToNative(target) as string, functionName, authArgs);
     });
     return Operation.invokeContractFunction({
       contract: config.batcher!,

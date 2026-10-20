@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from stellar_sdk import Address, Network, scval, xdr
@@ -27,6 +29,12 @@ _ORDER_FIELDS = {
     "valid_after_ledger",
     "version",
 }
+
+
+def _validate_executor_reward(value: int) -> int:
+    if type(value) is not int or not 0 < value <= 2**127 - 1:
+        raise AquariusError("executor reward must be a positive i128 amount")
+    return value
 
 
 def _contract_address(value: str, name: str) -> str:
@@ -179,10 +187,23 @@ class OnchainLimitOrder:
     _client: AquariusClient | None = field(default=None, repr=False)
     buy_asset: Asset | None = field(default=None, repr=False)
     network_passphrase: str | None = field(default=None, repr=False)
+    max_allowances: Mapping[str, int] | None = field(default=None, repr=False)
+
+    def __post_init__(self):
+        if self.max_allowances is not None:
+            object.__setattr__(
+                self, "max_allowances", MappingProxyType(dict(self.max_allowances))
+            )
 
     def required_allowances(self, xlm_token: str) -> dict[str, int]:
+        _validate_executor_reward(self.executor_reward_xlm)
+        if type(self.sell_amount) is not int or not 0 < self.sell_amount <= 2**127 - 1:
+            raise AquariusError("required token allowance must fit positive i128")
         if self.sell_token == xlm_token:
-            return {xlm_token: self.sell_amount + self.executor_reward_xlm}
+            amount = self.sell_amount + self.executor_reward_xlm
+            if amount > 2**127 - 1:
+                raise AquariusError("required token allowance does not fit i128")
+            return {xlm_token: amount}
         return {
             self.sell_token: self.sell_amount,
             xlm_token: self.executor_reward_xlm,
@@ -217,11 +238,14 @@ def validate_onchain_limit_order_draft(
     expected_settlement: str,
     expected_maker: str,
     expected_order: dict,
+    expected_executor_reward_xlm: int,
     allowance_expiration_ledger: int,
+    max_allowances: Mapping[str, int] | None = None,
     client: AquariusClient | None = None,
     buy_asset: Asset | None = None,
 ) -> OnchainLimitOrder:
     """Validate the registry JSON against its canonical OrderV1 ScVal."""
+    _validate_executor_reward(expected_executor_reward_xlm)
     try:
         order_scval = xdr.SCVal.from_xdr(payload["order_xdr"])
         order_id = hashlib.sha256(order_scval.to_xdr_bytes()).hexdigest()
@@ -286,6 +310,8 @@ def validate_onchain_limit_order_draft(
         actual = projection[name]
         if actual != expected:
             raise AquariusError(f"order registry changed requested field {name}")
+    if projection["executor_reward_xlm"] != expected_executor_reward_xlm:
+        raise AquariusError("order registry changed the approved executor reward")
     if (
         not isinstance(allowance_expiration_ledger, int)
         or not projection["expires_at_ledger"]
@@ -312,6 +338,7 @@ def validate_onchain_limit_order_draft(
         _client=client,
         buy_asset=buy_asset,
         network_passphrase=expected_network_passphrase,
+        max_allowances=max_allowances,
     )
 
 
@@ -322,11 +349,18 @@ def build_onchain_placement_args(
 ) -> list[xdr.SCVal]:
     """Encode batch(auth_users, approve(s)+place, false).
 
-    Approvals are absolute and never reduce the observed allowance. The caller
+    Approvals are absolute and never reduce the observed allowance. Each token
+    defaults to this order's required amount; preserving a larger allowance
+    requires an explicit max_allowances limit. The caller
     supplies the expiration explicitly because SEP-41 allowance() does not
     expose the existing expiration ledger. Auto-trust requires classic receive
     asset metadata whose network-derived SAC address matches the buy token.
     """
+    if (
+        type(order.allowance_expiration_ledger) is not int
+        or not order.expires_at_ledger <= order.allowance_expiration_ledger <= 2**32 - 1
+    ):
+        raise AquariusError("allowance expiration must cover the order and fit u32")
     calls = []
     if (
         order.buy_asset is not None
@@ -348,11 +382,16 @@ def build_onchain_placement_args(
         ]))
     for token, required in order.required_allowances(xlm_token).items():
         current = current_allowances.get(token, 0)
-        if current < 0:
-            raise AquariusError("token allowance cannot be negative")
+        if type(current) is not int or not 0 <= current <= 2**127 - 1:
+            raise AquariusError("token allowance must be a non-negative i128 amount")
         amount = max(current, required)
-        if amount > 2**127 - 1:
-            raise AquariusError("required token allowance does not fit i128")
+        limit = (order.max_allowances or {}).get(token, required)
+        if type(limit) is not int or not 0 < limit <= 2**127 - 1:
+            raise AquariusError("allowance limit must be a positive i128 amount")
+        if amount > limit:
+            raise AquariusError(
+                f"required or existing allowance exceeds the approved allowance limit for {token}"
+            )
         calls.append(
             scval.to_vec(
                 [

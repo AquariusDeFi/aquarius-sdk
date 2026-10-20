@@ -1,6 +1,6 @@
 # aquarius-sdk
 
-Alpha installation: `pip install aquarius-sdk==0.6.0a6`.
+Alpha installation: `pip install aquarius-sdk==0.6.0a7`.
 
 Public API HTTP failures raise `APIHTTPError`, a subclass of `AquariusError`,
 with `status_code` and `retry_after` in seconds (`None` when unavailable).
@@ -139,6 +139,21 @@ its own.
 
 ## Programmatic on-chain limit orders
 
+**Security migration in 0.6.0a7:** `create_onchain_limit_order()` and
+`validate_onchain_limit_order_draft()` now require `expected_executor_reward_xlm`.
+Obtain it from `get_limit_order_executor_reward()` on the trusted settlement and
+have the caller approve it before creating the order; never copy it from the
+registry draft. The SDK compares the draft's canonical fee to that approved
+value and reads the settlement fee again before building or placing.
+If the fee changes or cannot be read, the operation stops before signing.
+
+Each token's approval defaults to the amount this order needs (the XLM sale
+amount plus the fee when selling XLM). To preserve a larger shared allowance,
+pass an explicit `max_allowances={token_contract: approved_total}` ceiling.
+The SDK rejects existing or required allowances above that ceiling, without
+silently reducing or renewing them. Omitted token ceilings default to this
+order's requirement. Set the allowance expiration explicitly as described below.
+
 Receive-trustline support in Python `0.6.0a6`:
 registry validation accepts both the legacy proof and the exact
 `trust(maker)` + input/reward transfer proof. The latter needs the upgraded
@@ -163,7 +178,7 @@ arguments. Direct JavaScript `OnchainLimitOrder` construction no longer has the
 boolean parameter before `buyAsset`; prefer the validated draft/client methods.
 
 
-The limit-order surface is available in alpha `0.6.0a6`. Configure trusted
+The examples below target alpha `0.6.0a7`. Configure trusted
 settlement and batcher addresses for `CONTRACT_ONCHAIN` placement:
 
 ```python
@@ -186,6 +201,8 @@ aqua = AquariusClient(
     ),
 )
 current_ledger = aqua.latest_ledger()
+expected_reward = aqua.get_limit_order_executor_reward()
+# Present this fee and the allowance horizon for approval before proceeding.
 order = aqua.create_onchain_limit_order(
     XLM,
     AQUA,
@@ -193,6 +210,7 @@ order = aqua.create_onchain_limit_order(
     min_buy_amount=500_0000000,
     valid_after_ledger=current_ledger,
     expires_at_ledger=current_ledger + 17_280,
+    expected_executor_reward_xlm=expected_reward,
     allowance_expiration_ledger=current_ledger + 17_280,
 )
 receipt = order.place()
@@ -203,6 +221,11 @@ return the existing expiration. Keep it at or beyond this order and every other
 open order sharing the settlement allowance. It does not affect the order ID.
 For custom C accounts, use `validate_onchain_limit_order_draft()` and
 `build_onchain_placement_args()` with the account's own authorization policy.
+These lower-level helpers do not query the network: supply an independently
+approved fee and recheck the settlement before signing.
+The existing contract is unchanged. A fee change after the transaction is signed
+can still leave an unfillable order and its bounded allowance; the SDK never
+silently increases the approved fee to compensate.
 
 `batcher` is required only for `CONTRACT_ONCHAIN` placement. Registry reads,
 cancellation, and filling need the trusted settlement address:
