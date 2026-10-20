@@ -29,11 +29,17 @@ const draft = JSON.parse(
 const batcher = StrKey.encodeContract(Buffer.alloc(32, 5));
 const xlmToken = StrKey.encodeContract(Buffer.alloc(32, 4));
 
-function validate(payload = draft) {
+async function readSetting(_contract, fn) {
+  return fn === "get_executor_reward" ? nativeToScVal(5_000_000n, { type: "u128" })
+    : nativeToScVal(0n, { type: "i128" });
+}
+
+function validate(payload = draft, context = {}) {
   return validateOnchainLimitOrderDraft(payload, {
     expectedNetworkPassphrase: Networks.TESTNET,
     expectedSettlement: draft.settlement_address,
     expectedMaker: draft.maker,
+    expectedExecutorRewardXlm: 5_000_000n,
     expectedOrder: {
       sellToken: draft.sell_token,
       sellAmount: 1_000n,
@@ -43,6 +49,7 @@ function validate(payload = draft) {
       expiresAtLedger: 200,
     },
     allowanceExpirationLedger: 250,
+    ...context,
   });
 }
 
@@ -56,6 +63,119 @@ test("limit-order config requires contract addresses", () => {
     () => new LimitOrderConfig({ settlement: draft.settlement_address, batcher: draft.maker }),
     AquariusError,
   );
+});
+
+for (const reward of [5_000_001n, (1n << 127n) - 1n]) {
+  test(`draft rejects a substituted reward ${reward} with consistent XDR and hash`, async () => {
+    const { hash, xdr } = await import("@stellar/stellar-sdk");
+    const original = xdr.ScVal.fromXDR(draft.order_xdr, "base64");
+    const canonical = xdr.ScVal.scvMap(original.map.map(entry => new xdr.ScMapEntry({
+      key: entry.key, val: scValToNative(entry.key) === "executor_reward_xlm"
+        ? nativeToScVal(reward, { type: "u128" }) : entry.val,
+    })));
+    const payload = { ...draft, executor_reward_xlm: reward.toString(),
+      order_xdr: canonical.toXDR("base64"),
+      order_id: Buffer.from(hash(canonical.toXDR())).toString("hex") };
+    assert.throws(() => validate(payload), /executor reward/);
+  });
+}
+
+for (const token of [draft.sell_token, xlmToken]) {
+  test(`placement does not renew an unapproved large allowance for ${token}`, () => {
+    assert.throws(() => buildOnchainPlacementArgs(
+      validate(), new Map([[token, (1n << 127n) - 1n]]), xlmToken,
+    ), /allowance limit/);
+  });
+}
+
+for (const action of ["buildTransaction", "place"]) {
+  test(`${action} rechecks the reward before preparing or signing`, async () => {
+    const client = new AquariusClient({
+      network: "testnet",
+      signer: { publicKey: () => draft.maker, sign: () => assert.fail("must not sign") },
+      limitOrders: { settlement: draft.settlement_address, batcher },
+    });
+    client.readContract = readSetting;
+    client.api.createLimitOrderDraft = async () => draft;
+    const order = await client.createOnchainLimitOrder({
+      expectedExecutorRewardXlm: 5_000_000n,
+      from: Asset.contract(draft.sell_token), to: Asset.contract(draft.buy_token),
+      sellAmount: 1000n, minBuyAmount: 900n, validAfterLedger: 100, expiresAtLedger: 200,
+      allowanceExpirationLedger: 250,
+    });
+    client.readContract = async (_contract, fn) => fn === "get_executor_reward"
+      ? nativeToScVal(5_000_001n, { type: "u128" }) : nativeToScVal(0n, { type: "i128" });
+    client.engine.prepare = async () => assert.fail("must not prepare");
+    client.engine.signAndSubmit = async () => assert.fail("must not submit");
+    await assert.rejects(order[action](), /executor reward/);
+  });
+}
+
+for (const failure of ["rpc_error", "large_allowance"]) {
+  for (const action of ["buildTransaction", "place"]) {
+    test(`${action} fails closed for ${failure} before signing`, async () => {
+      const client = new AquariusClient({
+        network: "testnet",
+        signer: { publicKey: () => draft.maker, sign: () => assert.fail("must not sign") },
+        limitOrders: { settlement: draft.settlement_address, batcher },
+      });
+      client.readContract = readSetting;
+      client.api.createLimitOrderDraft = async () => draft;
+      const order = await client.createOnchainLimitOrder({
+        from: Asset.contract(draft.sell_token), to: Asset.contract(draft.buy_token),
+        sellAmount: 1000n, minBuyAmount: 900n, validAfterLedger: 100, expiresAtLedger: 200,
+        allowanceExpirationLedger: 250, expectedExecutorRewardXlm: 5_000_000n,
+      });
+      client.readContract = async (_contract, fn) => {
+        if (failure === "rpc_error") throw new AquariusError("fixture RPC unavailable");
+        return fn === "get_executor_reward" ? nativeToScVal(5_000_000n, { type: "u128" })
+          : nativeToScVal((1n << 127n) - 1n, { type: "i128" });
+      };
+      client.engine.prepare = async () => assert.fail("must not prepare");
+      client.engine.signAndSubmit = async () => assert.fail("must not submit");
+      await assert.rejects(order[action](), /RPC unavailable|allowance limit/);
+    });
+  }
+}
+
+test("client checks the approved reward before requesting a draft", async () => {
+  const client = new AquariusClient({
+    network: "testnet", signer: { publicKey: () => draft.maker, sign: value => value },
+    limitOrders: { settlement: draft.settlement_address, batcher },
+  });
+  client.readContract = readSetting;
+  client.api.createLimitOrderDraft = async () => assert.fail("must not request a draft");
+  await assert.rejects(client.createOnchainLimitOrder({
+    from: Asset.contract(draft.sell_token), to: Asset.contract(draft.buy_token),
+    sellAmount: 1000n, minBuyAmount: 900n, validAfterLedger: 100, expiresAtLedger: 200,
+    allowanceExpirationLedger: 250, expectedExecutorRewardXlm: 5_000_001n,
+  }), /executor reward changed/);
+});
+
+for (const limit of [0n, -1n, true, 1.5, 1n << 127n, 999n]) {
+  test(`placement rejects an invalid or insufficient allowance limit ${limit}`, () => {
+    const order = validate(draft, { maxAllowances: new Map([[draft.sell_token, limit]]) });
+    assert.throws(() => buildOnchainPlacementArgs(order, new Map(), xlmToken), /allowance limit/);
+  });
+}
+
+test("allowance limits are copied before the caller mutates the input map", () => {
+  const limits = new Map([[xlmToken, 5_000_000n]]);
+  const order = validate(draft, { maxAllowances: limits });
+  limits.set(xlmToken, (1n << 127n) - 1n);
+  assert.throws(() => buildOnchainPlacementArgs(
+    order, new Map([[xlmToken, 5_000_001n]]), xlmToken,
+  ), /allowance limit/);
+});
+
+test("native sale rejects a combined amount overflow", () => {
+  const order = validate();
+  const overflowing = new OnchainLimitOrder(
+    order.orderId, order.settlementAddress, order.maker, xlmToken, (1n << 127n) - 1n,
+    order.buyToken, order.minBuyAmount, order.validAfterLedger, order.expiresAtLedger,
+    order.allowanceExpirationLedger, order.executorRewardXlm, order.orderScVal,
+  );
+  assert.throws(() => buildOnchainPlacementArgs(overflowing, new Map(), xlmToken), /i128/);
 });
 
 function withReceiveAsset(order, buyAsset, networkPassphrase = Networks.TESTNET, buyToken = order.buyToken) {
@@ -129,8 +249,10 @@ test("client preserves classic receive metadata for the placement builder", asyn
     network: "testnet", signer: { publicKey: () => draft.maker, sign: value => value },
     limitOrders: { settlement: draft.settlement_address, batcher },
   });
+  client.readContract = readSetting;
   client.api.createLimitOrderDraft = async () => payload;
   const order = await client.createOnchainLimitOrder({
+    expectedExecutorRewardXlm: 5_000_000n,
     from: Asset.contract(draft.sell_token), to: asset, sellAmount: 1_000n,
     minBuyAmount: 900n, validAfterLedger: 100, expiresAtLedger: 200,
     allowanceExpirationLedger: 250,
@@ -166,6 +288,7 @@ test("on-chain draft validates canonical XDR and JSON projection", () => {
       expectedNetworkPassphrase: Networks.TESTNET,
       expectedSettlement: draft.settlement_address,
       expectedMaker: draft.maker,
+      expectedExecutorRewardXlm: 5_000_000n,
       expectedOrder: {
         sellToken: draft.sell_token,
         sellAmount: 1_000n,
@@ -181,7 +304,7 @@ test("on-chain draft validates canonical XDR and JSON projection", () => {
 });
 
 test("placement uses idempotent absolute approvals and exact marker", () => {
-  const order = validate();
+  const order = validate(draft, { maxAllowances: new Map([[draft.sell_token, 1_500n]]) });
   const args = buildOnchainPlacementArgs(order, new Map([
     [draft.sell_token, 1_500n],
     [xlmToken, 4_000_000n],
@@ -222,7 +345,8 @@ test("XLM sale uses one combined allowance", () => {
     original.expiresAtLedger,
     original.allowanceExpirationLedger,
     original.executorRewardXlm,
-    original.orderScVal,
+    original.orderScVal, undefined, undefined, undefined,
+    new Map([[xlmToken, 6_000_000n]]),
   );
 
   assert.deepEqual(order.requiredAllowances(xlmToken), new Map([[xlmToken, 5_001_000n]]));
@@ -246,6 +370,7 @@ test("client creates a validated draft and builds batcher and cancel transaction
     },
   });
   let draftRequest;
+  client.readContract = readSetting;
   client.api.createLimitOrderDraft = async (url, request) => {
     draftRequest = { url, request };
     return draft;
@@ -254,6 +379,7 @@ test("client creates a validated draft and builds batcher and cancel transaction
   assert.equal(await client.latestLedger(), 100);
 
   const order = await client.createOnchainLimitOrder({
+    expectedExecutorRewardXlm: 5_000_000n,
     from: Asset.contract(draft.sell_token),
     to: Asset.contract(draft.buy_token),
     sellAmount: 1_000n,
@@ -279,6 +405,7 @@ test("client creates a validated draft and builds batcher and cancel transaction
 
   await assert.rejects(
     client.createOnchainLimitOrder({
+      expectedExecutorRewardXlm: 5_000_000n,
       from: Asset.contract(draft.sell_token),
       to: Asset.contract(draft.buy_token),
       sellAmount: 1n << 127n,
@@ -290,7 +417,7 @@ test("client creates a validated draft and builds batcher and cancel transaction
     /i128/,
   );
 
-  client.readContract = async () => nativeToScVal(0n, { type: "i128" });
+  client.readContract = readSetting;
   const operations = [];
   client.engine.prepare = async (_source, buildOperation) => {
     operations.push(buildOperation());
@@ -304,6 +431,9 @@ test("client creates a validated draft and builds batcher and cancel transaction
     scValToNative(placement.args[1]).map(call => call[1]),
     ["approve", "approve", "place_contract_order"],
   );
+  const placementAuth = operations.at(-1).body.invokeHostFunctionOp.auth[0];
+  assert.deepEqual(placementAuth.rootInvocation.subInvocations.at(-1).function.contractFn.args
+    .map(scValToNative), [Buffer.from(order.orderId, "hex"), order.expiresAtLedger]);
 
   assert.equal(await order.buildCancelTransaction(), "unsigned-xdr");
   const cancel = operations.at(-1).body.invokeHostFunctionOp.hostFunction.invokeContract;
@@ -332,13 +462,15 @@ test("unsigned placement and cancellation require restore without signing", asyn
     signer: { publicKey: () => draft.maker, sign: () => { throw new Error("unsigned builder must not sign"); } },
     limitOrders: { settlement: draft.settlement_address, batcher },
   });
+  client.readContract = readSetting;
   client.api.createLimitOrderDraft = async () => draft;
   const order = await client.createOnchainLimitOrder({
+    expectedExecutorRewardXlm: 5_000_000n,
     from: Asset.contract(draft.sell_token), to: Asset.contract(draft.buy_token),
     sellAmount: 1000n, minBuyAmount: 900n, validAfterLedger: 100,
     expiresAtLedger: 200, allowanceExpirationLedger: 250,
   });
-  client.readContract = async () => nativeToScVal(0n, { type: "i128" });
+  client.readContract = readSetting;
   client.server.getAccount = async source => new Account(source, "42");
   const data = new SorobanDataBuilder();
   client.server.simulateTransaction = async () => ({
@@ -378,7 +510,9 @@ test("placement authorization matches the shared canonical wire vector", async (
   const args = buildOnchainPlacementArgs(validate(), new Map(), xlmToken);
   const calls = args[1].vec.map(call => {
     const [target, name, parameters] = call.vec;
-    return authorizedInvocation(scValToNative(target), scValToNative(name), parameters.vec);
+    const functionName = scValToNative(name);
+    return authorizedInvocation(scValToNative(target), functionName,
+      functionName === "place_contract_order" ? parameters.vec.slice(1) : parameters.vec);
   });
   const auth = sourceAccountEntry(authorizedInvocation(batcher, "batch", args, calls));
   assert.deepEqual(args.map(value => Buffer.from(value.toXDR()).toString("base64")), vectors.placement_args_xdr);

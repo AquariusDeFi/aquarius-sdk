@@ -25,6 +25,14 @@ const ORDER_FIELDS = [
   "version",
 ];
 
+/** @internal Validate the caller's fee before using it as a spending bound. */
+export function validateExecutorReward(value: bigint): bigint {
+  if (typeof value !== "bigint" || value <= 0n || value > (1n << 127n) - 1n) {
+    throw new AquariusError("executor reward must be a positive i128 amount");
+  }
+  return value;
+}
+
 function contractAddress(value: string, name: string): string {
   try {
     new Address(value);
@@ -198,11 +206,22 @@ export class OnchainLimitOrder {
     private readonly actions?: OnchainLimitOrderActions,
     readonly buyAsset?: Asset,
     readonly networkPassphrase?: string,
-  ) {}
+    readonly maxAllowances?: ReadonlyMap<string, bigint>,
+  ) {
+    this.maxAllowances = maxAllowances === undefined ? undefined : new Map(maxAllowances);
+  }
 
   requiredAllowances(xlmToken: string): Map<string, bigint> {
+    validateExecutorReward(this.executorRewardXlm);
+    if (typeof this.sellAmount !== "bigint" || this.sellAmount <= 0n || this.sellAmount > (1n << 127n) - 1n) {
+      throw new AquariusError("required token allowance must fit positive i128");
+    }
     if (this.sellToken === xlmToken) {
-      return new Map([[xlmToken, this.sellAmount + this.executorRewardXlm]]);
+      const amount = this.sellAmount + this.executorRewardXlm;
+      if (amount > (1n << 127n) - 1n) {
+        throw new AquariusError("required token allowance does not fit i128");
+      }
+      return new Map([[xlmToken, amount]]);
     }
     return new Map([
       [this.sellToken, this.sellAmount],
@@ -258,6 +277,7 @@ export interface ValidateOnchainDraftContext {
   expectedNetworkPassphrase: string;
   expectedSettlement: string;
   expectedMaker: string;
+  expectedExecutorRewardXlm: bigint;
   expectedOrder: {
     sellToken: string;
     sellAmount: bigint;
@@ -267,6 +287,7 @@ export interface ValidateOnchainDraftContext {
     expiresAtLedger: number;
   };
   allowanceExpirationLedger: number;
+  maxAllowances?: ReadonlyMap<string, bigint>;
   actions?: OnchainLimitOrderActions;
   buyAsset?: Asset;
 }
@@ -275,6 +296,7 @@ export function validateOnchainLimitOrderDraft(
   payload: OnchainLimitOrderDraftPayload,
   context: ValidateOnchainDraftContext,
 ): OnchainLimitOrder {
+  validateExecutorReward(context.expectedExecutorRewardXlm);
   let orderScVal: xdr.ScVal;
   try {
     orderScVal = xdr.ScVal.fromXDR(payload.order_xdr, "base64");
@@ -350,6 +372,9 @@ export function validateOnchainLimitOrderDraft(
   if (!expectedMatches) {
     throw new AquariusError("order registry changed the requested order");
   }
+  if (BigInt(payload.executor_reward_xlm) !== context.expectedExecutorRewardXlm) {
+    throw new AquariusError("order registry changed the approved executor reward");
+  }
   if (
     !Number.isInteger(context.allowanceExpirationLedger) ||
     context.allowanceExpirationLedger < payload.expires_at_ledger ||
@@ -376,6 +401,7 @@ export function validateOnchainLimitOrderDraft(
     context.actions,
     context.buyAsset,
     context.expectedNetworkPassphrase,
+    context.maxAllowances,
   );
 }
 
@@ -384,6 +410,11 @@ export function buildOnchainPlacementArgs(
   currentAllowances: ReadonlyMap<string, bigint>,
   xlmToken: string,
 ): xdr.ScVal[] {
+  if (!Number.isInteger(order.allowanceExpirationLedger) ||
+      order.allowanceExpirationLedger < order.expiresAtLedger ||
+      order.allowanceExpirationLedger > 0xffffffff) {
+    throw new AquariusError("allowance expiration must cover the order and fit u32");
+  }
   const calls: xdr.ScVal[] = [];
   // A contract ID alone does not establish that the receive token is a SAC.
   if (order.buyAsset?.issuer !== undefined && order.buyToken !== xlmToken) {
@@ -398,10 +429,16 @@ export function buildOnchainPlacementArgs(
   }
   for (const [token, required] of order.requiredAllowances(xlmToken)) {
     const current = currentAllowances.get(token) ?? 0n;
-    if (current < 0n) throw new AquariusError("token allowance cannot be negative");
+    if (typeof current !== "bigint" || current < 0n || current > (1n << 127n) - 1n) {
+      throw new AquariusError("token allowance must be a non-negative i128 amount");
+    }
     const amount = current > required ? current : required;
-    if (amount > (1n << 127n) - 1n) {
-      throw new AquariusError("required token allowance does not fit i128");
+    const limit = order.maxAllowances?.get(token) ?? required;
+    if (typeof limit !== "bigint" || limit <= 0n || limit > (1n << 127n) - 1n) {
+      throw new AquariusError("allowance limit must be a positive i128 amount");
+    }
+    if (amount > limit) {
+      throw new AquariusError(`required or existing allowance exceeds the approved allowance limit for ${token}`);
     }
     calls.push(xdr.ScVal.scvVec([
       new Address(token).toScVal(),
