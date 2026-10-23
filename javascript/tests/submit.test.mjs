@@ -19,7 +19,11 @@ AquariusClient._requoteDelaysMs = [0, 0];
 const rejected = name => ({
   status: "ERROR",
   hash: "rejected",
-  errorResult: { result: () => ({ switch: () => ({ name }) }) },
+  errorResult: new xdr.TransactionResult({
+    feeCharged: 0n,
+    result: xdr.TransactionResultResult[name](),
+    ext: xdr.TransactionResultExt.v0(),
+  }),
 });
 const PENDING = { status: "PENDING", hash: "abc123" };
 
@@ -66,7 +70,7 @@ test("txBadSeq is re-signed with a fresh sequence and resubmitted", async () => 
   const resubmitted = server.submitted[1];
   assert.equal(resubmitted.sequence, (BigInt(CHAIN_SEQUENCE) + 1n).toString()); // reloaded
   assert.equal(resubmitted.signatures.length, 1); // stale signature dropped, re-signed
-  assert.ok(KEYPAIR.verify(resubmitted.hash(), resubmitted.signatures[0].signature()));
+  assert.ok(KEYPAIR.verify(resubmitted.hash(), resubmitted.signatures[0].signature.toBytes()));
 });
 
 test("txBadSeq gives up after bounded retries", async () => {
@@ -95,9 +99,9 @@ function diagnosticEvent(contractCode) {
   return new xdr.DiagnosticEvent({
     inSuccessfulContractCall: false,
     event: new xdr.ContractEvent({
-      ext: new xdr.ExtensionPoint(0), contractId: null,
-      type: xdr.ContractEventType.diagnostic(),
-      body: new xdr.ContractEventBody(0, new xdr.ContractEventV0({
+      ext: xdr.ExtensionPoint.v0(), contractId: null,
+      type: xdr.ContractEventType.diagnostic,
+      body: xdr.ContractEventBody.v0(new xdr.ContractEventV0({
         topics, data: xdr.ScVal.scvVoid(),
       })),
     }),
@@ -137,7 +141,7 @@ test("reads share one account fetch, even concurrently", async () => {
   const op = () => Operation.manageData({ name: "t", value: "1" });
   await Promise.all([engine.read(KEYPAIR.publicKey(), op), engine.read(KEYPAIR.publicKey(), op)]);
   const value = await engine.read(KEYPAIR.publicKey(), op);
-  assert.equal(value.u32(), 7);
+  assert.equal(value.u32, 7);
   assert.equal(server.loads, 1); // sequence numbers are irrelevant to simulation
 });
 

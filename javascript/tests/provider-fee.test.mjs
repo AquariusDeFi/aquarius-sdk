@@ -32,18 +32,18 @@ async function captureOperation(client, quote) {
 
 
 function decodeOperation(operation) {
-  const invokeOp = operation.body().invokeHostFunctionOp();
-  const invoke = invokeOp.hostFunction().invokeContract();
-  const root = invokeOp.auth()[0].rootInvocation();
-  const rootFn = root.function().contractFn();
-  const transferFn = root.subInvocations()[0].function().contractFn();
+  const invokeOp = operation.body.invokeHostFunctionOp;
+  const invoke = invokeOp.hostFunction.invokeContract;
+  const root = invokeOp.auth[0].rootInvocation;
+  const rootFn = root.function.contractFn;
+  const transferFn = root.subInvocations[0].function.contractFn;
   return {
-    contractId: Address.fromScAddress(invoke.contractAddress()).toString(),
-    functionName: invoke.functionName().toString(),
-    args: invoke.args().map(scValToNative),
-    rootContractId: Address.fromScAddress(rootFn.contractAddress()).toString(),
-    transferTo: scValToNative(transferFn.args()[1]),
-    transferAmount: scValToNative(transferFn.args()[2]),
+    contractId: Address.fromScAddress(invoke.contractAddress).toString(),
+    functionName: invoke.functionName.toString(),
+    args: invoke.args.map(scValToNative),
+    rootContractId: Address.fromScAddress(rootFn.contractAddress).toString(),
+    transferTo: scValToNative(transferFn.args[1]),
+    transferAmount: scValToNative(transferFn.args[2]),
   };
 }
 
