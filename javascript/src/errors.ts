@@ -150,14 +150,10 @@ export function errorFromDiagnostics(
   const decoded: { bytes: Buffer; event: xdr.DiagnosticEvent; isError: boolean }[] = [];
   for (const raw of events ?? []) {
     try {
-      const event = typeof raw === "string" ? xdr.DiagnosticEvent.fromXDR(raw, "base64") : raw;
-      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : raw.toXDR();
-      const isError = event
-        .event()
-        .body()
-        .v0()
-        .topics()
-        .some(t => t.switch() === xdr.ScValType.scvSymbol() && t.sym().toString() === "error");
+      const event = typeof raw === "string" ? xdr.DiagnosticEvent.fromXdr(raw, "base64") : raw;
+      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : Buffer.from(raw.toXdr());
+      const isError = event.event.body.v0.topics
+        .some(t => t.type === "scvSymbol" && t.sym.toString() === "error");
       decoded.push({ bytes, event, isError });
     } catch {
       // a single undecodable event never masks the rest
@@ -182,12 +178,12 @@ export function errorFromDiagnostics(
     if (bytes.includes(TRUSTLINE_MARKER)) {
       return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
     }
-    for (const topic of event.event().body().v0().topics()) {
-      if (topic.switch() !== xdr.ScValType.scvError()) continue;
-      const scError = topic.error();
-      if (scError.switch() === xdr.ScErrorType.sceContract() && code === null) {
-        code = scError.contractCode();
-      } else if (scError.switch() === xdr.ScErrorType.sceStorage()) {
+    for (const topic of event.event.body.v0.topics) {
+      if (topic.type !== "scvError") continue;
+      const scError = topic.error;
+      if (scError.type === "sceContract" && code === null) {
+        code = scError.contractCode;
+      } else if (scError.type === "sceStorage") {
         storage = true;
       }
     }

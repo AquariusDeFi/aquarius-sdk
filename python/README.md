@@ -47,8 +47,13 @@ pool.withdraw_position(est.tick_lower, est.tick_upper)  # full close, auto-claim
 `tick_from_price`, `price_at_tick`, and `snap_tick` are exported for range math —
 integer-exact and identical across both language packages.
 
+This development revision pins `stellar-sdk` to upstream commit
+`66c7f30423ff2be9e7b7226a10f41e918973bb58` for Protocol 30 XDR support.
+Install this revision from source; the existing PyPI release does not include this pin.
+Replace the direct Git dependency with a stable release before publishing to PyPI.
+
 ```bash
-pip install aquarius-sdk
+pip install -e ./python  # from the repository root
 ```
 
 ```python

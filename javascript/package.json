@@ -30,9 +30,10 @@
     "access": "public"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^15.0.0"
+    "@stellar/stellar-sdk": "17.3.0",
+    "buffer": "^6.0.3"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0"
   }
 }

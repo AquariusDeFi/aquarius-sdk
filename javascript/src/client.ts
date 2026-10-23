@@ -1,6 +1,6 @@
 import { Buffer } from "buffer";
 
-import { Address, Asset as StellarAsset, Operation, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
+import { Address, Asset as StellarAsset, Keypair, Operation, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 
 import { ApiClient, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
@@ -269,7 +269,7 @@ export class AquariusClient {
     const confirmed = await this.submitContract(factory, "deploy_swap_fee_contract", args, [
       sourceAccountEntry(authorizedInvocation(factory, "deploy_swap_fee_contract", args)),
     ]);
-    const address = Address.fromScAddress(confirmed.returnValue!.address()).toString();
+    const address = Address.fromScVal(confirmed.returnValue!).toString();
     return new FeeCollector(address, this.collectorContext());
   }
 
@@ -351,7 +351,7 @@ export class AquariusClient {
     // transaction client. getAccount masks RPC errors as account absence.
     const server = new rpc.Server(this.network.rpcUrl);
     const key = xdr.LedgerKey.account(new xdr.LedgerKeyAccount({
-      accountId: new Address(publicKey).toScAddress().accountId(),
+      accountId: Keypair.fromPublicKey(publicKey).xdrPublicKey(),
     }));
     while (true) {
       const response = await fetch(`${this.network.horizonUrl}/accounts/${publicKey}`, {
@@ -599,7 +599,7 @@ export class AquariusClient {
       args.push(new Address(providerFee.recipient).toScVal());
     }
     args.push(
-      xdr.ScVal.fromXDR(parsed.swapChainXdr, "base64"),
+      xdr.ScVal.fromXdr(parsed.swapChainXdr, "base64"),
       new Address(tokenIn).toScVal(),
       nativeToScVal(amount, { type: "u128" }),
       nativeToScVal(parsed.guard, { type: "u128" }),
