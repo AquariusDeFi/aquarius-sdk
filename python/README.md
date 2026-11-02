@@ -400,3 +400,7 @@ aqua = AquariusClient(network="mainnet", signer=signer, instruction_headroom=0.4
 All amounts are integers in token base units (stroops for classic assets: 1 token = 10^7).
 
 Questions and integration help: [Discord](https://discord.gg/sgzFscHp4C).
+
+## Maintenance
+
+[misty-forest](https://github.com/misty-forest) maintains the Aquarius SDK, including security review, vulnerability remediation, and ongoing development.
