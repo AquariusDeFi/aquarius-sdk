@@ -63,10 +63,10 @@ def limits():
 def test_shared_resource_boundaries(case):
     current = replace(limits(), **{FIELDS[case["field"]]: case["limit"]})
     if case["ok"]:
-        assert_swap_resources(transaction(), current, invocation(), case["split"])
+        assert_swap_resources(transaction(), current, invocation())
     else:
         with pytest.raises(ValueError):
-            assert_swap_resources(transaction(), current, invocation(), case["split"])
+            assert_swap_resources(transaction(), current, invocation())
 
 
 def test_configuration_and_fixed_auth():
@@ -124,10 +124,10 @@ def test_shared_archived_footprint(case):
         case["transactionXdr"], FIXTURE["networkPassphrase"]
     )
     if case["ok"]:
-        assert_swap_resources(tx, current, invocation(), True)
+        assert_swap_resources(tx, current, invocation())
     else:
         with pytest.raises(ValueError):
-            assert_swap_resources(tx, current, invocation(), True)
+            assert_swap_resources(tx, current, invocation())
 
 
 @pytest.mark.parametrize("case", FIXTURE["results"], ids=lambda c: c["name"])

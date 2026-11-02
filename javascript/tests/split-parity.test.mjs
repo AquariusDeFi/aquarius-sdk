@@ -105,8 +105,7 @@ for (const c of resource.cases)
       ...(await generous()),
       [c.field]: c.field === "instructions" ? BigInt(c.limit) : c.limit,
     };
-    const run = () =>
-      sdk.assertSwapResources(tx(), limits, invocation(), c.split);
+    const run = () => sdk.assertSwapResources(tx(), limits, invocation());
     if (c.ok) assert.doesNotThrow(run);
     else assert.throws(run);
   });
@@ -179,7 +178,6 @@ for (const c of resource.footprintCases)
         ),
         limits,
         invocation(),
-        true,
       );
     if (c.ok) assert.doesNotThrow(run);
     else assert.throws(run);

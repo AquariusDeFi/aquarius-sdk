@@ -106,7 +106,6 @@ def assert_swap_resources(
     tx: TransactionEnvelope,
     limits: SwapResourceLimits,
     invocation: SwapInvocation,
-    split: bool = False,
 ) -> None:
     if tx.network_passphrase != limits.network_passphrase:
         raise ValueError("Swap resource network changed.")
@@ -162,9 +161,8 @@ def assert_swap_resources(
     if limits.footprint_entries is not None:
         checks.append(("footprint entries", len(keys), limits.footprint_entries))
     for name, used, maximum in checks:
-        if used * (2 if split else 1) > maximum:
-            kind = "split resource budget" if split else "network limit"
-            raise ValueError(f"Swap exceeds the {kind} for {name}.")
+        if used > maximum:
+            raise ValueError(f"Swap exceeds the network limit for {name}.")
 
 
 def assert_swap_authorization(

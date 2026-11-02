@@ -442,7 +442,7 @@ tx, events, retval, ledger = simulate_and_assemble(operation)
 assert_swap_authorization(tx, source, operation.to_xdr_object().to_xdr())
 if len(plan.legs) > 1 and ledger < limits.latest_ledger:
     raise ValueError("Simulation predates network configuration")
-assert_swap_resources(tx, limits, {"events": events, "retval": retval}, len(plan.legs) > 1)
+assert_swap_resources(tx, limits, {"events": events, "retval": retval})
 outputs = get_sell_swap_result(retval, len(plan.legs))
 # Display plan, minimum, outputs and the transaction fee.
 ```
@@ -451,14 +451,16 @@ outputs = get_sell_swap_result(retval, len(plan.legs))
 restore/error responses and re-check account, network and quote identity across
 network calls. The backend selects the plan; the aggregate minimum is derived
 from the quoted `plan.amount_out` and the operation is simulated once. A
-malformed `split_plan`, unavailable network configuration or a failed
-simulation is an error: ask for a new quote; there is no fallback to the
-ordinary route. Parts sharing pools must see preceding writes.
+malformed `split_plan` or a failed simulation is an error: ask for a new quote;
+there is no fallback to the ordinary route. A split requires the resource check;
+for an ordinary route an integration may skip it when the network configuration
+is unavailable. Parts sharing pools must see preceding writes.
 
 Resource checks cover the RPC's declarations, protocol-dependent disk reads,
 footprint, worst-case signed envelope and successful contract/system events plus
-the complete return value. Split gets 50% of current network caps; ordinary
-routes get hard caps. RPC does not expose exact memory headroom, so full
+the complete return value. Split and ordinary routes are checked against the
+same per-transaction network caps; the split safety margin belongs to the
+backend's plan selection. RPC does not expose exact memory headroom, so full
 simulation and runtime limits remain necessary. These helpers never trim
 resources to fit, sign, submit or restore storage. Publication is a separate
 release.

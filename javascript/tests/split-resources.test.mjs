@@ -43,26 +43,22 @@ const reader = {
   getNetwork: async () => swapResourceNetwork(),
   getLedgerEntries: async () => swapResourceConfig(),
 };
-test("network config matches keys, fails closed on missing config, and checks half-budget", async () => {
+test("network config matches keys, fails closed on missing config, and checks network limits", async () => {
   const limits = await loadSwapResourceLimits(reader, Networks.TESTNET);
   assert.equal(limits.instructions, 1000n);
   assert.doesNotThrow(() =>
-    assertSwapResources(
-      tx(),
-      limits,
-      { events: [], retval: xdr.ScVal.scvVoid() },
-      true,
-    ),
+    assertSwapResources(tx(1000), limits, {
+      events: [],
+      retval: xdr.ScVal.scvVoid(),
+    }),
   );
   assert.throws(
     () =>
-      assertSwapResources(
-        tx(501),
-        limits,
-        { events: [], retval: xdr.ScVal.scvVoid() },
-        true,
-      ),
-    /instructions/,
+      assertSwapResources(tx(1001), limits, {
+        events: [],
+        retval: xdr.ScVal.scvVoid(),
+      }),
+    /network limit for instructions/,
   );
   await assert.rejects(
     loadSwapResourceLimits(
@@ -109,18 +105,17 @@ test("events and full return count, diagnostics and reverted calls do not", asyn
     retval.toXdr().length;
   const limits = {
     ...(await loadSwapResourceLimits(reader, Networks.TESTNET)),
-    eventsAndReturnBytes: bytes * 2,
+    eventsAndReturnBytes: bytes,
   };
   assert.doesNotThrow(() =>
-    assertSwapResources(tx(), limits, { events, retval }, true),
+    assertSwapResources(tx(), limits, { events, retval }),
   );
   assert.throws(
     () =>
       assertSwapResources(
         tx(),
-        { ...limits, eventsAndReturnBytes: bytes * 2 - 1 },
+        { ...limits, eventsAndReturnBytes: bytes - 1 },
         { events, retval },
-        true,
       ),
     /events and return/,
   );
