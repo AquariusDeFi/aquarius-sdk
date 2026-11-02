@@ -76,13 +76,17 @@
     },
     {
       "name": "null split plan uses ordinary route",
-      "splitPlan": null,
+      "quote": {
+        "split_plan": null
+      },
       "expectedParts": 1,
       "expectedOutput": "166249791563"
     },
     {
       "name": "absent split plan uses ordinary route",
-      "omitSplitPlan": true,
+      "omit": [
+        "split_plan"
+      ],
       "expectedParts": 1,
       "expectedOutput": "166249791563"
     },
@@ -115,7 +119,9 @@
     },
     {
       "name": "empty split plan",
-      "splitPlan": {},
+      "quote": {
+        "split_plan": {}
+      },
       "error": true
     },
     {
@@ -210,6 +216,64 @@
         {
           "from": 1
         }
+      ],
+      "error": true
+    },
+    {
+      "name": "unpadded leg route XDR",
+      "legs": [
+        {
+          "from": 0,
+          "swap_chain_xdr": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAABAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAANAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEgAAAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+        },
+        {
+          "from": 1
+        }
+      ],
+      "error": true
+    },
+    {
+      "name": "invalid character in leg route XDR",
+      "legs": [
+        {
+          "from": 0,
+          "swap_chain_xdr": "AAAAEAAA!AAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAABAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAANAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEgAAAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg=="
+        },
+        {
+          "from": 1
+        }
+      ],
+      "error": true
+    },
+    {
+      "name": "unpadded ordinary route XDR",
+      "quote": {
+        "split_plan": null,
+        "swap_chain_xdr": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAABAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAANAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEgAAAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+      },
+      "error": true
+    },
+    {
+      "name": "invalid character in ordinary route XDR",
+      "quote": {
+        "split_plan": null,
+        "swap_chain_xdr": "AAAAEAAA!AAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAABAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAANAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEgAAAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg=="
+      },
+      "error": true
+    },
+    {
+      "name": "truncated ordinary route XDR",
+      "quote": {
+        "split_plan": null,
+        "swap_chain_xdr": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAA"
+      },
+      "error": true
+    },
+    {
+      "name": "ordinary route without pools",
+      "omit": [
+        "split_plan",
+        "pools"
       ],
       "error": true
     }

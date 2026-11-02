@@ -111,8 +111,14 @@ const normalizeLeg = (
   ) {
     throw invalidQuote();
   }
+  // Base64 decoders differ on padding and stray characters; accept only an
+  // encoding that round-trips exactly.
   const chain = xdr.ScVal.fromXdr(encoded, "base64");
-  if (chain.type !== "scvVec" || chain.vec!.length !== pools.length) {
+  if (
+    chain.toXDR("base64") !== encoded ||
+    chain.type !== "scvVec" ||
+    chain.vec!.length !== pools.length
+  ) {
     throw invalidQuote();
   }
   const usedPools = new Set<string>();
@@ -177,23 +183,12 @@ const normalizeSplitPlan = (
   return { amountIn, amountOut: plan.amount_out, legs };
 };
 
-export const normalizeSellSwapPlan = (
+const normalizeOrdinaryRoute = (
   quote: SellSwapQuote,
   base: string,
   counter: string,
   amountIn: string,
 ): SellSwapPlan => {
-  rawAmount(amountIn);
-  if (quote.success !== true || base === counter) throw invalidQuote();
-  // A backend-selected split is executed as quoted or rejected; a malformed
-  // plan never degrades to the ordinary route.
-  if (quote.split_plan !== undefined && quote.split_plan !== null) {
-    try {
-      return normalizeSplitPlan(quote.split_plan, base, counter, amountIn);
-    } catch {
-      throw invalidQuote();
-    }
-  }
   // The legacy DRF DecimalField serializes raw integer outputs with 18 zero
   // decimal places. Only that representation is relaxed; allocations stay
   // canonical integer strings and genuinely fractional units are rejected.
@@ -211,6 +206,25 @@ export const normalizeSellSwapPlan = (
     counter,
   );
   return { amountIn, amountOut: baselineAmount, legs: [baseline] };
+};
+
+export const normalizeSellSwapPlan = (
+  quote: SellSwapQuote,
+  base: string,
+  counter: string,
+  amountIn: string,
+): SellSwapPlan => {
+  try {
+    rawAmount(amountIn);
+    if (quote.success !== true || base === counter) throw invalidQuote();
+    // A backend-selected split is executed as quoted or rejected; a malformed
+    // plan never degrades to the ordinary route.
+    return quote.split_plan !== undefined && quote.split_plan !== null
+      ? normalizeSplitPlan(quote.split_plan, base, counter, amountIn)
+      : normalizeOrdinaryRoute(quote, base, counter, amountIn);
+  } catch {
+    throw invalidQuote();
+  }
 };
 
 export const getSwapMinimum = (output: string, slippage: string): string => {

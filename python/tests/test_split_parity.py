@@ -33,11 +33,9 @@ def test_shared_minimums(case):
 
 @pytest.mark.parametrize("case", CASES["quotes"], ids=lambda c: c["name"])
 def test_shared_quotes(case):
-    q = deepcopy(API["response"])
-    if "splitPlan" in case:
-        q["split_plan"] = case["splitPlan"]
-    if case.get("omitSplitPlan"):
-        del q["split_plan"]
+    q = deepcopy({**API["response"], **case.get("quote", {})})
+    for key in case.get("omit", []):
+        del q[key]
     if "plan" in case:
         q["split_plan"].update(case["plan"])
     if "legs" in case:

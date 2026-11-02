@@ -82,6 +82,19 @@ test("fixed auth binds exact ordered input transfers and aggregate minimum", () 
       minimum: "123",
     }),
   );
+  assert.throws(() =>
+    split.buildSellSwapOperation({
+      source,
+      router,
+      splitRouter,
+      batch: contract(10),
+      tokenIn: request.token_in_address,
+      tokenOut: request.token_out_address,
+      plan,
+      minimum: "123",
+      trustline: {},
+    }),
+  );
 });
 for (const amount of ["0", "-1", "1.5", "1e2", (1n << 127n).toString()])
   test(`reject invalid raw input ${amount}`, () => {

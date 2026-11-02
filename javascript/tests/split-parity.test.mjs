@@ -37,9 +37,8 @@ for (const c of cases.minimums)
   });
 for (const c of cases.quotes)
   test("shared quote: " + c.name, () => {
-    const q = structuredClone(api.response);
-    if ("splitPlan" in c) q.split_plan = c.splitPlan;
-    if (c.omitSplitPlan) delete q.split_plan;
+    const q = structuredClone({ ...api.response, ...c.quote });
+    for (const key of c.omit ?? []) delete q[key];
     if (c.plan) Object.assign(q.split_plan, c.plan);
     if (c.legs)
       q.split_plan.legs = c.legs.map(({ from, ...leg }) => ({
