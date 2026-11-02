@@ -540,3 +540,59 @@ Questions and integration help: [Discord](https://discord.gg/sgzFscHp4C).
 ## Maintenance
 
 [misty-forest](https://github.com/misty-forest) maintains the Aquarius SDK, including security review, vulnerability remediation, and ongoing development.
+
+### Opt-in split swaps (next release)
+
+The split helpers target Sell/exact input only. Existing `quote()`, `swap()` and
+provider-fee flows retain their ordinary-route behavior. Configure the deployed
+micro-router explicitly; there is no production split-router default. Search
+stays in the backend (`findPath({...request, split: true}, true)`).
+
+```ts
+import {
+  normalizeSellSwapPlans, prepareSellSwapPlans, buildSellSwapOperation,
+  loadSwapResourceLimits, assertSwapResources, assertSwapAuthorization,
+  getSellSwapResult,
+} from "@aquariusdefi/sdk";
+
+const plans = normalizeSellSwapPlans(response, tokenIn, tokenOut, amountIn);
+const limits = await loadSwapResourceLimits(server, networkPassphrase);
+const selected = await prepareSellSwapPlans(plans, "1", async (plan, minimum) => {
+  const operation = buildSellSwapOperation({
+    source, tokenIn, tokenOut, router, splitRouter, plan, minimum,
+  });
+  // Application builds and fully simulates this operation with fixed auth,
+  // rejects restore/error responses, then assembles the unsigned transaction.
+  const { tx, simulation } = await simulateAndAssemble(operation);
+  assertSwapAuthorization(tx, source, operation.toXdr("base64"));
+  if (plan.legs.length > 1 && simulation.latestLedger < limits.latestLedger) {
+    throw new Error("Simulation predates network configuration");
+  }
+  assertSwapResources(tx, limits, {
+    events: simulation.events, retval: simulation.result.retval,
+  }, plan.legs.length > 1);
+  return { tx, outputs: getSellSwapResult(simulation.result.retval, plan.legs.length, false) };
+});
+// Display selected.plan, selected.minimumOutput and transaction fee before signing.
+```
+
+`simulateAndAssemble` is application code, not an SDK method. It must preserve
+fixed authorization; simulations cannot grant extra spending. Helpers never
+sign, submit, restore storage or open wallet dialogs. If resource configuration
+is unavailable, callers must keep only the one-leg baseline. Re-check network,
+account and quote identity across awaits. Resource checks cover declarations,
+footprint, maximum signed envelope size and successful events plus the complete
+return value; RPC does not provide exact memory headroom. Split gets a 50% budget;
+ordinary routes get hard caps. Full ordered simulation preserves shared-pool
+writes. Selection compares simulated aggregate output, not isolated leg quotes,
+and returns only a stable simulation with the aggregate minimum bound. Slippage
+is a **percent string** (`"1"` = 1%), unlike `quote()`'s fractional slippage.
+
+To add a classic output trustline atomically, supply `batch` and
+`trustline: {assetCode, issuer, networkPassphrase}` to the builder, and pass
+`true` to `getSellSwapResult`. The builder verifies that the classic asset maps
+to `tokenOut`; the optional trust result is excluded from swap outputs.
+
+These exports are unreleased. A source install may pin an immutable repository
+commit; the root installation manifest builds `javascript` using its lockfile.
+No package version or published tag is changed by this feature.

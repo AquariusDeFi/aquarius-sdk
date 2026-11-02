@@ -97,3 +97,24 @@ export {
   TxTimeoutError,
   UserRejectedError,
 } from "./errors.js";
+
+export {
+  normalizeSellSwapPlans,
+  sellAmountToRaw,
+  getSwapMinimum,
+  prepareSellSwapPlans,
+  buildSellSwapOperation,
+  type SellSwapLeg,
+  type SellSwapPlan,
+  type SellSwapQuote,
+  type SplitSwapQuoteLeg,
+  type BuildSellSwapOptions,
+} from "./split-swap.js";
+export {
+  loadSwapResourceLimits,
+  assertSwapResources,
+  assertSwapAuthorization,
+  getSellSwapResult,
+  getSwapResult,
+  type SwapResourceLimits,
+} from "./swap-resources.js";
