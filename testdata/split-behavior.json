@@ -1,0 +1,386 @@
+{
+  "amounts": [
+    {
+      "amount": "9007199254740993.0000001",
+      "decimals": 7,
+      "expected": "90071992547409930000001"
+    },
+    {
+      "amount": "1.2300",
+      "decimals": 2,
+      "expected": "123"
+    },
+    {
+      "amount": "0.00000001",
+      "decimals": 7,
+      "error": true
+    },
+    {
+      "amount": "0",
+      "decimals": 7,
+      "error": true
+    },
+    {
+      "amount": "1e2",
+      "decimals": 7,
+      "error": true
+    },
+    {
+      "amount": "1",
+      "decimals": 39,
+      "error": true
+    },
+    {
+      "amount": "\uff11\uff12",
+      "decimals": 7,
+      "error": true
+    },
+    {
+      "amount": "170141183460469231731687303715884105727",
+      "decimals": 0,
+      "expected": "170141183460469231731687303715884105727"
+    },
+    {
+      "amount": "170141183460469231731687303715884105728",
+      "decimals": 0,
+      "error": true
+    }
+  ],
+  "minimums": [
+    {
+      "output": "10001",
+      "slippage": "0.005",
+      "expected": "10000"
+    },
+    {
+      "output": "1",
+      "slippage": "10",
+      "expected": "0"
+    },
+    {
+      "output": "100",
+      "slippage": "10.01",
+      "error": true
+    },
+    {
+      "output": "0",
+      "slippage": "1",
+      "error": true
+    }
+  ],
+  "preparations": [
+    {
+      "name": "split wins on simulated aggregate",
+      "results": [
+        [
+          [
+            "90"
+          ],
+          [
+            "90"
+          ]
+        ],
+        [
+          [
+            "50",
+            "50"
+          ],
+          [
+            "50",
+            "50"
+          ]
+        ]
+      ],
+      "selected": 1,
+      "output": "100",
+      "minimum": "99",
+      "calls": [
+        [
+          "0",
+          "89"
+        ],
+        [
+          "0",
+          "99"
+        ]
+      ]
+    },
+    {
+      "name": "tie prefers ordinary",
+      "results": [
+        [
+          [
+            "100"
+          ],
+          [
+            "100"
+          ]
+        ],
+        [
+          [
+            "40",
+            "60"
+          ],
+          [
+            "40",
+            "60"
+          ]
+        ]
+      ],
+      "selected": 0,
+      "output": "100",
+      "minimum": "99",
+      "calls": [
+        [
+          "0",
+          "99"
+        ],
+        [
+          "0",
+          "99"
+        ]
+      ]
+    },
+    {
+      "name": "resource rejection preserves baseline",
+      "results": [
+        [
+          [
+            "100"
+          ],
+          [
+            "100"
+          ]
+        ],
+        [
+          "error"
+        ]
+      ],
+      "selected": 0,
+      "output": "100",
+      "minimum": "99",
+      "calls": [
+        [
+          "0",
+          "99"
+        ],
+        [
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "restore baseline does not block split",
+      "results": [
+        [
+          "error"
+        ],
+        [
+          [
+            "40",
+            "60"
+          ],
+          [
+            "40",
+            "60"
+          ]
+        ]
+      ],
+      "selected": 1,
+      "output": "100",
+      "minimum": "99",
+      "calls": [
+        [
+          "0"
+        ],
+        [
+          "0",
+          "99"
+        ]
+      ]
+    },
+    {
+      "name": "bind changed output again",
+      "results": [
+        [
+          [
+            "100"
+          ],
+          [
+            "110"
+          ],
+          [
+            "110"
+          ]
+        ],
+        [
+          "error"
+        ]
+      ],
+      "selected": 0,
+      "output": "110",
+      "minimum": "108",
+      "calls": [
+        [
+          "0",
+          "99",
+          "108"
+        ],
+        [
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "unstable split falls back",
+      "results": [
+        [
+          [
+            "100"
+          ],
+          [
+            "100"
+          ]
+        ],
+        [
+          [
+            "60",
+            "60"
+          ],
+          [
+            "70",
+            "70"
+          ],
+          [
+            "80",
+            "80"
+          ]
+        ]
+      ],
+      "selected": 0,
+      "output": "100",
+      "minimum": "99",
+      "calls": [
+        [
+          "0",
+          "99"
+        ],
+        [
+          "0",
+          "118",
+          "138"
+        ]
+      ]
+    },
+    {
+      "name": "malformed output fails closed",
+      "results": [
+        [
+          []
+        ],
+        [
+          "error"
+        ]
+      ],
+      "error": true,
+      "calls": [
+        [
+          "0"
+        ],
+        [
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "negative output fails closed",
+      "results": [
+        [
+          [
+            "-1"
+          ]
+        ],
+        [
+          "error"
+        ]
+      ],
+      "error": true,
+      "calls": [
+        [
+          "0"
+        ],
+        [
+          "0"
+        ]
+      ]
+    }
+  ],
+  "quotes": [
+    {
+      "field": "amount_in",
+      "value": "1",
+      "expectedParts": [
+        1,
+        2
+      ]
+    },
+    {
+      "field": "swap_chain_xdr",
+      "value": "AAAA",
+      "expectedParts": [
+        1,
+        2
+      ]
+    },
+    {
+      "field": "amount_out",
+      "value": "0",
+      "expectedParts": [
+        1,
+        2
+      ]
+    }
+  ],
+  "capabilities": [
+    [
+      "normalizeSellSwapPlans",
+      "normalize_sell_swap_plans"
+    ],
+    [
+      "sellAmountToRaw",
+      "sell_amount_to_raw"
+    ],
+    [
+      "getSwapMinimum",
+      "get_swap_minimum"
+    ],
+    [
+      "prepareSellSwapPlans",
+      "prepare_sell_swap_plans"
+    ],
+    [
+      "buildSellSwapOperation",
+      "build_sell_swap_operation"
+    ],
+    [
+      "getSellSwapResult",
+      "get_sell_swap_result"
+    ],
+    [
+      "getSwapResult",
+      "get_swap_result"
+    ],
+    [
+      "loadSwapResourceLimits",
+      "load_swap_resource_limits"
+    ],
+    [
+      "assertSwapResources",
+      "assert_swap_resources"
+    ],
+    [
+      "assertSwapAuthorization",
+      "assert_swap_authorization"
+    ]
+  ]
+}

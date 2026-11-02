@@ -62,11 +62,33 @@ from .split_swap import (
     get_swap_minimum,
     get_sell_swap_result,
     build_sell_swap_operation,
+    sell_amount_to_raw,
+    prepare_sell_swap_plans,
+    PreparedSellSwap,
+    SellSwapSimulation,
+)
+from .swap_resources import (
+    SwapResourceLimits,
+    SwapInvocation,
+    load_swap_resource_limits,
+    assert_swap_resources,
+    assert_swap_authorization,
+    get_swap_result,
 )
 
 __version__ = "0.6.0"
 
 __all__ = [
+    "sell_amount_to_raw",
+    "prepare_sell_swap_plans",
+    "PreparedSellSwap",
+    "SellSwapSimulation",
+    "SwapResourceLimits",
+    "SwapInvocation",
+    "load_swap_resource_limits",
+    "assert_swap_resources",
+    "assert_swap_authorization",
+    "get_swap_result",
     "SellSwapLeg",
     "SellSwapPlan",
     "normalize_sell_swap_plans",
