@@ -19,6 +19,7 @@ class NetworkConfig:
     # Provider-fee collector factory; None where not deployed (testnet) — pass
     # factory= explicitly to deploy_fee_collector there.
     collector_factory: str | None = None
+    limit_orders_api_url: str | None = None
 
 
 NETWORKS: dict[str, NetworkConfig] = {
@@ -32,6 +33,7 @@ NETWORKS: dict[str, NetworkConfig] = {
         passphrase=Network.PUBLIC_NETWORK_PASSPHRASE,
         read_source="GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
         collector_factory="CA4Q2T6FRAFYJYSMDJV7F6B7RL5PS6QS2UOZHBMCT2KSMGQRAAKP2MKO",
+        limit_orders_api_url="https://amm-api.aqua.network/api/external/v1/limit-orders",
     ),
     "testnet": NetworkConfig(
         router="CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
@@ -40,5 +42,6 @@ NETWORKS: dict[str, NetworkConfig] = {
         horizon_url="https://horizon-testnet.stellar.org",
         passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
         read_source="GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+        limit_orders_api_url="https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
     ),
 }
