@@ -25,11 +25,11 @@ export interface SellSwapQuote {
   pools: string[];
   tokens_addresses: string[];
   tokens?: string[];
-  split_plans?: {
+  split_plan?: {
     amount_in: string;
     amount_out: string;
     legs: SplitSwapQuoteLeg[];
-  }[];
+  } | null;
 }
 
 export type SellSwapLeg = {
@@ -48,7 +48,6 @@ export type SellSwapPlan = {
 };
 
 const MAX_AMOUNT = (1n << 127n) - 1n;
-const MAX_SPLIT_PLANS = 3;
 const MAX_PARTS = 4;
 const MAX_HOPS = 4;
 const invalidQuote = () =>
@@ -152,14 +151,49 @@ const normalizeLeg = (
   };
 };
 
-export const normalizeSellSwapPlans = (
+const normalizeSplitPlan = (
+  plan: NonNullable<SellSwapQuote["split_plan"]>,
+  base: string,
+  counter: string,
+  amountIn: string,
+): SellSwapPlan => {
+  if (
+    plan.amount_in !== amountIn ||
+    !Array.isArray(plan.legs) ||
+    plan.legs.length < 2 ||
+    plan.legs.length > MAX_PARTS
+  ) {
+    throw invalidQuote();
+  }
+  const legs = plan.legs.map((leg) => normalizeLeg(leg, base, counter));
+  if (
+    legs.reduce((sum, leg) => sum + BigInt(leg.amountIn), 0n) !==
+      BigInt(amountIn) ||
+    legs.reduce((sum, leg) => sum + BigInt(leg.amountOut), 0n) !==
+      rawAmount(plan.amount_out)
+  ) {
+    throw invalidQuote();
+  }
+  return { amountIn, amountOut: plan.amount_out, legs };
+};
+
+export const normalizeSellSwapPlan = (
   quote: SellSwapQuote,
   base: string,
   counter: string,
   amountIn: string,
-): SellSwapPlan[] => {
+): SellSwapPlan => {
   rawAmount(amountIn);
   if (quote.success !== true || base === counter) throw invalidQuote();
+  // A backend-selected split is executed as quoted or rejected; a malformed
+  // plan never degrades to the ordinary route.
+  if (quote.split_plan !== undefined && quote.split_plan !== null) {
+    try {
+      return normalizeSplitPlan(quote.split_plan, base, counter, amountIn);
+    } catch {
+      throw invalidQuote();
+    }
+  }
   // The legacy DRF DecimalField serializes raw integer outputs with 18 zero
   // decimal places. Only that representation is relaxed; allocations stay
   // canonical integer strings and genuinely fractional units are rejected.
@@ -176,45 +210,7 @@ export const normalizeSellSwapPlans = (
     base,
     counter,
   );
-  const plans: SellSwapPlan[] = [
-    { amountIn, amountOut: baselineAmount, legs: [baseline] },
-  ];
-  const seen = new Set<string>();
-  if (!Array.isArray(quote.split_plans)) return plans;
-  // Bound work independently of an API response's size. Malformed optional
-  // plans cannot remove the valid legacy route or expand spending.
-  for (const candidate of quote.split_plans.slice(0, MAX_SPLIT_PLANS)) {
-    try {
-      if (
-        candidate.amount_in !== amountIn ||
-        !Array.isArray(candidate.legs) ||
-        candidate.legs.length < 2 ||
-        candidate.legs.length > MAX_PARTS
-      ) {
-        continue;
-      }
-      const legs = candidate.legs.map((leg) =>
-        normalizeLeg(leg, base, counter),
-      );
-      if (
-        legs.reduce((sum, leg) => sum + BigInt(leg.amountIn), 0n) !==
-          BigInt(amountIn) ||
-        legs.reduce((sum, leg) => sum + BigInt(leg.amountOut), 0n) !==
-          rawAmount(candidate.amount_out)
-      ) {
-        continue;
-      }
-      const key = JSON.stringify(
-        legs.map((leg) => [leg.amountIn, leg.swapChainXdr]),
-      );
-      if (seen.has(key)) continue;
-      seen.add(key);
-      plans.push({ amountIn, amountOut: candidate.amount_out, legs });
-    } catch {
-      // A legacy baseline remains usable when an optional plan is invalid.
-    }
-  }
-  return plans;
+  return { amountIn, amountOut: baselineAmount, legs: [baseline] };
 };
 
 export const getSwapMinimum = (output: string, slippage: string): string => {
@@ -228,84 +224,6 @@ export const getSwapMinimum = (output: string, slippage: string): string => {
     (rawAmount(output) * (100n * scale - tolerance)) /
     (100n * scale)
   ).toString();
-};
-
-// Probe the entire ordered transaction, then bind its aggregate output to one
-// minimum and simulate that exact bounded transaction before exposing it to UI.
-// Only a simulation with the computed minimum is returned for signing.
-export const prepareSellSwapPlans = async <Tx>(
-  plans: SellSwapPlan[],
-  slippage: string,
-  simulate: (
-    plan: SellSwapPlan,
-    minimum: string,
-  ) => Promise<{ tx: Tx; outputs: bigint[] }>,
-) => {
-  type Prepared = {
-    tx: Tx;
-    plan: SellSwapPlan;
-    outputAmount: string;
-    minimumOutput: string;
-    legOutputs: string[];
-  };
-  const prepared: Prepared[] = [];
-  let baselineError: unknown;
-  for (const [index, plan] of plans.entries()) {
-    try {
-      let result = await simulate(plan, "0");
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        if (result.outputs.length !== plan.legs.length) throw invalidQuote();
-        if (result.outputs.some((output) => output < 0n)) throw invalidQuote();
-        const outputAmount = result.outputs
-          .reduce((sum, value) => sum + value, 0n)
-          .toString();
-        const minimumOutput = getSwapMinimum(outputAmount, slippage);
-        const bounded = await simulate(plan, minimumOutput);
-        if (
-          bounded.outputs.length === plan.legs.length &&
-          bounded.outputs.every((output) => output >= 0n) &&
-          bounded.outputs.reduce((sum, value) => sum + value, 0n).toString() ===
-            outputAmount
-        ) {
-          const outputs = bounded.outputs.map(String);
-          prepared.push({
-            tx: bounded.tx,
-            plan: {
-              ...plan,
-              amountOut: outputAmount,
-              legs: plan.legs.map((leg, i) => ({
-                ...leg,
-                amountOut: outputs[i],
-              })),
-            },
-            outputAmount,
-            minimumOutput,
-            legOutputs: outputs,
-          });
-          break;
-        }
-        result = bounded;
-      }
-    } catch (error) {
-      if (index === 0) baselineError = error;
-    }
-  }
-  prepared.sort((a, b) => {
-    const diff = BigInt(b.outputAmount) - BigInt(a.outputAmount);
-    return diff === 0n
-      ? a.plan.legs.length - b.plan.legs.length
-      : diff > 0n
-        ? 1
-        : -1;
-  });
-  if (!prepared.length) {
-    throw baselineError instanceof Error
-      ? baselineError
-      : new Error(
-          "The swap quote changed or could not be prepared. Please request a new quote.",
-        );
-  }
-  return prepared[0];
 };
 
 export interface BuildSellSwapOptions {

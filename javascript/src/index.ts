@@ -99,10 +99,9 @@ export {
 } from "./errors.js";
 
 export {
-  normalizeSellSwapPlans,
+  normalizeSellSwapPlan,
   sellAmountToRaw,
   getSwapMinimum,
-  prepareSellSwapPlans,
   buildSellSwapOperation,
   type SellSwapLeg,
   type SellSwapPlan,

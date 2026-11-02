@@ -14,15 +14,14 @@ const read = (name) =>
 const cases = read("split-behavior.json"),
   api = read("split-api-response.json"),
   resource = read("split-resources.json");
-const plans = () => {
+const plan = () => {
   const r = api.request;
-  const p = sdk.normalizeSellSwapPlans(
+  return sdk.normalizeSellSwapPlan(
     api.response,
     r.token_in_address,
     r.token_out_address,
     r.amount,
   );
-  return [p[0], p[2]];
 };
 for (const c of cases.amounts)
   test("shared decimal: " + JSON.stringify(c), () => {
@@ -36,50 +35,31 @@ for (const c of cases.minimums)
     if (c.error) assert.throws(run);
     else assert.equal(run(), c.expected);
   });
-for (const c of cases.preparations)
-  test("shared preparation: " + c.name, async () => {
-    const candidates = plans(),
-      original = structuredClone(candidates),
-      calls = [[], []];
-    const simulate = async (plan, minimum) => {
-      const i = candidates.indexOf(plan),
-        step = calls[i].length;
-      calls[i].push(minimum);
-      const outputs = c.results[i][step];
-      if (outputs === "error") throw Error("candidate unavailable");
-      return { tx: `${i}:${minimum}`, outputs: outputs.map(BigInt) };
-    };
-    if (c.error)
-      await assert.rejects(sdk.prepareSellSwapPlans(candidates, "1", simulate));
-    else {
-      const result = await sdk.prepareSellSwapPlans(candidates, "1", simulate);
-      assert.equal(result.tx, `${c.selected}:${c.minimum}`);
-      assert.equal(result.outputAmount, c.output);
-      assert.equal(result.minimumOutput, c.minimum);
-      assert.equal(
-        result.legOutputs.reduce((n, v) => n + BigInt(v), 0n),
-        BigInt(result.outputAmount),
-      );
-    }
-    assert.deepEqual(calls, c.calls);
-    assert.deepEqual(candidates, original);
-  });
 for (const c of cases.quotes)
-  test("shared malformed quote: " + c.field, () => {
+  test("shared quote: " + c.name, () => {
     const q = structuredClone(api.response);
-    q.split_plans[0].legs[0][c.field] = c.value;
+    if ("splitPlan" in c) q.split_plan = c.splitPlan;
+    if (c.omitSplitPlan) delete q.split_plan;
+    if (c.plan) Object.assign(q.split_plan, c.plan);
+    if (c.legs)
+      q.split_plan.legs = c.legs.map(({ from, ...leg }) => ({
+        ...api.response.split_plan.legs[from],
+        ...leg,
+      }));
     const r = api.request;
-    assert.deepEqual(
-      sdk
-        .normalizeSellSwapPlans(
-          q,
-          r.token_in_address,
-          r.token_out_address,
-          r.amount,
-        )
-        .map((p) => p.legs.length),
-      c.expectedParts,
-    );
+    const run = () =>
+      sdk.normalizeSellSwapPlan(
+        q,
+        r.token_in_address,
+        r.token_out_address,
+        r.amount,
+      );
+    if (c.error) assert.throws(run, /Invalid swap quote/);
+    else {
+      const result = run();
+      assert.equal(result.legs.length, c.expectedParts);
+      assert.equal(result.amountOut, c.expectedOutput);
+    }
   });
 test("both public SDKs expose every split capability in shared contract", () => {
   for (const [name] of cases.capabilities)
@@ -139,7 +119,7 @@ test("shared exact builder operation wire and fixed authorization", () => {
     tokenOut: r.token_out_address,
     router: contract(8),
     splitRouter: contract(9),
-    plan: plans()[1],
+    plan: plan(),
     minimum: "123",
   });
   assert.equal(operation.toXdr("base64"), resource.operationXdr);

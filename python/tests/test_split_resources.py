@@ -94,15 +94,15 @@ def test_configuration_rejects_wrong_network_and_missing_keys():
 
 def test_shared_exact_builder_wire():
     from stellar_sdk import StrKey
-    from aquarius import normalize_sell_swap_plans, build_sell_swap_operation
+    from aquarius import normalize_sell_swap_plan, build_sell_swap_operation
 
     api = json.loads(
         (Path(__file__).parents[2] / "testdata/split-api-response.json").read_text()
     )
     r = api["request"]
-    plan = normalize_sell_swap_plans(
+    plan = normalize_sell_swap_plan(
         api["response"], r["token_in_address"], r["token_out_address"], r["amount"]
-    )[2]
+    )
     operation = build_sell_swap_operation(
         source=FIXTURE["source"],
         token_in=r["token_in_address"],
