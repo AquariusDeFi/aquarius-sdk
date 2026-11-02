@@ -64,3 +64,7 @@ Tags trigger publishing: `py-v*` → PyPI, `js-v*` → npm. Independent patches,
 - Python: `cd python && pip install -e .[dev] && pytest`
 - TypeScript: `cd javascript && npm install && npm run typecheck`
 - Fixtures in `testdata/` are recorded from the live testnet API; when the API contract changes, re-record them in the same PR that adapts the parsers — both languages, one PR.
+
+## Maintenance
+
+[misty-forest](https://github.com/misty-forest) maintains the Aquarius SDK, including security review, vulnerability remediation, and ongoing development.
