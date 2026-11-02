@@ -354,7 +354,7 @@ export function buildSellSwapOperation(
         swaps.map((s) => s.root),
       )
     : swaps[0].root;
-  if (!trustline)
+  if (trustline === undefined || trustline === null)
     return Operation.invokeContractFunction({
       contract,
       function: "swap_chained",
@@ -364,6 +364,11 @@ export function buildSellSwapOperation(
   if (
     !batch ||
     !StrKey.isValidContract(batch) ||
+    typeof trustline !== "object" ||
+    Array.isArray(trustline) ||
+    [trustline.assetCode, trustline.issuer, trustline.networkPassphrase].some(
+      (value) => typeof value !== "string",
+    ) ||
     trustline.issuer === source ||
     new StellarAsset(trustline.assetCode, trustline.issuer).contractId(
       trustline.networkPassphrase,
