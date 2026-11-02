@@ -7,8 +7,6 @@ check network resources and bind the aggregate minimum before signing.
 from __future__ import annotations
 
 import re
-import binascii
-import struct
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -86,9 +84,12 @@ def _leg(value: dict, base: str, counter: str) -> SellSwapLeg:
         or len(encoded) > 32768
     ):
         raise ValueError("Invalid route")
+    # Base64 decoders differ on padding and stray characters; accept only an
+    # encoding that round-trips exactly.
     chain = SCVal.from_xdr(encoded)
     if (
-        chain.type != SCValType.SCV_VEC
+        chain.to_xdr() != encoded
+        or chain.type != SCValType.SCV_VEC
         or chain.vec is None
         or len(chain.vec.sc_vec) != len(pools)
     ):
@@ -144,27 +145,9 @@ def _split_plan(value: dict, base: str, counter: str, amount_in: str) -> SellSwa
     return SellSwapPlan(amount_in, value["amount_out"], legs)
 
 
-def normalize_sell_swap_plan(
+def _ordinary_route(
     quote: dict, base: str, counter: str, amount_in: str
 ) -> SellSwapPlan:
-    _raw(amount_in)
-    if quote.get("success") is not True or base == counter:
-        raise ValueError("Invalid swap quote")
-    # A backend-selected split is executed as quoted or rejected; a malformed
-    # plan never degrades to the ordinary route.
-    if quote.get("split_plan") is not None:
-        try:
-            return _split_plan(quote["split_plan"], base, counter, amount_in)
-        except (
-            ValueError,
-            TypeError,
-            KeyError,
-            AttributeError,
-            EOFError,
-            binascii.Error,
-            struct.error,
-        ) as error:
-            raise ValueError("Invalid swap quote") from error
     if not isinstance(quote.get("amount"), str) or not re.fullmatch(
         r"[0-9]+(?:\.0+)?", quote["amount"]
     ):
@@ -174,6 +157,22 @@ def normalize_sell_swap_plan(
         {**quote, "amount_in": amount_in, "amount_out": amount_out}, base, counter
     )
     return SellSwapPlan(amount_in, amount_out, [baseline])
+
+
+def normalize_sell_swap_plan(
+    quote: dict, base: str, counter: str, amount_in: str
+) -> SellSwapPlan:
+    try:
+        _raw(amount_in)
+        if quote.get("success") is not True or base == counter:
+            raise ValueError("Invalid swap quote")
+        # A backend-selected split is executed as quoted or rejected; a malformed
+        # plan never degrades to the ordinary route.
+        if quote.get("split_plan") is not None:
+            return _split_plan(quote["split_plan"], base, counter, amount_in)
+        return _ordinary_route(quote, base, counter, amount_in)
+    except Exception as error:
+        raise ValueError("Invalid swap quote") from error
 
 
 def get_swap_minimum(output: str, slippage: str) -> str:
@@ -300,10 +299,15 @@ def build_sell_swap_operation(
         else children[0]
     )
     function = "swap_chained"
-    if trustline:
+    if trustline is not None:
         if (
             not batch
             or not StrKey.is_valid_contract(batch)
+            or not isinstance(trustline, dict)
+            or any(
+                not isinstance(trustline.get(key), str)
+                for key in ("asset_code", "issuer", "network_passphrase")
+            )
             or trustline["issuer"] == source
             or Asset(trustline["asset_code"], trustline["issuer"]).contract_id(
                 trustline["network_passphrase"]
