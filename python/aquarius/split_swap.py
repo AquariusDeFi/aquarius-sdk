@@ -9,9 +9,8 @@ from __future__ import annotations
 import re
 import binascii
 import struct
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from fractions import Fraction
-from typing import Any, Callable, Generic, TypeVar, TypedDict
 
 from stellar_sdk import Address, Asset, StrKey, scval
 from stellar_sdk.operation import InvokeHostFunction
@@ -130,44 +129,32 @@ def _leg(value: dict, base: str, counter: str) -> SellSwapLeg:
     )
 
 
-def normalize_sell_swap_plans(
-    quote: dict, base: str, counter: str, amount_in: str
-) -> list[SellSwapPlan]:
-    _raw(amount_in)
+def _split_plan(value: dict, base: str, counter: str, amount_in: str) -> SellSwapPlan:
     if (
-        quote.get("success") is not True
-        or base == counter
-        or not isinstance(quote.get("amount"), str)
-        or not re.fullmatch(r"[0-9]+(?:\.0+)?", quote["amount"])
+        value["amount_in"] != amount_in
+        or not isinstance(value["legs"], list)
+        or not 2 <= len(value["legs"]) <= 4
     ):
         raise ValueError("Invalid swap quote")
-    amount_out = str(int(quote["amount"].split(".")[0]))
-    baseline = _leg(
-        {**quote, "amount_in": amount_in, "amount_out": amount_out}, base, counter
-    )
-    plans = [SellSwapPlan(amount_in, amount_out, [baseline])]
-    candidates = quote.get("split_plans")
-    if not isinstance(candidates, list):
-        return plans
-    seen = set()
-    for candidate in candidates[:3]:
+    legs = [_leg(l, base, counter) for l in value["legs"]]
+    if sum(int(l.amount_in) for l in legs) != int(amount_in) or sum(
+        int(l.amount_out) for l in legs
+    ) != _raw(value["amount_out"]):
+        raise ValueError("Invalid swap quote")
+    return SellSwapPlan(amount_in, value["amount_out"], legs)
+
+
+def normalize_sell_swap_plan(
+    quote: dict, base: str, counter: str, amount_in: str
+) -> SellSwapPlan:
+    _raw(amount_in)
+    if quote.get("success") is not True or base == counter:
+        raise ValueError("Invalid swap quote")
+    # A backend-selected split is executed as quoted or rejected; a malformed
+    # plan never degrades to the ordinary route.
+    if quote.get("split_plan") is not None:
         try:
-            if (
-                candidate["amount_in"] != amount_in
-                or not isinstance(candidate["legs"], list)
-                or not 2 <= len(candidate["legs"]) <= 4
-            ):
-                continue
-            legs = [_leg(l, base, counter) for l in candidate["legs"]]
-            if sum(int(l.amount_in) for l in legs) != int(amount_in) or sum(
-                int(l.amount_out) for l in legs
-            ) != _raw(candidate["amount_out"]):
-                continue
-            key = tuple((l.amount_in, l.swap_chain_xdr) for l in legs)
-            if key in seen:
-                continue
-            seen.add(key)
-            plans.append(SellSwapPlan(amount_in, candidate["amount_out"], legs))
+            return _split_plan(quote["split_plan"], base, counter, amount_in)
         except (
             ValueError,
             TypeError,
@@ -176,9 +163,17 @@ def normalize_sell_swap_plans(
             EOFError,
             binascii.Error,
             struct.error,
-        ):
-            continue
-    return plans
+        ) as error:
+            raise ValueError("Invalid swap quote") from error
+    if not isinstance(quote.get("amount"), str) or not re.fullmatch(
+        r"[0-9]+(?:\.0+)?", quote["amount"]
+    ):
+        raise ValueError("Invalid swap quote")
+    amount_out = str(int(quote["amount"].split(".")[0]))
+    baseline = _leg(
+        {**quote, "amount_in": amount_in, "amount_out": amount_out}, base, counter
+    )
+    return SellSwapPlan(amount_in, amount_out, [baseline])
 
 
 def get_swap_minimum(output: str, slippage: str) -> str:
@@ -371,87 +366,3 @@ def sell_amount_to_raw(amount: str, decimals: int) -> str:
     value = str(int(whole + fraction[:decimals].ljust(decimals, "0")))
     _raw(value)
     return value
-
-
-_Tx = TypeVar("_Tx")
-
-
-class SellSwapSimulation(TypedDict):
-    tx: Any
-    outputs: list[int]
-
-
-@dataclass
-class PreparedSellSwap(Generic[_Tx]):
-    tx: _Tx
-    plan: SellSwapPlan
-    output_amount: str
-    minimum_output: str
-    leg_outputs: list[str]
-
-
-def prepare_sell_swap_plans(
-    plans: list[SellSwapPlan],
-    slippage: str,
-    simulate: Callable[[SellSwapPlan, str], SellSwapSimulation],
-) -> PreparedSellSwap[Any]:
-    """Select by full simulated output; return only a stable bounded transaction.
-
-    The synchronous callback owns full ordered simulation, resource checks,
-    fixed-auth verification and current account/network/quote checks. No wallet
-    or submission side effects are performed by this selector.
-    """
-    prepared = []
-    baseline_error = None
-    for index, plan in enumerate(plans):
-        try:
-            result = simulate(plan, "0")
-            for _ in range(2):
-                outputs = result["outputs"]
-                if len(outputs) != len(plan.legs) or any(
-                    type(v) is not int or v < 0 for v in outputs
-                ):
-                    raise ValueError("Invalid swap quote")
-                output_amount = str(sum(outputs))
-                minimum = get_swap_minimum(output_amount, slippage)
-                bounded = simulate(plan, minimum)
-                bounded_outputs = bounded["outputs"]
-                if (
-                    len(bounded_outputs) == len(plan.legs)
-                    and all(type(v) is int and v >= 0 for v in bounded_outputs)
-                    and str(sum(bounded_outputs)) == output_amount
-                ):
-                    leg_outputs = list(map(str, bounded_outputs))
-                    selected_plan = replace(
-                        plan,
-                        amount_out=output_amount,
-                        legs=[
-                            replace(leg, amount_out=leg_outputs[i])
-                            for i, leg in enumerate(plan.legs)
-                        ],
-                    )
-                    prepared.append(
-                        PreparedSellSwap(
-                            bounded["tx"],
-                            selected_plan,
-                            output_amount,
-                            minimum,
-                            leg_outputs,
-                        )
-                    )
-                    break
-                result = bounded
-        except Exception as error:
-            # Candidate failures are isolated, including resource/restore errors.
-            if index == 0:
-                baseline_error = error
-    prepared.sort(
-        key=lambda result: (-int(result.output_amount), len(result.plan.legs))
-    )
-    if not prepared:
-        if baseline_error is not None:
-            raise baseline_error
-        raise ValueError(
-            "The swap quote changed or could not be prepared. Please request a new quote."
-        )
-    return prepared[0]

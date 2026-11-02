@@ -9,13 +9,16 @@ export interface FindPathRequest {
   token_out_address: string;
   /** Base units (stroops for 7-decimal tokens), as a decimal string. */
   amount: string;
-  /** Request optional split candidates for exact-input quotes. */
+  /** Let the backend select a split plan for exact-input quotes. */
   split?: boolean;
 }
 
 export interface FindPathResponse {
-  /** Optional exact-input candidates; validate before building authorization. */
-  split_plans?: SellSwapQuote["split_plans"];
+  /**
+   * Backend-selected exact-input split, or null for the ordinary route;
+   * validate before building authorization.
+   */
+  split_plan?: SellSwapQuote["split_plan"];
   success: boolean;
   swap_chain_xdr: string;
   pools: string[];

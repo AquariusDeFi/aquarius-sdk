@@ -1,4 +1,8 @@
-import { ApiClient, normalizeSellSwapPlans } from "../../src/index.js";
+import {
+  ApiClient,
+  normalizeSellSwapPlan,
+  type SellSwapPlan,
+} from "../../src/index.js";
 
 async function splitApiComposition(
   api: ApiClient,
@@ -14,7 +18,12 @@ async function splitApiComposition(
     },
     true,
   );
-  const plans = normalizeSellSwapPlans(response, base, counter, "100");
-  return { plans, candidates: response.split_plans };
+  const plan: SellSwapPlan = normalizeSellSwapPlan(
+    response,
+    base,
+    counter,
+    "100",
+  );
+  return { plan, selected: response.split_plan };
 }
 void splitApiComposition;

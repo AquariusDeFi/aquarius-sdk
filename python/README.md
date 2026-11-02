@@ -407,8 +407,9 @@ Questions and integration help: [Discord](https://discord.gg/sgzFscHp4C).
 
 ### Opt-in split primitives (next release)
 
-`normalize_sell_swap_plans(response, token_in, token_out, amount_in)` validates
-Sell-only backend split candidates while preserving the ordinary fallback.
+`normalize_sell_swap_plan(response, token_in, token_out, amount_in)` returns the
+Sell-only `split_plan` the backend selected, or the ordinary route as a one-leg
+plan when `split_plan` is absent or null; a malformed `split_plan` raises.
 `build_sell_swap_operation(source=..., token_in=..., token_out=..., router=...,
 split_router=..., plan=..., minimum=...)` returns an unsigned operation with
 fixed ordered input-transfer authorization and one aggregate output minimum.
@@ -418,46 +419,41 @@ Amounts are canonical raw-unit strings. Optional `batch` plus
 `trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}` builds
 atomic classic-output trust + swap and verifies the asset contract.
 
-Both Python and JavaScript expose the same split capabilities. Python callbacks
-are synchronous, following the existing Python SDK; JavaScript callbacks return
-Promises. Existing `quote`/`swap` and provider-fee behavior stays ordinary.
+Both Python and JavaScript expose the same split capabilities. Existing
+`quote`/`swap` and provider-fee behavior stays ordinary.
 
 ```python
 from aquarius import (
-    normalize_sell_swap_plans, prepare_sell_swap_plans, build_sell_swap_operation,
+    normalize_sell_swap_plan, get_swap_minimum, build_sell_swap_operation,
     load_swap_resource_limits, assert_swap_resources, assert_swap_authorization,
     get_sell_swap_result,
 )
 
-plans = normalize_sell_swap_plans(response, token_in, token_out, amount_in)
+plan = normalize_sell_swap_plan(response, token_in, token_out, amount_in)
+minimum = get_swap_minimum(plan.amount_out, "1")
 limits = load_swap_resource_limits(server, network_passphrase)
-
-def simulate(plan, minimum):
-    operation = build_sell_swap_operation(
-        source=source, token_in=token_in, token_out=token_out, router=router,
-        split_router=split_router, plan=plan, minimum=minimum,
-    )
-    # Application helper: enforce fixed auth, reject errors/restores, assemble
-    # the unsigned transaction and decode the diagnostic events and return XDR.
-    tx, events, retval, ledger = simulate_and_assemble(operation)
-    assert_swap_authorization(tx, source, operation.to_xdr_object().to_xdr())
-    if len(plan.legs) > 1 and ledger < limits.latest_ledger:
-        raise ValueError("Simulation predates network configuration")
-    assert_swap_resources(tx, limits, {"events": events, "retval": retval}, len(plan.legs) > 1)
-    return {"tx": tx, "outputs": get_sell_swap_result(retval, len(plan.legs))}
-
-selected = prepare_sell_swap_plans(plans, "1", simulate)
-# Display selected.plan, selected.minimum_output and the transaction fee.
+operation = build_sell_swap_operation(
+    source=source, token_in=token_in, token_out=token_out, router=router,
+    split_router=split_router, plan=plan, minimum=minimum,
+)
+# Application helper: enforce fixed auth, reject errors/restores, assemble
+# the unsigned transaction and decode the diagnostic events and return XDR.
+tx, events, retval, ledger = simulate_and_assemble(operation)
+assert_swap_authorization(tx, source, operation.to_xdr_object().to_xdr())
+if len(plan.legs) > 1 and ledger < limits.latest_ledger:
+    raise ValueError("Simulation predates network configuration")
+assert_swap_resources(tx, limits, {"events": events, "retval": retval}, len(plan.legs) > 1)
+outputs = get_sell_swap_result(retval, len(plan.legs))
+# Display plan, minimum, outputs and the transaction fee.
 ```
 
 `simulate_and_assemble` is application code, not an SDK method. It must reject
 restore/error responses and re-check account, network and quote identity across
-network calls. If network configuration cannot be loaded, retain only the
-ordinary one-leg plan. The selector probes complete ordered execution and then
-binds one aggregate minimum; it returns only a stable bounded simulation.
-Selection maximizes simulated output, prefers fewer parts on ties and isolates
-candidate failures so a failing split cannot remove a valid ordinary fallback.
-No candidate object is mutated. Parts sharing pools must see preceding writes.
+network calls. The backend selects the plan; the aggregate minimum is derived
+from the quoted `plan.amount_out` and the operation is simulated once. A
+malformed `split_plan`, unavailable network configuration or a failed
+simulation is an error: ask for a new quote; there is no fallback to the
+ordinary route. Parts sharing pools must see preceding writes.
 
 Resource checks cover the RPC's declarations, protocol-dependent disk reads,
 footprint, worst-case signed envelope and successful contract/system events plus
@@ -471,10 +467,9 @@ release.
 
 | JavaScript | Python |
 | --- | --- |
-| `normalizeSellSwapPlans` | `normalize_sell_swap_plans` |
+| `normalizeSellSwapPlan` | `normalize_sell_swap_plan` |
 | `sellAmountToRaw` | `sell_amount_to_raw` |
 | `getSwapMinimum` | `get_swap_minimum` |
-| `prepareSellSwapPlans` | `prepare_sell_swap_plans` |
 | `buildSellSwapOperation` | `build_sell_swap_operation` |
 | `getSellSwapResult` | `get_sell_swap_result` |
 | `getSwapResult` | `get_swap_result` |
@@ -483,9 +478,9 @@ release.
 | `assertSwapAuthorization` | `assert_swap_authorization` |
 
 Both test suites consume `testdata/split-behavior.json` and
-`testdata/split-resources.json`: exact amounts, malformed quotes, conservation,
-minimum rounding, probe/bounded transitions, ranking/fallback, resource
-boundaries, protocol configuration, event/return bytes, fixed authorization and
-identical operation XDR. The shared capability list checks both public exports.
+`testdata/split-resources.json`: exact amounts, split-plan selection, malformed
+quotes, conservation, minimum rounding, resource boundaries, protocol
+configuration, event/return bytes, fixed authorization and identical operation
+XDR. The shared capability list checks both public exports.
 Changes to split behavior must update both implementations and shared cases in
 the same PR.

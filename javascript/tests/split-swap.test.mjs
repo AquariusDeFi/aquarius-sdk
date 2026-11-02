@@ -8,38 +8,31 @@ const { request, response } = JSON.parse(
     new URL("../../testdata/split-api-response.json", import.meta.url),
   ),
 );
-const plans = () =>
-  split.normalizeSellSwapPlans(
+const normalized = () =>
+  split.normalizeSellSwapPlan(
     response,
     request.token_in_address,
     request.token_out_address,
     request.amount,
   );
 const contract = (n) => Address.contract(Buffer.alloc(32, n)).toString();
-test("API plans conserve allocation and invalid optional plans preserve fallback", () => {
-  assert.deepEqual(
-    plans().map((p) => p.legs.length),
-    [1, 4, 2],
-  );
-  assert.ok(
-    plans().every(
-      (p) =>
-        p.legs.reduce((s, l) => s + BigInt(l.amountIn), 0n) ===
-        BigInt(request.amount),
-    ),
+test("API split plan conserves allocation and an invalid plan fails closed", () => {
+  assert.equal(normalized().legs.length, 2);
+  assert.equal(
+    normalized().legs.reduce((s, l) => s + BigInt(l.amountIn), 0n),
+    BigInt(request.amount),
   );
   const bad = structuredClone(response);
-  bad.split_plans[0].legs[0].amount_in = "1";
-  assert.deepEqual(
-    split
-      .normalizeSellSwapPlans(
+  bad.split_plan.legs[0].amount_in = "1";
+  assert.throws(
+    () =>
+      split.normalizeSellSwapPlan(
         bad,
         request.token_in_address,
         request.token_out_address,
         request.amount,
-      )
-      .map((p) => p.legs.length),
-    [1, 2],
+      ),
+    /Invalid swap quote/,
   );
 });
 test("minimum and decimal conversion retain precision", () => {
@@ -54,7 +47,7 @@ test("fixed auth binds exact ordered input transfers and aggregate minimum", () 
   const source = Keypair.random().publicKey(),
     router = contract(8),
     splitRouter = contract(9),
-    plan = plans()[2];
+    plan = normalized();
   const op = split.buildSellSwapOperation({
     source,
     router,
@@ -90,22 +83,10 @@ test("fixed auth binds exact ordered input transfers and aggregate minimum", () 
     }),
   );
 });
-test("rejected split preserves executable bounded baseline", async () => {
-  const best = await split.prepareSellSwapPlans(
-    plans(),
-    "1",
-    async (p, min) => {
-      if (p.legs.length > 1) throw Error("budget");
-      return { tx: min, outputs: [100n] };
-    },
-  );
-  assert.equal(best.tx, "99");
-  assert.equal(best.plan.legs.length, 1);
-});
 for (const amount of ["0", "-1", "1.5", "1e2", (1n << 127n).toString()])
   test(`reject invalid raw input ${amount}`, () => {
     assert.throws(() =>
-      split.normalizeSellSwapPlans(
+      split.normalizeSellSwapPlan(
         response,
         request.token_in_address,
         request.token_out_address,
@@ -113,53 +94,23 @@ for (const amount of ["0", "-1", "1.5", "1e2", (1n << 127n).toString()])
       ),
     );
   });
-test("malformed optional XDR, excess input and repeated route pools cannot expand authorization", () => {
+test("malformed split XDR, excess input and reversed route tokens fail closed", () => {
   for (const corrupt of [
-    (q) => (q.split_plans[0].legs[0].swap_chain_xdr = "invalid"),
-    (q) => (q.split_plans[0].amount_in = "1"),
-    (q) => q.split_plans[0].legs[0].tokens_addresses.reverse(),
+    (q) => (q.split_plan.legs[0].swap_chain_xdr = "invalid"),
+    (q) => (q.split_plan.amount_in = "1"),
+    (q) => q.split_plan.legs[0].tokens_addresses.reverse(),
   ]) {
     const q = structuredClone(response);
     corrupt(q);
-    assert.deepEqual(
-      split
-        .normalizeSellSwapPlans(
+    assert.throws(
+      () =>
+        split.normalizeSellSwapPlan(
           q,
           request.token_in_address,
           request.token_out_address,
           request.amount,
-        )
-        .map((p) => p.legs.length),
-      [1, 2],
+        ),
+      /Invalid swap quote/,
     );
   }
-});
-test("probe output is never exposed until bounded simulation is stable", async () => {
-  const seen = [];
-  const best = await split.prepareSellSwapPlans(
-    [plans()[0]],
-    "1",
-    async (p, min) => {
-      seen.push(min);
-      return { tx: min, outputs: [min === "0" ? 100n : 110n] };
-    },
-  );
-  assert.deepEqual(seen, ["0", "99", "108"]);
-  assert.equal(best.outputAmount, "110");
-  assert.equal(best.minimumOutput, "108");
-});
-test("malformed result and continuously changing outputs fail closed", async () => {
-  await assert.rejects(
-    split.prepareSellSwapPlans([plans()[0]], "1", async () => ({
-      tx: "x",
-      outputs: [],
-    })),
-  );
-  let n = 0n;
-  await assert.rejects(
-    split.prepareSellSwapPlans([plans()[0]], "1", async () => ({
-      tx: "x",
-      outputs: [++n],
-    })),
-  );
 });
