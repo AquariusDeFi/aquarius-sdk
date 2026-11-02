@@ -55,7 +55,7 @@ from .limit_orders import (
 )
 from .pool import ClaimResult, DepositResult, Pool, PoolQuote, Position, WithdrawResult
 
-__version__ = "0.6.0a7"
+__version__ = "0.6.0"
 
 __all__ = [
     "APIHTTPError",
