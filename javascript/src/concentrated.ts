@@ -118,6 +118,20 @@ export function priceAtTick(tick: number, options?: { decimals?: [number, number
   return price;
 }
 
+/** Tick spacing per fee tier, as the factory assigns it (basis points -> ticks). */
+const TICK_SPACING_BY_FEE: Record<number, number> = { 10: 20, 30: 60, 100: 200 };
+
+/** The tick spacing a concentrated pool of this fee tier is created with. */
+export function tickSpacingForFee(feeBps: number): number {
+  const spacing = TICK_SPACING_BY_FEE[feeBps];
+  if (spacing === undefined) {
+    throw new AquariusError(
+      `No concentrated fee tier of ${feeBps} bps; supported: ${Object.keys(TICK_SPACING_BY_FEE).join(", ")}`,
+    );
+  }
+  return spacing;
+}
+
 export type RangeStatus = "in_range" | "below" | "above";
 
 /**

@@ -122,6 +122,8 @@ print(f"deposit : {[fmt(a) for a in deposit.amounts]} -> {fmt(deposit.shares)} s
 assert pool.share_balance() >= deposit.shares
 assert pool.pending_rewards() >= 0
 
+# The withdraw must simulate past the deposit's ledger (reward checkpoint).
+client.wait_for_next_ledger()
 withdraw = retry_stale(lambda: pool.withdraw(deposit.shares))
 aqua_have += withdraw.amounts[1 - xlm_index]
 print(f"withdraw: {[fmt(a) for a in withdraw.amounts]}  {EXPLORER}{withdraw.tx_hash}")
@@ -206,6 +208,8 @@ else:
     value = concentrated.position_value(lower, upper)
     assert len(value.total) == len(concentrated.tokens)
 
+    # The withdraw must simulate past the deposit's ledger (reward checkpoint).
+    client.wait_for_next_ledger()
     closed = retry_stale(lambda: concentrated.withdraw_position(lower, upper))
     aqua_have += closed.amounts[1 - xlm_c]
     print(f"closed  : {[fmt(a) for a in closed.amounts]}  {EXPLORER}{closed.tx_hash}")

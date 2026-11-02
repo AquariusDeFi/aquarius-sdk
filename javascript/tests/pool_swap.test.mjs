@@ -30,9 +30,7 @@ function fakeContext(estimate) {
     readContract: async () => {
       throw new Error("pool contract must not be read for router swaps");
     },
-    submitRouter: async () => {
-      throw new Error("swaps submit through submitContract with explicit auth");
-    },
+    submitRouter: (fn, args, auth) => ctx.submitContract(ROUTER, fn, args, auth),
     submitContract: async (contractId, fn, args, auth) => {
       ctx.submitted.push([contractId, fn, args, auth]);
       return { txHash: "h", returnValue: ctx.submitResult };
@@ -87,22 +85,22 @@ test("execute submits a pinned router swap with bounded auth", async () => {
   assert.equal(scValToNative(args[5]), 500n); // in_amount
   assert.equal(scValToNative(args[6]), 990n); // out_min = the guard
   const [entry] = auth;
-  const root = entry.rootInvocation();
-  assert.equal(root.function().contractFn().functionName().toString(), "swap");
+  const root = entry.rootInvocation;
+  assert.equal(root.function.contractFn.functionName.toString(), "swap");
   // Nested exactly like the contracts call each other:
   // router.swap -> pool.swap (require_auth) -> transfer(user, pool, amount).
-  const [poolSwap] = root.subInvocations();
-  const poolFn = poolSwap.function().contractFn();
-  assert.equal(poolFn.functionName().toString(), "swap");
-  assert.equal(scValToNative(poolFn.args()[1]), 0); // in_idx (XLM)
-  assert.equal(scValToNative(poolFn.args()[2]), 1); // out_idx (AQUA)
-  assert.equal(scValToNative(poolFn.args()[3]), 500n);
-  assert.equal(scValToNative(poolFn.args()[4]), 990n);
-  const [transfer] = poolSwap.subInvocations();
-  const transferFn = transfer.function().contractFn();
-  assert.equal(transferFn.functionName().toString(), "transfer");
-  assert.equal(Address.fromScVal(transferFn.args()[1]).toString(), POOL_ID);
-  assert.equal(scValToNative(transferFn.args()[2]), 500n);
+  const [poolSwap] = root.subInvocations;
+  const poolFn = poolSwap.function.contractFn;
+  assert.equal(poolFn.functionName.toString(), "swap");
+  assert.equal(scValToNative(poolFn.args[1]), 0); // in_idx (XLM)
+  assert.equal(scValToNative(poolFn.args[2]), 1); // out_idx (AQUA)
+  assert.equal(scValToNative(poolFn.args[3]), 500n);
+  assert.equal(scValToNative(poolFn.args[4]), 990n);
+  const [transfer] = poolSwap.subInvocations;
+  const transferFn = transfer.function.contractFn;
+  assert.equal(transferFn.functionName.toString(), "transfer");
+  assert.equal(Address.fromScVal(transferFn.args[1]).toString(), POOL_ID);
+  assert.equal(scValToNative(transferFn.args[2]), 500n);
   assert.equal(receipt.amountIn, 500n);
   assert.equal(receipt.amountOut, 995n);
 });
