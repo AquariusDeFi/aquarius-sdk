@@ -596,3 +596,10 @@ to `tokenOut`; the optional trust result is excluded from swap outputs.
 These exports are unreleased. A source install may pin an immutable repository
 commit; the root installation manifest builds `javascript` using its lockfile.
 No package version or published tag is changed by this feature.
+
+Python exposes the same split capabilities with synchronous simulation callbacks;
+see the [shared API mapping](../python/README.md#shared-split-api-contract).
+Both language suites consume `testdata/split-behavior.json` and
+`testdata/split-resources.json`, including exact operation XDR, minimum/selection,
+resource/event/auth boundaries and a public-capability list. Change both
+implementations and the shared scenarios together in the same PR.

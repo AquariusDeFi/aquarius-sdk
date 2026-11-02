@@ -9,8 +9,9 @@ from __future__ import annotations
 import re
 import binascii
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
+from typing import Any, Callable, Generic, TypeVar, TypedDict
 
 from stellar_sdk import Address, Asset, StrKey, scval
 from stellar_sdk.operation import InvokeHostFunction
@@ -125,7 +126,7 @@ def _leg(value: dict, base: str, counter: str) -> SellSwapLeg:
         encoded,
         pools[:],
         tokens[:],
-        list(value.get("tokens") or []),
+        list(value["tokens"]) if isinstance(value.get("tokens"), list) else [],
     )
 
 
@@ -353,3 +354,104 @@ def build_sell_swap_operation(
         ),
     )
     return InvokeHostFunction(host, [source_account_entry(root)])
+
+
+def sell_amount_to_raw(amount: str, decimals: int) -> str:
+    """Convert a positive decimal amount exactly, rejecting fractional base units."""
+    if (
+        type(decimals) is not int
+        or not 0 <= decimals <= 38
+        or not isinstance(amount, str)
+        or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", amount)
+    ):
+        raise ValueError("Invalid swap quote")
+    whole, _, fraction = amount.partition(".")
+    if fraction[decimals:].replace("0", ""):
+        raise ValueError("Invalid swap quote")
+    value = str(int(whole + fraction[:decimals].ljust(decimals, "0")))
+    _raw(value)
+    return value
+
+
+_Tx = TypeVar("_Tx")
+
+
+class SellSwapSimulation(TypedDict):
+    tx: Any
+    outputs: list[int]
+
+
+@dataclass
+class PreparedSellSwap(Generic[_Tx]):
+    tx: _Tx
+    plan: SellSwapPlan
+    output_amount: str
+    minimum_output: str
+    leg_outputs: list[str]
+
+
+def prepare_sell_swap_plans(
+    plans: list[SellSwapPlan],
+    slippage: str,
+    simulate: Callable[[SellSwapPlan, str], SellSwapSimulation],
+) -> PreparedSellSwap[Any]:
+    """Select by full simulated output; return only a stable bounded transaction.
+
+    The synchronous callback owns full ordered simulation, resource checks,
+    fixed-auth verification and current account/network/quote checks. No wallet
+    or submission side effects are performed by this selector.
+    """
+    prepared = []
+    baseline_error = None
+    for index, plan in enumerate(plans):
+        try:
+            result = simulate(plan, "0")
+            for _ in range(2):
+                outputs = result["outputs"]
+                if len(outputs) != len(plan.legs) or any(
+                    type(v) is not int or v < 0 for v in outputs
+                ):
+                    raise ValueError("Invalid swap quote")
+                output_amount = str(sum(outputs))
+                minimum = get_swap_minimum(output_amount, slippage)
+                bounded = simulate(plan, minimum)
+                bounded_outputs = bounded["outputs"]
+                if (
+                    len(bounded_outputs) == len(plan.legs)
+                    and all(type(v) is int and v >= 0 for v in bounded_outputs)
+                    and str(sum(bounded_outputs)) == output_amount
+                ):
+                    leg_outputs = list(map(str, bounded_outputs))
+                    selected_plan = replace(
+                        plan,
+                        amount_out=output_amount,
+                        legs=[
+                            replace(leg, amount_out=leg_outputs[i])
+                            for i, leg in enumerate(plan.legs)
+                        ],
+                    )
+                    prepared.append(
+                        PreparedSellSwap(
+                            bounded["tx"],
+                            selected_plan,
+                            output_amount,
+                            minimum,
+                            leg_outputs,
+                        )
+                    )
+                    break
+                result = bounded
+        except Exception as error:
+            # Candidate failures are isolated, including resource/restore errors.
+            if index == 0:
+                baseline_error = error
+    prepared.sort(
+        key=lambda result: (-int(result.output_amount), len(result.plan.legs))
+    )
+    if not prepared:
+        if baseline_error is not None:
+            raise baseline_error
+        raise ValueError(
+            "The swap quote changed or could not be prepared. Please request a new quote."
+        )
+    return prepared[0]

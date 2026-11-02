@@ -418,10 +418,74 @@ Amounts are canonical raw-unit strings. Optional `batch` plus
 `trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}` builds
 atomic classic-output trust + swap and verifies the asset contract.
 
-These are explicit low-level helpers: existing `quote`/`swap` and provider-fee
-behavior stays ordinary. Python does not yet provide the JavaScript split
-selection/resource orchestration helpers. Callers must fully simulate the
-ordered operation, validate fixed auth and current network limits with reserve,
-rebind the aggregate minimum, then display the result before signing. An
-isolated per-leg quote is insufficient for shared pools. These helpers do not
-sign, submit or restore; package publication will be a separate release.
+Both Python and JavaScript expose the same split capabilities. Python callbacks
+are synchronous, following the existing Python SDK; JavaScript callbacks return
+Promises. Existing `quote`/`swap` and provider-fee behavior stays ordinary.
+
+```python
+from aquarius import (
+    normalize_sell_swap_plans, prepare_sell_swap_plans, build_sell_swap_operation,
+    load_swap_resource_limits, assert_swap_resources, assert_swap_authorization,
+    get_sell_swap_result,
+)
+
+plans = normalize_sell_swap_plans(response, token_in, token_out, amount_in)
+limits = load_swap_resource_limits(server, network_passphrase)
+
+def simulate(plan, minimum):
+    operation = build_sell_swap_operation(
+        source=source, token_in=token_in, token_out=token_out, router=router,
+        split_router=split_router, plan=plan, minimum=minimum,
+    )
+    # Application helper: enforce fixed auth, reject errors/restores, assemble
+    # the unsigned transaction and decode the diagnostic events and return XDR.
+    tx, events, retval, ledger = simulate_and_assemble(operation)
+    assert_swap_authorization(tx, source, operation.to_xdr_object().to_xdr())
+    if len(plan.legs) > 1 and ledger < limits.latest_ledger:
+        raise ValueError("Simulation predates network configuration")
+    assert_swap_resources(tx, limits, {"events": events, "retval": retval}, len(plan.legs) > 1)
+    return {"tx": tx, "outputs": get_sell_swap_result(retval, len(plan.legs))}
+
+selected = prepare_sell_swap_plans(plans, "1", simulate)
+# Display selected.plan, selected.minimum_output and the transaction fee.
+```
+
+`simulate_and_assemble` is application code, not an SDK method. It must reject
+restore/error responses and re-check account, network and quote identity across
+network calls. If network configuration cannot be loaded, retain only the
+ordinary one-leg plan. The selector probes complete ordered execution and then
+binds one aggregate minimum; it returns only a stable bounded simulation.
+Selection maximizes simulated output, prefers fewer parts on ties and isolates
+candidate failures so a failing split cannot remove a valid ordinary fallback.
+No candidate object is mutated. Parts sharing pools must see preceding writes.
+
+Resource checks cover the RPC's declarations, protocol-dependent disk reads,
+footprint, worst-case signed envelope and successful contract/system events plus
+the complete return value. Split gets 50% of current network caps; ordinary
+routes get hard caps. RPC does not expose exact memory headroom, so full
+simulation and runtime limits remain necessary. These helpers never trim
+resources to fit, sign, submit or restore storage. Publication is a separate
+release.
+
+### Shared split API contract
+
+| JavaScript | Python |
+| --- | --- |
+| `normalizeSellSwapPlans` | `normalize_sell_swap_plans` |
+| `sellAmountToRaw` | `sell_amount_to_raw` |
+| `getSwapMinimum` | `get_swap_minimum` |
+| `prepareSellSwapPlans` | `prepare_sell_swap_plans` |
+| `buildSellSwapOperation` | `build_sell_swap_operation` |
+| `getSellSwapResult` | `get_sell_swap_result` |
+| `getSwapResult` | `get_swap_result` |
+| `loadSwapResourceLimits` | `load_swap_resource_limits` |
+| `assertSwapResources` | `assert_swap_resources` |
+| `assertSwapAuthorization` | `assert_swap_authorization` |
+
+Both test suites consume `testdata/split-behavior.json` and
+`testdata/split-resources.json`: exact amounts, malformed quotes, conservation,
+minimum rounding, probe/bounded transitions, ranking/fallback, resource
+boundaries, protocol configuration, event/return bytes, fixed authorization and
+identical operation XDR. The shared capability list checks both public exports.
+Changes to split behavior must update both implementations and shared cases in
+the same PR.
