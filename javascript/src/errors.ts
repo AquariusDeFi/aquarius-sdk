@@ -54,6 +54,18 @@ export class NoTrustlineError extends AquariusError {}
  */
 export class StaleSimulationError extends AquariusError {}
 
+/** A build needs a separate restore: sign/submit this XDR, confirm it, then rebuild the call. */
+export class RestoreRequiredError extends AquariusError {
+  constructor(readonly restoreTransactionXdr: string) {
+    super(
+      "Ledger entries need restoration. Sign and submit restoreTransactionXdr, wait for confirmation, then rebuild the original transaction.",
+    );
+  }
+}
+
+/** The simulated call exceeded Soroban's resource budget. */
+export class ResourceLimitError extends AquariusError {}
+
 // Wallet-rejection messages across signers: Freighter, WalletConnect, Ledger.
 const USER_REJECTED_MESSAGES = [
   "the user rejected this request.",
@@ -125,7 +137,7 @@ export function classifyContractError(message: string, txHash?: string): Aquariu
     return classifyContractCode(Number(match[1]), txHash);
   }
   if (message.includes("Error(Budget, ExceededLimit)")) {
-    return new AquariusError(
+    return new ResourceLimitError(
       "The call exceeded Soroban resource limits — for swaps this usually means too many hops",
       txHash,
     );
@@ -138,6 +150,10 @@ export function classifyContractError(message: string, txHash?: string): Aquariu
  * determinable. The trustline marker is checked on the raw event bytes;
  * contract error codes are read from `error` topics.
  */
+function topicsOf(event: xdr.DiagnosticEvent): xdr.ScVal[] {
+  return event.event.body.v0.topics;
+}
+
 export function errorFromDiagnostics(
   events: (xdr.DiagnosticEvent | string)[] | undefined,
   txHash?: string,
@@ -150,14 +166,9 @@ export function errorFromDiagnostics(
   const decoded: { bytes: Buffer; event: xdr.DiagnosticEvent; isError: boolean }[] = [];
   for (const raw of events ?? []) {
     try {
-      const event = typeof raw === "string" ? xdr.DiagnosticEvent.fromXDR(raw, "base64") : raw;
-      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : raw.toXDR();
-      const isError = event
-        .event()
-        .body()
-        .v0()
-        .topics()
-        .some(t => t.switch() === xdr.ScValType.scvSymbol() && t.sym().toString() === "error");
+      const event = typeof raw === "string" ? xdr.DiagnosticEvent.fromXdr(raw, "base64") : raw;
+      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : Buffer.from(raw.toXdr());
+      const isError = topicsOf(event).some(t => t.type === "scvSymbol" && t.sym.toString() === "error");
       decoded.push({ bytes, event, isError });
     } catch {
       // a single undecodable event never masks the rest
@@ -182,12 +193,12 @@ export function errorFromDiagnostics(
     if (bytes.includes(TRUSTLINE_MARKER)) {
       return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
     }
-    for (const topic of event.event().body().v0().topics()) {
-      if (topic.switch() !== xdr.ScValType.scvError()) continue;
-      const scError = topic.error();
-      if (scError.switch() === xdr.ScErrorType.sceContract() && code === null) {
-        code = scError.contractCode();
-      } else if (scError.switch() === xdr.ScErrorType.sceStorage()) {
+    for (const topic of topicsOf(event)) {
+      if (topic.type !== "scvError") continue;
+      const scError = topic.error;
+      if (scError.type === "sceContract" && code === null) {
+        code = scError.contractCode;
+      } else if (scError.type === "sceStorage") {
         storage = true;
       }
     }

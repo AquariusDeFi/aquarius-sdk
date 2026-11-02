@@ -23,6 +23,8 @@ import {
   snapTick,
 } from "../dist/index.js";
 
+import { waitForHorizonAccount } from "./horizon.mjs";
+
 const AQUA = Asset.classic("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA");
 const EXPLORER = "https://stellar.expert/explorer/public/tx/";
 const SWAP_XLM = 10_000_000n;
@@ -61,12 +63,14 @@ async function retryStale(thunk) {
   }
 }
 
-async function balances() {
-  const response = await fetch(
-    `${aqua.network.horizonUrl}/accounts/${keypair.publicKey()}`,
-    { signal: AbortSignal.timeout(30_000) },
-  );
-  const account = await response.json();
+async function balances(account) {
+  if (!account) {
+    const response = await fetch(
+      `${aqua.network.horizonUrl}/accounts/${keypair.publicKey()}`,
+      { signal: AbortSignal.timeout(30_000) },
+    );
+    account = await response.json();
+  }
   let xlm = 0n;
   let aquaHeld = 0n;
   for (const balance of account.balances ?? []) {
@@ -137,6 +141,8 @@ console.log(`deposit : [${deposit.amounts.map(fmt)}] -> ${fmt(deposit.shares)} s
 assert.ok((await pool.shareBalance()) >= deposit.shares);
 assert.ok((await pool.pendingRewards()) >= 0n);
 
+// The withdraw must simulate past the deposit's ledger (reward checkpoint).
+await aqua.waitForNextLedger();
 const withdraw = await retryStale(() => pool.withdraw({ shares: deposit.shares }));
 aquaHave += withdraw.amounts[1 - xlmIndex];
 console.log(`withdraw: [${withdraw.amounts.map(fmt)}]  ${EXPLORER}${withdraw.txHash}`);
@@ -223,6 +229,8 @@ if (!concentratedPools.length) {
   const value = await concentrated.positionValue(lower, upper);
   assert.equal(value.total.length, concentrated.tokens.length);
 
+  // The withdraw must simulate past the deposit's ledger (reward checkpoint).
+  await aqua.waitForNextLedger();
   const closed = await retryStale(() =>
     concentrated.withdrawPosition({ tickLower: lower, tickUpper: upper }));
   aquaHave += closed.amounts[1 - xlmC];
@@ -235,11 +243,10 @@ const receipt2 = await aqua.swap({ from: AQUA, to: XLM, amountIn: aquaHave, retr
 console.log(`swap out: ${fmt(receipt2.amountIn)} AQUA -> ${fmt(receipt2.amountOut)} XLM  `
   + `${EXPLORER}${receipt2.txHash}`);
 
-let [xlmEnd, aquaEnd] = await balances();
-for (let i = 0; i < 3 && aquaEnd !== 0n; i++) {  // Horizon can lag the just-confirmed swap
-  await sleep(2000);
-  [xlmEnd, aquaEnd] = await balances();
-}
+const settledAccount = await waitForHorizonAccount(
+  aqua.network.horizonUrl, keypair.publicKey(), receipt2.txHash,
+);
+const [xlmEnd, aquaEnd] = await balances(settledAccount);
 const loss = xlmStart - xlmEnd;
 console.log(`\nnet XLM cost of the run: ${fmt(loss)} (fees + slippage)`);
 assert.equal(aquaEnd, 0n, `AQUA left dangling: ${fmt(aquaEnd)}`);

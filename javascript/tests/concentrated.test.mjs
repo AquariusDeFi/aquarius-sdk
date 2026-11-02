@@ -133,16 +133,16 @@ test("estimate snaps price range and execute carries bounded auth", async () => 
   assert.equal(fn, "deposit_position");
   assert.equal(scValToNative(args[4]), (1234n * 9_500n) / 10_000n); // min-liquidity guard
   const [entry] = auth;
-  const root = entry.rootInvocation();
-  assert.equal(root.function().contractFn().functionName().toString(), "deposit_position");
-  const transfers = root.subInvocations();
+  const root = entry.rootInvocation;
+  assert.equal(root.function.contractFn.functionName.toString(), "deposit_position");
+  const transfers = root.subInvocations;
   // Full desired amounts authorized per token, mirroring the web app.
   assert.deepEqual(
-    transfers.map(t => scValToNative(t.function().contractFn().args()[2])),
+    transfers.map(t => scValToNative(t.function.contractFn.args[2])),
     [100n, 900n],
   );
   assert.deepEqual(
-    transfers.map(t => t.function().contractFn().functionName().toString()),
+    transfers.map(t => t.function.contractFn.functionName.toString()),
     ["transfer", "transfer"],
   );
   assert.deepEqual(result.amounts, [90n, 880n]);
@@ -163,6 +163,22 @@ test("estimate validates tick input", async () => {
   );
 });
 
+test("position deposit authorizes only positive desired transfers", async () => {
+  const ctx = fakeContext({
+    get_tick_spacing: u32(60),
+    estimate_deposit_position: vec([vec([u128(0n), u128(90n)]), u128(1000n)]),
+  });
+  ctx.submitResult = vec([vec([u128(0n), u128(90n)]), u128(1000n)]);
+  const estimate = await concentratedPool(ctx).estimatePositionDeposit({
+    amounts: [0n, 100n], tickRange: [-60, 60],
+  });
+  await estimate.execute();
+  const transfers = ctx.submitted[0][3][0].rootInvocation.subInvocations;
+  assert.equal(transfers.length, 1);
+  assert.equal(Address.fromScAddress(transfers[0].function.contractFn.contractAddress).toString(), AQUA_ID);
+  assert.equal(scValToNative(transfers[0].function.contractFn.args[2]), 100n);
+});
+
 test("withdraw derives min amounts and uses root-only auth", async () => {
   const ctx = fakeContext({
     get_position: xdr.ScVal.scvMap([
@@ -180,7 +196,7 @@ test("withdraw derives min amounts and uses root-only auth", async () => {
   assert.equal(scValToNative(args[3]), 500n); // liquidity defaults to the whole position
   assert.deepEqual(scValToNative(args[4]), [99n, 198n]); // estimate minus default 1%
   const [entry] = auth;
-  assert.deepEqual(entry.rootInvocation().subInvocations(), []); // nothing pulled from the user
+  assert.deepEqual(entry.rootInvocation.subInvocations, []); // nothing pulled from the user
   assert.deepEqual(result.amounts, [99n, 199n]);
 });
 

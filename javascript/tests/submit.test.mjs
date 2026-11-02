@@ -2,8 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Account, Keypair, Networks, Operation, rpc, xdr } from "@stellar/stellar-sdk";
+import { Account, Keypair, Networks, Operation, SorobanDataBuilder, StrKey, rpc, xdr } from "@stellar/stellar-sdk";
 
+import { authorizedInvocation, sourceAccountEntry } from "../dist/authorization.js";
 import { AquariusClient, XLM } from "../dist/index.js";
 import { AquariusError, SlippageError } from "../dist/errors.js";
 import { SubmitEngine } from "../dist/submit.js";
@@ -12,24 +13,32 @@ const PASSPHRASE = Networks.TESTNET;
 const KEYPAIR = Keypair.random();
 const STALE_SEQUENCE = "100"; // what the lagging replica serves on the first load
 const CHAIN_SEQUENCE = "105"; // where the chain actually is
+const CONFIRMED_LEDGER = 1000; // the ledger that applies every submitted transaction
 
 SubmitEngine._badSeqDelaysMs = [1, 1]; // keep the tests fast
+SubmitEngine._nextLedgerPollIntervalMs = 1;
 AquariusClient._requoteDelaysMs = [0, 0];
 
 const rejected = name => ({
   status: "ERROR",
   hash: "rejected",
-  errorResult: { result: () => ({ switch: () => ({ name }) }) },
+  errorResult: new xdr.TransactionResult({
+    feeCharged: 0n,
+    result: xdr.TransactionResultResult[name](),
+    ext: xdr.TransactionResultExt.v0(),
+  }),
 });
 const PENDING = { status: "PENDING", hash: "abc123" };
 
 /** Scripted sendTransaction responses; the first account load serves a stale
  * sequence (lagging replica), later loads the converged one. */
 class FakeServer {
-  constructor(sendResponses) {
+  constructor(sendResponses, latestLedgers = []) {
     this.sendResponses = [...sendResponses];
     this.loads = 0;
     this.submitted = [];
+    this.latestLedgers = [...latestLedgers]; // the last one repeats
+    this.calls = [];
   }
 
   async getAccount(accountId) {
@@ -43,7 +52,23 @@ class FakeServer {
   }
 
   async pollTransaction() {
-    return { status: rpc.Api.GetTransactionStatus.SUCCESS, returnValue: undefined };
+    return {
+      status: rpc.Api.GetTransactionStatus.SUCCESS,
+      returnValue: undefined,
+      ledger: CONFIRMED_LEDGER,
+    };
+  }
+
+  async getHealth() {
+    this.calls.push("getHealth");
+    const latestLedger = this.latestLedgers[0];
+    if (this.latestLedgers.length > 1) this.latestLedgers.shift();
+    return { latestLedger };
+  }
+
+  async simulateTransaction() {
+    this.calls.push("simulate");
+    return { result: { retval: xdr.ScVal.scvU32(7) } };
   }
 }
 
@@ -66,7 +91,7 @@ test("txBadSeq is re-signed with a fresh sequence and resubmitted", async () => 
   const resubmitted = server.submitted[1];
   assert.equal(resubmitted.sequence, (BigInt(CHAIN_SEQUENCE) + 1n).toString()); // reloaded
   assert.equal(resubmitted.signatures.length, 1); // stale signature dropped, re-signed
-  assert.ok(KEYPAIR.verify(resubmitted.hash(), resubmitted.signatures[0].signature()));
+  assert.ok(KEYPAIR.verify(resubmitted.hash(), resubmitted.signatures[0].signature.toBytes()));
 });
 
 test("txBadSeq gives up after bounded retries", async () => {
@@ -87,6 +112,38 @@ test("other rejections are not retried", async () => {
   assert.equal(server.submitted.length, 1);
 });
 
+test("an executing write still restores, re-simulates and signs the original call", async () => {
+  const server = new FakeServer([PENDING, PENDING]);
+  let simulations = 0;
+  server.simulateTransaction = async () => {
+    simulations++;
+    const result = {
+      _parsed: true,
+      transactionData: new SorobanDataBuilder(),
+      minResourceFee: "10",
+      result: { retval: xdr.ScVal.scvVoid(), auth: [] },
+    };
+    return simulations === 1
+      ? { ...result, restorePreamble: { minResourceFee: "500", transactionData: new SorobanDataBuilder() } }
+      : result;
+  };
+  // The fake server serves no network config, so instruction headroom is off.
+  const engine = new SubmitEngine(server, PASSPHRASE, "100", null, undefined, 0);
+  const tx = await engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
+    contract: "CCSXYUVLYALKJGIIYMGYLZI447VS6TDWFTVDL43B4IKK2WERHLWUVCRC",
+    function: "claim",
+    args: [],
+  }), KEYPAIR);
+  assert.equal(simulations, 2);
+  assert.equal(server.submitted.length, 1);
+  assert.equal(server.submitted[0].operations[0].type, "restoreFootprint");
+  assert.equal(server.submitted[0].signatures.length, 1);
+  assert.equal(tx.signatures.length, 0);
+  await engine.signAndSubmit(tx, KEYPAIR);
+  assert.equal(server.submitted[1].operations[0].type, "invokeHostFunction");
+  assert.equal(server.submitted[1].signatures.length, 1);
+});
+
 function diagnosticEvent(contractCode) {
   const topics = [xdr.ScVal.scvSymbol("error")];
   if (contractCode !== undefined) {
@@ -95,9 +152,9 @@ function diagnosticEvent(contractCode) {
   return new xdr.DiagnosticEvent({
     inSuccessfulContractCall: false,
     event: new xdr.ContractEvent({
-      ext: new xdr.ExtensionPoint(0), contractId: null,
-      type: xdr.ContractEventType.diagnostic(),
-      body: new xdr.ContractEventBody(0, new xdr.ContractEventV0({
+      ext: xdr.ExtensionPoint.v0(), contractId: null,
+      type: xdr.ContractEventType.diagnostic,
+      body: xdr.ContractEventBody.v0(new xdr.ContractEventV0({
         topics, data: xdr.ScVal.scvVoid(),
       })),
     }),
@@ -137,7 +194,7 @@ test("reads share one account fetch, even concurrently", async () => {
   const op = () => Operation.manageData({ name: "t", value: "1" });
   await Promise.all([engine.read(KEYPAIR.publicKey(), op), engine.read(KEYPAIR.publicKey(), op)]);
   const value = await engine.read(KEYPAIR.publicKey(), op);
-  assert.equal(value.u32(), 7);
+  assert.equal(value.u32, 7);
   assert.equal(server.loads, 1); // sequence numbers are irrelevant to simulation
 });
 
@@ -148,4 +205,208 @@ test("write builds always load a fresh account", async () => {
   await engine.buildTransaction(KEYPAIR.publicKey(), op);
   await engine.buildTransaction(KEYPAIR.publicKey(), op);
   assert.equal(server.loads, 2); // writes must never reuse a cached sequence
+});
+
+const CONTRACT = StrKey.encodeContract(Buffer.alloc(32, 1));
+const fixedAuth = () => [sourceAccountEntry(authorizedInvocation(CONTRACT, "fixed", []))];
+const hostileAuth = () => [sourceAccountEntry(authorizedInvocation(CONTRACT, "unexpected_debit", []))];
+const authXdr = tx => tx.operations[0].auth.map(entry => entry.toXDR("base64"));
+// The fake server serves no network config, so instruction headroom is off.
+const authEngine = server => new SubmitEngine(server, PASSPHRASE, "100", null, undefined, 0);
+const success = (auth = hostileAuth()) => ({
+  _parsed: true,
+  latestLedger: 100,
+  events: [],
+  minResourceFee: "0",
+  transactionData: new SorobanDataBuilder(),
+  result: { auth, retval: xdr.ScVal.scvVoid() },
+});
+
+for (const auth of [fixedAuth(), []]) {
+  test(`prepare enforces and preserves ${auth.length ? "fixed" : "empty"} auth despite hostile simulation auth`, async () => {
+    const server = new FakeServer([]);
+    const modes = [];
+    server.simulateTransaction = async (tx, resources, mode) => {
+      modes.push(mode);
+      assert.equal(resources, undefined);
+      return success();
+    };
+    const engine = authEngine(server);
+    const tx = await engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
+      contract: CONTRACT, function: "fixed", args: [], auth,
+    }));
+    assert.deepEqual(modes, ["enforce"]);
+    assert.deepEqual(authXdr(tx), auth.map(entry => entry.toXDR("base64")));
+    assert.equal(tx.signatures.length, 0);
+  });
+}
+
+test("restore retry freezes the original operation and enforces auth on both simulations", async () => {
+  const server = new FakeServer([]);
+  const simulations = [];
+  server.simulateTransaction = async (tx, _resources, mode) => {
+    simulations.push({ tx, mode });
+    return simulations.length === 1
+      ? { ...success(), restorePreamble: { minResourceFee: "0", transactionData: new SorobanDataBuilder() } }
+      : success();
+  };
+  const engine = authEngine(server);
+  const auth = fixedAuth();
+  const original = auth.map(entry => entry.toXDR("base64"));
+  // Stub restoration: exercise the retry without signing any restore.
+  engine.restore = async () => { auth.splice(0, 1, ...hostileAuth()); };
+  let builds = 0;
+  const tx = await engine.prepare(KEYPAIR.publicKey(), () => {
+    builds += 1;
+    return Operation.invokeContractFunction({ contract: CONTRACT, function: "fixed", args: [], auth });
+  }, KEYPAIR);
+  assert.equal(builds, 1);
+  assert.deepEqual(simulations.map(({ mode }) => mode), ["enforce", "enforce"]);
+  assert.deepEqual(simulations.map(({ tx }) => authXdr(tx)), [original, original]);
+  assert.deepEqual(authXdr(tx), original);
+});
+
+test("a repeated restore response cannot produce a prepared contract transaction", async () => {
+  const server = new FakeServer([]);
+  let simulations = 0;
+  server.simulateTransaction = async () => {
+    simulations += 1;
+    return { ...success(), restorePreamble: { minResourceFee: "0", transactionData: new SorobanDataBuilder() } };
+  };
+  const engine = authEngine(server);
+  engine.restore = async () => {};
+  await assert.rejects(() => engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
+    contract: CONTRACT, function: "fixed", args: [], auth: fixedAuth(),
+  }), KEYPAIR), /still archived/);
+  assert.equal(simulations, 2);
+});
+
+test("enforcement failure aborts preparation without falling back to recording", async () => {
+  const server = new FakeServer([]);
+  const modes = [];
+  server.simulateTransaction = async (_tx, _resources, mode) => {
+    modes.push(mode);
+    return { error: "HostError: Error(Auth, InvalidAction)" };
+  };
+  const engine = authEngine(server);
+  await assert.rejects(() => engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
+    contract: CONTRACT, function: "fixed", args: [], auth: [],
+  })), /Auth/);
+  assert.deepEqual(modes, ["enforce"]);
+  assert.deepEqual(server.submitted, []);
+});
+
+test("read simulations retain recording and never return authorization for signing", async () => {
+  const server = new FakeServer([]);
+  server.simulateTransaction = async (_tx, _resources, mode) => {
+    assert.equal(mode, undefined);
+    return { ...success(), result: { auth: hostileAuth(), retval: xdr.ScVal.scvU32(7) } };
+  };
+  const engine = authEngine(server);
+  const result = await engine.read(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
+    contract: CONTRACT, function: "estimate", args: [],
+  }));
+  assert.equal(result.u32, 7);
+  assert.deepEqual(server.submitted, []);
+});
+
+test("sequence retries preserve the fixed authorization without a new simulation", async () => {
+  const server = new FakeServer([rejected("txBadSeq"), PENDING]);
+  let simulations = 0;
+  server.simulateTransaction = async () => { simulations += 1; return success(); };
+  const engine = authEngine(server);
+  const auth = fixedAuth();
+  const tx = await engine.prepare(KEYPAIR.publicKey(), () => Operation.invokeContractFunction({
+    contract: CONTRACT, function: "fixed", args: [], auth,
+  }));
+  await engine.signAndSubmit(tx, KEYPAIR);
+  assert.equal(simulations, 1);
+  assert.deepEqual(server.submitted.map(authXdr), [authXdr(tx), authXdr(tx)]);
+});
+
+const manageData = () => Operation.manageData({ name: "t", value: "1" });
+
+async function write(engine) {
+  const tx = await engine.buildTransaction(KEYPAIR.publicKey(), manageData());
+  return engine.signAndSubmit(tx, KEYPAIR);
+}
+
+function clientOn(server) {
+  const client = new AquariusClient({ network: "testnet" });
+  client.engine = new SubmitEngine(server, PASSPHRASE, "100");
+  return client;
+}
+
+test("simulations and writes never poll for the next ledger", async () => {
+  const server = new FakeServer([PENDING], [CONFIRMED_LEDGER]);
+  const engine = new SubmitEngine(server, PASSPHRASE, "100");
+  await engine.read(KEYPAIR.publicKey(), manageData);
+  await write(engine);
+  await engine.read(KEYPAIR.publicKey(), manageData);
+  await engine.read(KEYPAIR.publicKey(), manageData);
+  assert.deepEqual(server.calls, ["simulate", "simulate", "simulate"]);
+});
+
+test("waitForNextLedger without a transaction waits past the current latest ledger", async () => {
+  const server = new FakeServer([], [CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]);
+  const latest = await clientOn(server).waitForNextLedger();
+  assert.equal(latest, CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+});
+
+test("waitForNextLedger defaults to the ledger of the last transaction", async () => {
+  const server = new FakeServer([PENDING], [CONFIRMED_LEDGER, CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1]);
+  const client = clientOn(server);
+  await write(client.engine);
+  assert.equal(await client.waitForNextLedger(), CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+
+  server.calls = [];
+  server.latestLedgers = [CONFIRMED_LEDGER + 1]; // already past it: no further wait
+  assert.equal(await client.waitForNextLedger(), CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, ["getHealth"]);
+});
+
+test("waitForNextLedger waits past an explicit ledger", async () => {
+  const server = new FakeServer(
+    [PENDING],
+    [CONFIRMED_LEDGER, CONFIRMED_LEDGER + 1, CONFIRMED_LEDGER + 2],
+  );
+  const client = clientOn(server);
+  await write(client.engine);
+  assert.equal(await client.waitForNextLedger({ ledger: CONFIRMED_LEDGER + 1 }), CONFIRMED_LEDGER + 2);
+  assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+});
+
+test("waitForNextLedger rejects when the ledger does not advance in time", async () => {
+  const server = new FakeServer([PENDING], [CONFIRMED_LEDGER]);
+  const client = clientOn(server);
+  await write(client.engine);
+  await assert.rejects(
+    () => client.waitForNextLedger({ timeoutMs: 20 }),
+    error =>
+      error instanceof AquariusError &&
+      error.message.includes(`did not advance past ledger ${CONFIRMED_LEDGER}`),
+  );
+  assert.ok(server.calls.length > 1);
+  assert.ok(server.calls.every(call => call === "getHealth"));
+});
+
+test("waitForNextLedger rejects invalid arguments before polling", async () => {
+  const server = new FakeServer([], [CONFIRMED_LEDGER]);
+  const client = clientOn(server);
+  const invalid = message => error => error instanceof AquariusError && error.message === message;
+  for (const ledger of [-1, 1.5, NaN, Infinity, "1"]) {
+    await assert.rejects(
+      () => client.waitForNextLedger({ ledger }),
+      invalid("ledger must be a non-negative integer"),
+    );
+  }
+  for (const timeoutMs of [0, -1, NaN, Infinity, "1000", null]) {
+    await assert.rejects(
+      () => client.waitForNextLedger({ timeoutMs }),
+      invalid("timeoutMs must be a positive finite number"),
+    );
+  }
+  assert.deepEqual(server.calls, []);
 });

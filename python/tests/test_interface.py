@@ -148,6 +148,47 @@ def test_contract_call_decodes_the_result(monkeypatch):
     assert client.contract_call("some_fn") == 123  # native int, not a raw SCVal
 
 
+@pytest.mark.parametrize("auth_kind", ["default", "nested", "empty"])
+def test_raw_contract_call_passes_only_client_auth(monkeypatch, auth_kind):
+    from stellar_sdk import Account, Keypair, TransactionBuilder, scval
+    from aquarius.authorization import authorized_invocation, source_account_entry
+    from aquarius.submit import ConfirmedTx
+
+    client = AquariusClient(network="testnet", signer=Keypair.random())
+    args = [scval.to_uint32(5)]
+    root = authorized_invocation(client.network.router, "some_fn", args)
+    explicit = None
+    if auth_kind == "nested":
+        root.sub_invocations = [authorized_invocation(client.network.router, "nested", [])]
+        explicit = [source_account_entry(root)]
+    elif auth_kind == "empty":
+        explicit = []
+    prepared = []
+
+    def prepare(source, append, signer):
+        builder = TransactionBuilder(Account(source, 1), client.network.passphrase, 100)
+        prepared.extend(append(builder).operations)
+        return "prepared"
+
+    monkeypatch.setattr(client.engine, "prepare", prepare)
+    monkeypatch.setattr(client.engine, "sign_and_submit", lambda *args: ConfirmedTx("h", None))
+    if auth_kind == "default":
+        client.contract_call("some_fn", *args)
+    else:
+        client.contract_call("some_fn", *args, auth=explicit)
+
+    expected = [source_account_entry(root)] if explicit is None else explicit
+    assert [entry.to_xdr() for entry in prepared[0].auth] == [e.to_xdr() for e in expected]
+
+
+def test_internal_submit_requires_an_explicit_auth_list():
+    client = AquariusClient(network="testnet")
+    with pytest.raises(TypeError, match="auth"):
+        client._submit_contract(client.network.router, "some_fn", [])
+    with pytest.raises(AquariusError, match="authorization"):
+        client._submit_contract(client.network.router, "some_fn", [], auth=None)
+
+
 def test_swap_retries_requote_on_slippage(monkeypatch):
     monkeypatch.setattr(AquariusClient, "_requote_delays_s", (0, 0))
     client = AquariusClient(network="testnet")

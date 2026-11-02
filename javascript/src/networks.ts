@@ -2,6 +2,8 @@ import { Networks } from "@stellar/stellar-sdk";
 
 export interface NetworkConfig {
   router: string;
+  /** Batch contract: several calls under one signature (see batch.ts). */
+  batch: string;
   apiUrl: string;
   rpcUrl: string;
   horizonUrl: string;
@@ -14,11 +16,15 @@ export interface NetworkConfig {
   readSource: string;
   /** Provider-fee collector factory; absent where not deployed (testnet). */
   collectorFactory?: string;
+  /** The protocol reward token (AQUA) — code and issuer of the classic asset. */
+  rewardToken: { code: string; issuer: string };
+  limitOrdersApiUrl?: string;
 }
 
 export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
   mainnet: {
     router: "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK",
+    batch: "CBZX5A64HWVYXGGXSSWGYZZTUYFNGVKLAESK3XOZDJXYKLOY7MTCFAEV",
     apiUrl: "https://amm-api.aqua.network/api/external/v2",
     // The protocol's own RPC — the same endpoint the Aquarius web app and
     // backend run on. Override with rpcUrl to bring your own node.
@@ -27,13 +33,18 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     passphrase: Networks.PUBLIC,
     readSource: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
     collectorFactory: "CA4Q2T6FRAFYJYSMDJV7F6B7RL5PS6QS2UOZHBMCT2KSMGQRAAKP2MKO",
+    rewardToken: { code: "AQUA", issuer: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA" },
+    limitOrdersApiUrl: "https://amm-api.aqua.network/api/external/v1/limit-orders",
   },
   testnet: {
     router: "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
+    batch: "CCNMIX72UQIM44MB4T3LIKIMADPFBNIBVHTX27QTFLB6IACJLRWM6PA4",
     apiUrl: "https://amm-api-testnet.aqua.network/api/external/v2",
     rpcUrl: "https://soroban-testnet.stellar.org:443",
     horizonUrl: "https://horizon-testnet.stellar.org",
     passphrase: Networks.TESTNET,
     readSource: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+    rewardToken: { code: "AQUA", issuer: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER" },
+    limitOrdersApiUrl: "https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
   },
 };

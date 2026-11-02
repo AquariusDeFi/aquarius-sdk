@@ -6,19 +6,51 @@
  */
 
 export { Asset, XLM } from "./assets.js";
+export { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 export {
   AquariusClient,
   type AquariusConfig,
+  type ClaimKind,
+  type CreatePoolParams,
+  type CreatePoolResult,
+  type IncentivesConfig,
+  type PoolCreationFee,
   type ProviderFeeConfig,
+  type OnchainLimitOrderParams,
   type Quote,
   type QuoteParams,
   type Receipt,
+  type SwapOptions,
 } from "./client.js";
+export { batchCallScVal, type BatchCall } from "./batch.js";
 export type { Signer } from "./signer.js";
 export { FeeCollector, type ClaimedFees } from "./collector.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
 export type { FindPathRequest, FindPathResponse, ParsedRoute } from "./api.js";
 export { NETWORKS, type NetworkConfig } from "./networks.js";
+export {
+  LimitOrder,
+  LimitOrderConfig,
+  LimitOrderRecord,
+  OnchainLimitOrder,
+  PreparedLimitOrderFill,
+  buildOnchainPlacementArgs,
+  fillParameters,
+  parseLimitOrderRecord,
+  routeScValFromSwapChain,
+  validateAuthorizationTree,
+  validateFillReceipt,
+  validateOnchainLimitOrderDraft,
+  type LimitOrderConfigInput,
+  type LimitOrderFillReceipt,
+  type LimitOrderFillResult,
+  type LimitOrderPage,
+  type LimitOrderStatus,
+  type OnchainLimitOrderActions,
+  type OnchainLimitOrderDraftPayload,
+  type OnchainLimitOrderReceipt,
+  type ValidateOnchainDraftContext,
+} from "./limit-orders.js";
 export {
   ConcentratedDepositEstimate,
   Pool,
@@ -27,9 +59,14 @@ export {
   type ClaimResult,
   type DepositAmounts,
   type DepositResult,
+  type Incentive,
   type PoolType,
   type Position,
+  type RewardsInfo,
+  type ScheduleIncentiveParams,
+  type WithdrawClaims,
   type WithdrawResult,
+  type WorkingBalance,
 } from "./pool.js";
 export {
   MAX_TICK,
@@ -38,6 +75,7 @@ export {
   rangeStatus,
   snapTick,
   tickFromPrice,
+  tickSpacingForFee,
   type ClaimFeesResult,
   type ConcentratedDepositResult,
   type ConcentratedPosition,
@@ -52,6 +90,8 @@ export {
   NoRouteError,
   NoTrustlineError,
   PausedError,
+  RestoreRequiredError,
+  ResourceLimitError,
   SlippageError,
   StaleSimulationError,
   TxTimeoutError,

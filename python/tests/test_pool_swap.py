@@ -29,8 +29,8 @@ class FakeClient:
         self.router_reads.append((fn, args))
         return scval.to_uint128(self.estimate)
 
-    def _submit_contract(self, contract_id, fn, args, auth=None):
-        self.submitted.append((contract_id, fn, args, auth))
+    def _submit_router(self, fn, args, *, auth):
+        self.submitted.append((self.network.router, fn, args, auth))
         return ConfirmedTx(tx_hash="h", return_value=self.submit_result)
 
 

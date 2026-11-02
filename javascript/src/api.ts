@@ -63,6 +63,64 @@ export class ApiClient {
     const data = (await response.json()) as PoolMeta[] | { results?: PoolMeta[] };
     return Array.isArray(data) ? data : (data.results ?? []);
   }
+
+  async createLimitOrderDraft(
+    baseUrl: string,
+    request: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/drafts/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const body = (await response.json()) as { detail?: string };
+        detail = body.detail ? `: ${body.detail}` : "";
+      } catch {
+        // The status remains sufficient when the server returns no JSON body.
+      }
+      throw new AquariusError(
+        `Limit-order draft request failed: HTTP ${response.status}${detail}`,
+      );
+    }
+    return (await response.json()) as Record<string, unknown>;
+  }
+
+  async listLimitOrders(
+    baseUrl: string,
+    params: Record<string, string>,
+  ): Promise<Record<string, unknown>> {
+    const query = new URLSearchParams(params);
+    const response = await fetch(
+      `${baseUrl.replace(/\/$/, "")}/orders/?${query}`,
+      { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
+    );
+    if (!response.ok) {
+      throw new AquariusError(
+        `Limit-order list request failed: HTTP ${response.status}`,
+      );
+    }
+    return (await response.json()) as Record<string, unknown>;
+  }
+
+  async getLimitOrder(
+    baseUrl: string,
+    orderId: string,
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(
+      `${baseUrl.replace(/\/$/, "")}/orders/${orderId}/`,
+      { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
+    );
+    if (!response.ok) {
+      throw new AquariusError(
+        `Limit-order detail request failed: HTTP ${response.status}`,
+      );
+    }
+    return (await response.json()) as Record<string, unknown>;
+  }
 }
 
 export interface PoolMeta {
@@ -85,7 +143,7 @@ export interface ParsedRoute {
 }
 
 /**
- * @internal Turn a find-path response into quote numbers.
+ * Turn a find-path response into quote numbers.
  * Guards: minOut rounds down, maxIn rounds up — never in the caller's favor.
  */
 export function parseFindPathResponse(
