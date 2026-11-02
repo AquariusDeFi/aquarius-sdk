@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from stellar_sdk import Address, StrKey, scval
-from stellar_sdk.xdr import SCVal
+from stellar_sdk.xdr import SCVal, SorobanAuthorizedInvocation
 
 from .assets import Asset
 from .authorization import authorized_invocation, source_account_entry
@@ -177,7 +177,19 @@ class Pool:
             self._simulate_write("deposit", self._deposit_args(desired, 0))
         )
         min_shares = estimated_shares * round((1 - slippage) * 10_000) // 10_000
-        confirmed = self._submit_write("deposit", self._deposit_args(desired, min_shares))
+        user = scval.to_address(self._client._read_source(require_signer=True))
+        # Pools pull desired input and refund excess. Volatile pools also
+        # transfer zero amounts; stable pools skip them.
+        transfers = [
+            authorized_invocation(token, "transfer", [
+                user, scval.to_address(self.address), scval.to_int128(amount),
+            ])
+            for token, amount in zip(self.tokens, desired)
+            if self.type == "volatile" or amount > 0
+        ]
+        confirmed = self._submit_write(
+            "deposit", self._deposit_args(desired, min_shares), transfers,
+        )
         deposited, shares = parse_deposit_result(confirmed.return_value)
         return DepositResult(tx_hash=confirmed.tx_hash, amounts=deposited, shares=shares)
 
@@ -192,14 +204,24 @@ class Pool:
         )
         factor = round((1 - slippage) * 10_000)
         minimums = [amount * factor // 10_000 for amount in estimated]
-        confirmed = self._submit_write("withdraw", self._withdraw_args(shares, minimums))
+        # The concentrated legacy interface withdraws a full-range position;
+        # only volatile/stable pools burn the user's LP token.
+        burns = [] if self.type == "concentrated" else [authorized_invocation(
+            self.share_token(), "burn", [
+                scval.to_address(self._client._read_source(require_signer=True)),
+                scval.to_int128(shares),
+            ],
+        )]
+        confirmed = self._submit_write(
+            "withdraw", self._withdraw_args(shares, minimums), burns,
+        )
         return WithdrawResult(
             tx_hash=confirmed.tx_hash, amounts=parse_u128_vec(confirmed.return_value)
         )
 
     def claim_rewards(self) -> ClaimResult:
         """Claim accrued AQUA rewards for the signer."""
-        confirmed = self._submit_write("claim", self._base_args())
+        confirmed = self._submit_write("claim", self._base_args(), [])
         return ClaimResult(
             tx_hash=confirmed.tx_hash, amount=parse_u128(confirmed.return_value)
         )
@@ -549,8 +571,17 @@ class Pool:
         user = scval.to_address(self._client._read_source(require_signer=True))
         return self._client._read_router(fn, [user] + args)
 
-    def _submit_write(self, fn: str, args: list[SCVal]):
-        return self._client._submit_router(fn, args, with_user=True)
+    def _submit_write(
+        self, fn: str, args: list[SCVal], sub_invocations: list[SorobanAuthorizedInvocation],
+    ):
+        user = scval.to_address(self._client._read_source(require_signer=True))
+        router_args = [user] + args
+        # Router selection (tokens, pool hash) is absent from the pool call.
+        pool_call = authorized_invocation(self.address, fn, [user] + args[2:], sub_invocations)
+        auth = [source_account_entry(authorized_invocation(
+            self._client.network.router, fn, router_args, [pool_call],
+        ))]
+        return self._client._submit_router(fn, router_args, auth=auth)
 
 
 @dataclass
@@ -605,9 +636,7 @@ class PoolQuote:
         from .client import Receipt  # runtime import: client.py imports this module
 
         try:
-            confirmed = client._submit_contract(
-                client.network.router, "swap", args, auth=[entry]
-            )
+            confirmed = client._submit_router("swap", args, auth=[entry])
         except SlippageError as error:
             error.attach_requote(lambda: pool.quote(
                 self._token_in, self._token_out,
@@ -650,6 +679,7 @@ class ConcentratedDepositEstimate:
                 scval.to_int128(amount),
             ])
             for token, amount in zip(pool.tokens, self.desired)
+            if amount > 0
         ]
         entry = source_account_entry(
             authorized_invocation(pool.address, "deposit_position", args, transfers)
