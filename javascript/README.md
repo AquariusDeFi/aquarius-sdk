@@ -53,6 +53,8 @@ await pool.withdrawPosition({ tickLower: est.tickLower, tickUpper: est.tickUpper
 `tickFromPrice`, `priceAtTick`, and `snapTick` are exported for range math —
 integer-exact and identical across both language packages.
 
+Requires Node.js 22.12 or newer. Uses `@stellar/stellar-sdk` 17.4.0 for Protocol 30 XDR support.
+
 ```bash
 npm install @aquariusdefi/sdk
 ```

@@ -22,7 +22,11 @@ AquariusClient._requoteDelaysMs = [0, 0];
 const rejected = name => ({
   status: "ERROR",
   hash: "rejected",
-  errorResult: { result: { type: name } },
+  errorResult: new xdr.TransactionResult({
+    feeCharged: 0n,
+    result: xdr.TransactionResultResult[name](),
+    ext: xdr.TransactionResultExt.v0(),
+  }),
 });
 const PENDING = { status: "PENDING", hash: "abc123" };
 
@@ -87,7 +91,7 @@ test("txBadSeq is re-signed with a fresh sequence and resubmitted", async () => 
   const resubmitted = server.submitted[1];
   assert.equal(resubmitted.sequence, (BigInt(CHAIN_SEQUENCE) + 1n).toString()); // reloaded
   assert.equal(resubmitted.signatures.length, 1); // stale signature dropped, re-signed
-  assert.ok(KEYPAIR.verify(resubmitted.hash(), resubmitted.signatures[0].signature));
+  assert.ok(KEYPAIR.verify(resubmitted.hash(), resubmitted.signatures[0].signature.toBytes()));
 });
 
 test("txBadSeq gives up after bounded retries", async () => {

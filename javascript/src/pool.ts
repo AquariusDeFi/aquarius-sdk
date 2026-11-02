@@ -225,12 +225,12 @@ export function parsePoolMeta(meta: { pool_type: string; fee: string; tokens_str
 /** @internal get_pools result: Map<BytesN<32>, Address> -> [pool hash, pool address]. */
 export function parsePoolsMap(value: xdr.ScVal): Array<[Uint8Array, string]> {
   const entries: Array<[Uint8Array, string]> = [];
-  if (value.type !== "scvMap") return entries;
+  if (value.type !== "scvMap") throw new AquariusError("Expected a pool map");
   for (const entry of value.map ?? []) {
-    if (entry.key.type !== "scvBytes" || entry.val.type !== "scvAddress") continue;
+    if (entry.key.type !== "scvBytes") throw new AquariusError("Expected a pool hash");
     entries.push([
       entry.key.bytes.toBytes(),
-      Address.fromScAddress(entry.val.address).toString(),
+      Address.fromScVal(entry.val).toString(),
     ]);
   }
   return entries;
@@ -271,7 +271,7 @@ export class Pool {
   async shareToken(): Promise<string> {
     if (!this.shareToken_) {
       const value = await this.readRouter("share_id");
-      this.shareToken_ = scValToNative(value) as string;
+      this.shareToken_ = Address.fromScVal(value).toString();
     }
     return this.shareToken_;
   }

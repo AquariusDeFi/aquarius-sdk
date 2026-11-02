@@ -166,8 +166,8 @@ export function errorFromDiagnostics(
   const decoded: { bytes: Buffer; event: xdr.DiagnosticEvent; isError: boolean }[] = [];
   for (const raw of events ?? []) {
     try {
-      const event = typeof raw === "string" ? xdr.DiagnosticEvent.fromXDR(raw, "base64") : raw;
-      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : Buffer.from(raw.toXDR());
+      const event = typeof raw === "string" ? xdr.DiagnosticEvent.fromXdr(raw, "base64") : raw;
+      const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : Buffer.from(raw.toXdr());
       const isError = topicsOf(event).some(t => t.type === "scvSymbol" && t.sym.toString() === "error");
       decoded.push({ bytes, event, isError });
     } catch {

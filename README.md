@@ -99,5 +99,5 @@ Tags trigger publishing: `py-v*` → PyPI, `js-v*` → npm. Independent patches,
 ## Development
 
 - Python: `cd python && pip install -e .[dev] && pytest`
-- TypeScript: `cd javascript && npm install && npm run typecheck`
-- Fixtures in `testdata/` are recorded from the live testnet API; when the API contract changes, re-record them in the same PR that adapts the parsers — both languages, one PR.
+- TypeScript (Node.js >=22.12): `cd javascript && npm ci && npm run typecheck && npm test`
+- Fixtures in `testdata/` include recorded API data and synthetic offline Protocol 30 XDR; provenance is documented in each fixture. When a wire contract changes, update both language suites in the same PR.

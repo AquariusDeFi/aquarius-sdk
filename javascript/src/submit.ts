@@ -448,15 +448,18 @@ export class SubmitEngine {
 
   private async resignWithFreshSequence(signed: Transaction, signer: Signer): Promise<Transaction> {
     const account = await this.server.getAccount(signed.source);
-    // XDR values are immutable; edit the wire form and rebuild the envelope.
-    const wire = signed.toEnvelope().toXdrObject();
-    if (wire.type !== 2) {
-      throw new AquariusError("Only v1 transaction envelopes can be re-signed");
+    const envelope = signed.toEnvelope();
+    if (envelope.type !== "envelopeTypeTx") {
+      throw new AquariusError("Sequence recovery requires a v1 transaction envelope");
     }
-    wire.v1.tx.seqNum = BigInt(account.sequenceNumber()) + 1n;
-    wire.v1.signatures = [];
-    const envelope = xdr.TransactionEnvelope.fromXdrObject(wire);
-    return signTransaction(signer, new Transaction(envelope, this.passphrase), this.passphrase);
+    const updated = xdr.TransactionEnvelope.envelopeTypeTx(new xdr.TransactionV1Envelope({
+      tx: new xdr.Transaction({
+        ...envelope.v1.tx,
+        seqNum: BigInt(account.sequenceNumber()) + 1n,
+      }),
+      signatures: [],
+    }));
+    return signTransaction(signer, new Transaction(updated, this.passphrase), this.passphrase);
   }
 
   private async submit(signed: Transaction): Promise<ConfirmedTx> {

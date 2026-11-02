@@ -55,12 +55,12 @@ export class FeeCollector {
   /** Where every claim pays out — fixed at deploy time. */
   async feeDestination(): Promise<string> {
     const value = await this.ctx.readContract(this.address, "get_fee_destination", []);
-    return scValToNative(value) as string;
+    return Address.fromScVal(value).toString();
   }
 
   async router(): Promise<string> {
     const value = await this.ctx.readContract(this.address, "get_router", []);
-    return scValToNative(value) as string;
+    return Address.fromScVal(value).toString();
   }
 
   /** Upper bound for the per-swap feeFraction this collector accepts. */
@@ -139,7 +139,7 @@ export class FeeCollector {
     );
     const args = [
       new Address(this.ctx.readSource(true)).toScVal(),
-      xdr.ScVal.fromXDR(swapChainXdr, "base64"),
+      xdr.ScVal.fromXdr(swapChainXdr, "base64"),
       new Address(this.tokenId(asset)).toScVal(),
       nativeToScVal(guard, { type: "u128" }),
     ];

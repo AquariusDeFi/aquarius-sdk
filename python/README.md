@@ -53,6 +53,8 @@ pool.withdraw_position(est.tick_lower, est.tick_upper)  # full close, auto-claim
 `tick_from_price`, `price_at_tick`, and `snap_tick` are exported for range math —
 integer-exact and identical across both language packages.
 
+Requires `stellar-sdk>=17.0.0,<18` with Protocol 30 support.
+
 ```bash
 pip install aquarius-sdk
 ```
