@@ -117,7 +117,6 @@ export const assertSwapResources = (
   tx: Transaction,
   limits: SwapResourceLimits,
   invocation: { events: xdr.DiagnosticEvent[]; retval: xdr.ScVal },
-  split = false,
 ) => {
   if (tx.networkPassphrase !== limits.networkPassphrase) {
     throw new Error("Swap resource network changed.");
@@ -181,10 +180,8 @@ export const assertSwapResources = (
     checks.push(["footprint entries", keys.length, limits.footprintEntries]);
   }
   for (const [name, used, max] of checks) {
-    if (BigInt(used) * (split ? 2n : 1n) > BigInt(max)) {
-      throw new Error(
-        `Swap exceeds the ${split ? "split resource budget" : "network limit"} for ${name}.`,
-      );
+    if (BigInt(used) > BigInt(max)) {
+      throw new Error(`Swap exceeds the network limit for ${name}.`);
     }
   }
 };

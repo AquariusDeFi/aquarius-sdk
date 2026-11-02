@@ -571,21 +571,23 @@ if (plan.legs.length > 1 && simulation.latestLedger < limits.latestLedger) {
 }
 assertSwapResources(tx, limits, {
   events: simulation.events, retval: simulation.result.retval,
-}, plan.legs.length > 1);
+});
 const outputs = getSellSwapResult(simulation.result.retval, plan.legs.length, false);
 // Display plan, minimum, outputs and transaction fee before signing.
 ```
 
 `simulateAndAssemble` is application code, not an SDK method. It must preserve
 fixed authorization; simulations cannot grant extra spending. Helpers never
-sign, submit, restore storage or open wallet dialogs. A malformed `split_plan`,
-unavailable resource configuration or a failed simulation is an error: ask for
-a new quote; there is no fallback to the ordinary route. Re-check network,
-account and quote identity across awaits. Resource checks cover declarations,
-footprint, maximum signed envelope size and successful events plus the complete
-return value; RPC does not provide exact memory headroom. Split gets a 50% budget;
-ordinary routes get hard caps. Full ordered simulation preserves shared-pool
-writes. The aggregate minimum is derived from the quoted `plan.amountOut`. Slippage
+sign, submit, restore storage or open wallet dialogs. A malformed `split_plan`
+or a failed simulation is an error: ask for a new quote; there is no fallback to
+the ordinary route. A split requires the resource check; for an ordinary route
+an integration may skip it when the resource configuration is unavailable.
+Re-check network, account and quote identity across awaits. Resource checks
+cover declarations, footprint, maximum signed envelope size and successful
+events plus the complete return value; RPC does not provide exact memory
+headroom. Split and ordinary routes are checked against the same per-transaction
+network limits; the split safety margin belongs to the backend's plan selection.
+Full ordered simulation preserves shared-pool writes. The aggregate minimum is derived from the quoted `plan.amountOut`. Slippage
 is a **percent string** (`"1"` = 1%), unlike `quote()`'s fractional slippage.
 
 To add a classic output trustline atomically, supply `batch` and
