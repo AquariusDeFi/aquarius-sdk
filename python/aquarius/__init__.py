@@ -55,9 +55,24 @@ from .limit_orders import (
 )
 from .pool import ClaimResult, DepositResult, Pool, PoolQuote, Position, WithdrawResult
 
+from .split_swap import (
+    SellSwapLeg,
+    SellSwapPlan,
+    normalize_sell_swap_plans,
+    get_swap_minimum,
+    get_sell_swap_result,
+    build_sell_swap_operation,
+)
+
 __version__ = "0.6.0"
 
 __all__ = [
+    "SellSwapLeg",
+    "SellSwapPlan",
+    "normalize_sell_swap_plans",
+    "get_swap_minimum",
+    "get_sell_swap_result",
+    "build_sell_swap_operation",
     "APIHTTPError",
     "ApiClient",
     "AquariusClient",

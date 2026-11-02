@@ -404,3 +404,24 @@ Questions and integration help: [Discord](https://discord.gg/sgzFscHp4C).
 ## Maintenance
 
 [misty-forest](https://github.com/misty-forest) maintains the Aquarius SDK, including security review, vulnerability remediation, and ongoing development.
+
+### Opt-in split primitives (next release)
+
+`normalize_sell_swap_plans(response, token_in, token_out, amount_in)` validates
+Sell-only backend split candidates while preserving the ordinary fallback.
+`build_sell_swap_operation(source=..., token_in=..., token_out=..., router=...,
+split_router=..., plan=..., minimum=...)` returns an unsigned operation with
+fixed ordered input-transfer authorization and one aggregate output minimum.
+`get_swap_minimum(output, "1")` accepts slippage as a percent string (1%), and
+`get_sell_swap_result(retval, leg_count, with_trustline=False)` decodes outputs.
+Amounts are canonical raw-unit strings. Optional `batch` plus
+`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}` builds
+atomic classic-output trust + swap and verifies the asset contract.
+
+These are explicit low-level helpers: existing `quote`/`swap` and provider-fee
+behavior stays ordinary. Python does not yet provide the JavaScript split
+selection/resource orchestration helpers. Callers must fully simulate the
+ordered operation, validate fixed auth and current network limits with reserve,
+rebind the aggregate minimum, then display the result before signing. An
+isolated per-leg quote is insufficient for shared pools. These helpers do not
+sign, submit or restore; package publication will be a separate release.

@@ -1,4 +1,5 @@
 import { AquariusError, NoRouteError } from "./errors.js";
+import type { SellSwapQuote } from "./split-swap.js";
 
 /** @internal Bound on every HTTP request (matches the Python SDK's 30s) — a dead connection must fail, not hang. */
 export const HTTP_TIMEOUT_MS = 30_000;
@@ -8,9 +9,13 @@ export interface FindPathRequest {
   token_out_address: string;
   /** Base units (stroops for 7-decimal tokens), as a decimal string. */
   amount: string;
+  /** Request optional split candidates for exact-input quotes. */
+  split?: boolean;
 }
 
 export interface FindPathResponse {
+  /** Optional exact-input candidates; validate before building authorization. */
+  split_plans?: SellSwapQuote["split_plans"];
   success: boolean;
   swap_chain_xdr: string;
   pools: string[];
