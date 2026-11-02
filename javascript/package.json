@@ -1,6 +1,6 @@
 {
   "name": "@aquariusdefi/sdk",
-  "version": "0.6.0-alpha.6",
+  "version": "0.6.0",
   "description": "TypeScript SDK for the Aquarius protocol on Stellar",
   "type": "module",
   "main": "dist/index.js",
