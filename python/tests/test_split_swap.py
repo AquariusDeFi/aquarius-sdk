@@ -67,18 +67,19 @@ def test_fixed_auth():
         scval.from_int128(c.sub_invocations[0].function.contract_fn.args[2])
         for c in root.sub_invocations
     ] == [int(l.amount_in) for l in p.legs]
-    with pytest.raises(ValueError):
-        build_sell_swap_operation(
-            source=Keypair.random().public_key,
-            token_in=r["token_in_address"],
-            token_out=r["token_out_address"],
-            router=StrKey.encode_contract(bytes([8]) * 32),
-            split_router=StrKey.encode_contract(bytes([9]) * 32),
-            batch=StrKey.encode_contract(bytes([10]) * 32),
-            plan=p,
-            minimum="123",
-            trustline={},
-        )
+    for trustline in ({}, False, 0, ""):
+        with pytest.raises(ValueError):
+            build_sell_swap_operation(
+                source=Keypair.random().public_key,
+                token_in=r["token_in_address"],
+                token_out=r["token_out_address"],
+                router=StrKey.encode_contract(bytes([8]) * 32),
+                split_router=StrKey.encode_contract(bytes([9]) * 32),
+                batch=StrKey.encode_contract(bytes([10]) * 32),
+                plan=p,
+                minimum="123",
+                trustline=trustline,
+            )
 
 
 @pytest.mark.parametrize("encoded", ["AAAA", "", "invalid"])
