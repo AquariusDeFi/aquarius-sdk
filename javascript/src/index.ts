@@ -97,3 +97,23 @@ export {
   TxTimeoutError,
   UserRejectedError,
 } from "./errors.js";
+
+export {
+  LimitOrderManager,
+  PreparedLimitOrder,
+  type LimitOrderContext,
+  type CreateLimitOrderParams,
+  type LimitOrderSettlementConfig,
+} from "./limit-order-manager.js";
+export * from "./limit-order-types.js";
+export { getAuthEntryPreimage, normalizeSignedAuthEntry } from "./limit-order-auth.js";
+export {
+  validateLimitOrderRecord,
+  validateLimitOrderDraft,
+  assertSignedAuthorizationMatchesDraft,
+} from "./limit-order-validation.js";
+export { getLimitOrderFillOperation, getLimitOrderFillAmounts } from "./limit-order-events.js";
+export {
+  assertLimitOrderTransaction,
+  assertLimitOrderSignatures,
+} from "./limit-order-transaction.js";

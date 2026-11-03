@@ -26,6 +26,7 @@ import {
   validateOnchainLimitOrderDraft,
   validateExecutorReward,
 } from "./limit-orders.js";
+import { LimitOrderManager } from "./limit-order-manager.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
   DepositAmounts,
@@ -78,7 +79,7 @@ export interface AquariusConfig {
    * added instructions, which is charged whether or not they are used.
    */
   instructionHeadroom?: number;
-  /** Trusted coordinates for programmatic on-chain limit-order placement. */
+  /** Trusted coordinates for wallet and programmatic limit-order operations. */
   limitOrders?: LimitOrderConfigInput;
 }
 
@@ -247,6 +248,33 @@ export class AquariusClient {
   readonly network: NetworkConfig;
   /** Typed client for the public backend API — the raw escape hatch. */
   readonly api: ApiClient;
+
+  private limitOrderManager?: LimitOrderManager;
+
+  /** Wallet draft preparation, guarded placement, registry pages and cancellation. */
+  get limitOrders(): LimitOrderManager {
+    if (!this.limitOrderManager) {
+      const config = this.requireLimitOrderConfig();
+      this.limitOrderManager = new LimitOrderManager({
+        passphrase: this.network.passphrase,
+        settlement: config.settlement,
+        batcher: config.batcher ?? this.network.batch,
+        guard: config.guard,
+        apiUrl: this.limitOrderApiUrl(),
+        api: this.api,
+        server: this.server,
+        readBatch: calls => this.readBatch(calls, config.batcher ?? this.network.batch),
+        readContract: (contract, method, args) => this.readContract(contract, method, args),
+        prepare: (maker, operation) => {
+          if (this.requireSigner().publicKey() !== maker) {
+            throw new AquariusError("The signer is not the limit-order maker.");
+          }
+          return this.engine.prepare(maker, () => operation);
+        },
+      });
+    }
+    return this.limitOrderManager;
+  }
 
   private readonly server: rpc.Server;
   private readonly engine: SubmitEngine;
@@ -1237,7 +1265,7 @@ export class AquariusClient {
     return (await this.prepareBatch(calls, auth, returnResults)).toXDR();
   }
 
-  private async readBatch(calls: BatchCall[]): Promise<xdr.ScVal[]> {
+  private async readBatch(calls: BatchCall[], batcher = this.network.batch): Promise<xdr.ScVal[]> {
     if (calls.length === 0) return [];
     const source = this.readSource();
     try {
@@ -1245,7 +1273,7 @@ export class AquariusClient {
         source,
         () =>
           Operation.invokeContractFunction({
-            contract: this.network.batch,
+            contract: batcher,
             function: "batch",
             args: batchArgs(source, calls, true),
           }),
@@ -1255,8 +1283,8 @@ export class AquariusClient {
       if (!isBudgetExceeded(error) || calls.length < 2) throw error;
       const mid = Math.ceil(calls.length / 2);
       const [left, right] = await Promise.all([
-        this.readBatch(calls.slice(0, mid)),
-        this.readBatch(calls.slice(mid)),
+        this.readBatch(calls.slice(0, mid), batcher),
+        this.readBatch(calls.slice(mid), batcher),
       ]);
       return [...left, ...right];
     }

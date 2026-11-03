@@ -48,12 +48,15 @@ function contractAddress(value: string, name: string): string {
 export interface LimitOrderConfigInput {
   settlement: string;
   batcher?: string;
+  /** Guard contract used for atomic additive allowance placement. */
+  guard?: string;
   apiUrl?: string;
 }
 
 export class LimitOrderConfig {
   readonly settlement: string;
   readonly batcher?: string;
+  readonly guard?: string;
   readonly apiUrl?: string;
 
   constructor(config: LimitOrderConfigInput) {
@@ -61,6 +64,7 @@ export class LimitOrderConfig {
     this.batcher = config.batcher === undefined
       ? undefined
       : contractAddress(config.batcher, "batcher");
+    this.guard = config.guard === undefined ? undefined : contractAddress(config.guard, "guard");
     if (config.apiUrl !== undefined && config.apiUrl.length === 0) {
       throw new AquariusError("limit-order apiUrl must be non-empty");
     }
@@ -571,7 +575,7 @@ export function parseLimitOrderRecord(
   );
 }
 
-function limitOrderFromScVal(value: xdr.ScVal): LimitOrder {
+export function limitOrderFromScVal(value: xdr.ScVal): LimitOrder {
   const types = ["scvAddress", "scvU128", "scvU32", "scvAddress", "scvU128", "scvVec", "scvBytes", "scvU128", "scvAddress", "scvU32", "scvU32"];
   if (value.type !== "scvMap" || !value.map || value.map.length !== ORDER_FIELDS.length) {
     throw new AquariusError("limit order is not a canonical OrderV1");

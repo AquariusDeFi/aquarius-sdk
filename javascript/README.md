@@ -300,6 +300,91 @@ The client does not see transactions you submit yourself, so
 build (e.g. a withdraw after a deposit into a pool with rewards), pass the
 ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
 
+## Wallet limit orders (JavaScript)
+
+`aqua.limitOrders` provides the browser/wallet flow alongside the existing
+programmatic API below. It uses the same RPC, API client and unsigned transaction
+engine as swaps and pools. Reads do not require a signer; transaction builders
+require a signer identifying the maker but never call its `sign` method or submit.
+
+```ts
+const aqua = new AquariusClient({
+  network: "testnet",
+  signer, // identifies the connected maker
+  limitOrders: {
+    settlement: settlementAddress,
+    batcher: batcherAddress,
+    guard: guardAddress, // required for additive on-chain approvals
+    apiUrl: registryUrl,
+  },
+});
+const settings = await aqua.limitOrders.getSettlementConfig();
+// Have the user approve the displayed amounts, reward and expiry first.
+const ledger = await aqua.latestLedger();
+const approved = {
+  maker: signer.publicKey(),
+  placementMode: "DETACHED" as const,
+  from: XLM,
+  to: AQUA, // use Asset.classic(code, issuer) for a classic receive asset
+  sellAmount: 100_0000000n,
+  minBuyAmount: 500_0000000n,
+  expectedExecutorRewardXlm: BigInt(settings.executorRewardXlm),
+  validAfterLedger: ledger,
+  expiresAtLedger: ledger + 17_280,
+  requireTrustline: false, // set from the maker's current account state
+};
+const prepared = await aqua.limitOrders.create(approved);
+const signature = await wallet.signAuthEntry(prepared.authorizationEntryXdr);
+const order = await prepared.authorize(signature);
+
+const open = await aqua.limitOrders.open(approved.maker);
+const history = await aqua.limitOrders.history(approved.maker); // 20, newest completion first
+const next = history.next_cursor
+  ? await aqua.limitOrders.history(approved.maker, history.next_cursor)
+  : null;
+const cancelXdr = await aqua.limitOrders.buildCancelTransaction(approved.maker, order);
+// Pass cancelXdr through the app's ordinary wallet/multisig signing and submission flow.
+```
+
+For transaction-only wallets, use `placementMode: "CONTRACT_ONCHAIN"` and
+`prepared.buildTransaction()` instead of `authorizationEntryXdr` / `authorize()`.
+The result is unsigned XDR for the application's existing signing, Vault and
+submission flow. A missing receive trustline is added at placement in this mode;
+detached authorization permits the bot to add it at execution. The SDK does not
+choose a wallet or display confirmation UI.
+
+Wallet placement **adds** the confirmed order's budget to each verified remaining
+allowance and preserves the longer logical expiry. It validates SAC/Aquarius-token
+storage, guards the settlement fee, unused order ID and current allowances
+atomically, then rechecks the snapshot after simulation. Unknown allowance storage
+fails closed. Order expiry is bounded by the settlement and
+`LIMIT_ORDER_MAX_TTL_LEDGERS` (3,110,399 ledgers). This additive flow is separate
+from the explicit total ceilings of `createOnchainLimitOrder()` below.
+
+All drafts are validated against the approved intent, network, settlement,
+canonical order ID and exact authorization tree before being returned for signing.
+Amounts use `bigint` in the creation API and decimal strings in registry payloads.
+`normalizeSignedAuthEntry()` verifies both SEP-43 raw signatures and full signed
+entries; `getAuthEntryPreimage()` supports wallets signing the preimage directly.
+`getLimitOrderFillOperation()` and `getLimitOrderFillAmounts()` decode settlement
+fills for notifications, including Soroban-token amounts from transaction metadata.
+
+Keep the prepared object and signed proof after a lost registry response, and retry
+`prepared.authorize()` with that same proof. To resume a saved draft use
+`aqua.limitOrders.fromDraft(savedDraft, approved)`; it revalidates the original
+approval. For on-chain placement retain and check the signed transaction hash before
+resubmitting. Creating a new draft is a new order.
+
+### Local frontend integration
+
+Run `npm install`, then `npm run pack:local` inside `javascript/`. The command
+prints a tarball filename containing its content hash. It has the same files as
+an npm release, without development dependencies. Install that file from a sibling
+frontend with `yarn add @aquariusdefi/sdk@file:../aquarius-sdk/javascript/<filename>`.
+Repack and install the newly printed filename after SDK changes; unique filenames
+avoid Yarn Classic's stale local-tarball cache. Replace this local dependency with
+the published SDK version before deploying the frontend independently.
+
 ## Programmatic on-chain limit orders
 
 **Security migration in 0.6.0:** `createOnchainLimitOrder()` and

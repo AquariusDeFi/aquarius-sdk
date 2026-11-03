@@ -7,3 +7,7 @@ dist/
 node_modules/
 .env
 .DS_Store
+
+# Local npm package builds
+*.tgz
+javascript/package-lock.json
