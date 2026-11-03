@@ -1,6 +1,8 @@
 import { Buffer } from "buffer";
 import {
   Address,
+  authorizeEntry,
+  Keypair,
   nativeToScVal,
   Operation,
   rpc,
@@ -8,6 +10,19 @@ import {
   Transaction,
   xdr,
 } from "@stellar/stellar-sdk";
+import {
+  PreparedLimitOrder,
+  type LimitOrderSummary,
+  type LimitOrderTransactionResult,
+} from "./limit-order-prepared.js";
+import {
+  parseLimitOrderRecord,
+  validateExecutorReward,
+  type LimitOrderRecord,
+  type LimitOrderPage,
+  type LimitOrderRecordActions,
+} from "./limit-orders.js";
+import type { Signer } from "./signer.js";
 import { Asset } from "./assets.js";
 import { normalizeSignedAuthEntry } from "./limit-order-auth.js";
 import { ApiClient } from "./api.js";
@@ -23,7 +38,6 @@ import {
   type LimitOrderDraftRequest,
   type LimitOrderRecordPayload,
   type LimitOrderDraftPayload,
-  type LimitOrderListPayload,
 } from "./limit-order-types.js";
 
 /** @internal Uses the same transports and unsigned prepare flow as pools and swaps. */
@@ -38,6 +52,10 @@ export interface LimitOrderContext {
   readBatch(calls: BatchCall[]): Promise<xdr.ScVal[]>;
   readContract(contract: string, method: string, args: xdr.ScVal[]): Promise<xdr.ScVal>;
   prepare(maker: string, operation: xdr.Operation): Promise<Transaction>;
+  signer?: Signer;
+  loadAccount(maker: string): Promise<LimitOrderAccount>;
+  recordActions?: LimitOrderRecordActions;
+  createSubmitter(): (transactionXdr: string) => Promise<LimitOrderTransactionResult>;
 }
 const batchCall = (contractId: string, fn: string, args: xdr.ScVal[]): BatchCall => ({
   contractId,
@@ -71,7 +89,7 @@ export class LimitOrderManager {
       cursor?: string;
       limit?: number;
     } = {},
-  ): Promise<LimitOrderListPayload> {
+  ): Promise<LimitOrderPage> {
     const limit = params.limit ?? 100;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new AquariusError("limit-order page size must be between 1 and 100");
@@ -101,34 +119,34 @@ export class LimitOrderManager {
         throw new AquariusError("The order registry returned an unexpected order status.");
     }
     return {
-      orders: data.orders as LimitOrderRecordPayload[],
-      next_cursor: nextCursor as string | null,
+      orders: (data.orders as LimitOrderRecordPayload[]).map((item) => this.fromRecord(item)),
+      nextCursor: nextCursor as string | null,
     };
   }
 
-  async open(maker?: string): Promise<LimitOrderListPayload> {
-    const orders: LimitOrderRecordPayload[] = [];
+  async open(maker = this.context.signer?.publicKey()): Promise<LimitOrderRecord[]> {
+    const orders: LimitOrderRecord[] = [];
     const seenCursors = new Set<string>();
     const seenIds = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < 10_000; page++) {
       const data = await this.list({ maker, status: "OPEN", cursor });
       for (const order of data.orders) {
-        if (seenIds.has(order.order_id))
+        if (seenIds.has(order.orderId))
           throw new AquariusError("The order registry repeated an order across pages.");
-        seenIds.add(order.order_id);
+        seenIds.add(order.orderId);
         orders.push(order);
       }
-      if (data.next_cursor == null) return { orders, next_cursor: null };
-      if (seenCursors.has(data.next_cursor))
+      if (data.nextCursor == null) return orders;
+      if (seenCursors.has(data.nextCursor))
         throw new AquariusError("The order registry returned an invalid pagination cursor.");
-      seenCursors.add(data.next_cursor);
-      cursor = data.next_cursor;
+      seenCursors.add(data.nextCursor);
+      cursor = data.nextCursor;
     }
     throw new AquariusError("The order registry pagination exceeded the safety limit.");
   }
 
-  history(maker: string, cursor?: string, limit = 20): Promise<LimitOrderListPayload> {
+  history(maker = this.signer().publicKey(), cursor?: string, limit = 20): Promise<LimitOrderPage> {
     return this.list({
       maker,
       cursor,
@@ -147,61 +165,138 @@ export class LimitOrderManager {
     ]);
   }
 
-  /** Draft first, sign later. All values are copied before the first network request. */
-  async create(params: CreateLimitOrderParams): Promise<PreparedLimitOrder> {
-    const approved = snapshotParams(params, this.context.passphrase);
-    const request = this.request(approved);
-    const [settings, latest] = await Promise.all([
-      this.getSettlementConfig(),
-      this.context.server.getLatestLedger(),
-    ]);
-    if (settings.executorRewardXlm !== approved.expectedExecutorRewardXlm.toString())
-      throw new AquariusError("The execution fee changed. Review your order again.");
-    if (
-      !Number.isInteger(latest.sequence) ||
-      latest.sequence < 0 ||
-      approved.expiresAtLedger < latest.sequence ||
-      approved.expiresAtLedger >
-        latest.sequence + Math.min(settings.maxOrderTtl, LIMIT_ORDER_MAX_TTL_LEDGERS)
-    ) {
-      throw new AquariusError("The order expiry is no longer valid. Review your order again.");
-    }
-    const payload = await this.context.api.createLimitOrderDraft(this.context.apiUrl, request);
-    return this.fromDraft(payload as LimitOrderDraftPayload, approved);
+  /** One bound record, with the same cancel/fill methods as registry results. */
+  async get(orderId: string): Promise<LimitOrderRecord> {
+    const payload = await this.context.api.getLimitOrder(this.context.apiUrl, orderId);
+    const record = this.fromRecord(payload as LimitOrderRecordPayload);
+    if (record.orderId !== orderId)
+      throw new AquariusError("The registry returned a different order.");
+    return record;
   }
 
-  /** Reuse a saved draft after a lost response; never silently create another order. */
-  fromDraft(payload: LimitOrderDraftPayload, params: CreateLimitOrderParams): PreparedLimitOrder {
-    const approved = snapshotParams(params, this.context.passphrase);
-    const request = this.request(approved);
+  fromRecord(payload: LimitOrderRecordPayload): LimitOrderRecord {
     const raw = structuredClone(payload);
+    this.validateRecord(raw, raw.maker);
+    return parseLimitOrderRecord(raw, {
+      networkPassphrase: this.context.passphrase,
+      settlementAddress: this.contractId,
+      xlmToken: Asset.native().contractId(this.context.passphrase),
+      actions: this.context.recordActions,
+    });
+  }
+
+  /** Resolve account capabilities, receive trustline, fee and ledger window before review. */
+  async prepare(params: PrepareLimitOrderParams): Promise<PreparedLimitOrder> {
+    const maker = this.signer().publicKey();
+    if (new Address(maker).toString()[0] !== "G")
+      throw new AquariusError("Wallet limit-order preparation requires a G-account maker.");
+    const intent = snapshotIntent(params, this.context.passphrase);
+    const { expiresIn } = intent;
+    const [settings, latest, account] = await Promise.all([
+      this.getSettlementConfig(),
+      this.context.server.getLatestLedger(),
+      this.context.loadAccount(maker),
+    ]);
+    if (this.signer().publicKey() !== maker)
+      throw new AquariusError("The connected account changed. Review the order again.");
+    const maxTtl = Math.min(settings.maxOrderTtl, LIMIT_ORDER_MAX_TTL_LEDGERS);
+    // Expiration is approximate. The last ledger of the six-month allowance window is exclusive.
+    if (expiresIn > (maxTtl + 1) * 5)
+      throw new AquariusError("The order expiry exceeds the supported lifetime.");
+    const duration = Math.min(Math.ceil(expiresIn / 5), maxTtl);
+    if (!Number.isSafeInteger(latest.sequence) || latest.sequence < 0)
+      throw new AquariusError("Invalid latest ledger.");
+    const detached = this.canAuthorize(account, maker);
+    const requireTrustline = this.needsTrustline(account, intent.to, maker);
+    if (
+      requireTrustline &&
+      (await this.context.loadAccount(intent.to.issuer!)).flags?.auth_required
+    ) {
+      throw new AquariusError(
+        "The receive asset requires issuer authorization before it can be received.",
+      );
+    }
+    const expiresAtLedger = latest.sequence + duration;
+    if (expiresAtLedger > 0xffffffff)
+      throw new AquariusError("The order expiry exceeds the ledger range.");
+    const approved: ResolvedLimitOrderParams = Object.freeze({
+      ...intent,
+      maker,
+      placementMode: detached ? "DETACHED" : "CONTRACT_ONCHAIN",
+      expectedExecutorRewardXlm: validateExecutorReward(BigInt(settings.executorRewardXlm)),
+      validAfterLedger: latest.sequence,
+      expiresAtLedger,
+    });
+    const request = this.request(approved);
+    const raw = structuredClone(
+      await this.context.api.createLimitOrderDraft(this.context.apiUrl, request),
+    ) as LimitOrderDraftPayload;
     const xlm = Asset.native().contractId(this.context.passphrase);
-    const allowTrust =
-      approved.to.issuer !== undefined &&
-      approved.to.issuer !== approved.maker &&
-      request.buy_token !== xlm;
+    const allowTrust = Boolean(approved.to.issuer && approved.to.issuer !== maker);
     validateLimitOrderDraft(
       raw,
       request,
       this.contractId,
       xlm,
-      approved.expectedExecutorRewardXlm.toString(),
+      settings.executorRewardXlm,
       this.context.passphrase,
       allowTrust,
-      Boolean(approved.requireTrustline),
+      requireTrustline,
     );
-    return new PreparedLimitOrder(raw, {
-      buildTransaction: async () => {
-        if (raw.placement_mode !== "CONTRACT_ONCHAIN")
-          throw new AquariusError(
-            "Detached orders use an authorization entry, not a placement transaction.",
-          );
-        return this.buildPlacementTransaction(
-          raw,
-          xlm,
-          allowTrust && Boolean(approved.requireTrustline),
-          { request, executorRewardXlm: approved.expectedExecutorRewardXlm.toString() },
-        );
+    const summary: LimitOrderSummary = {
+      maker,
+      sellToken: request.sell_token,
+      buyToken: request.buy_token,
+      sellAmount: approved.sellAmount,
+      minBuyAmount: approved.minBuyAmount,
+      executorRewardXlm: approved.expectedExecutorRewardXlm,
+      validAfterLedger: approved.validAfterLedger,
+      expiresAtLedger: approved.expiresAtLedger,
+      expiresIn: duration * 5,
+      signing: detached ? "authorization" : "transaction",
+      trustline: {
+        required: requireTrustline,
+        creation: requireTrustline ? (detached ? "execution" : "placement") : null,
+      },
+    };
+    return new PreparedLimitOrder(raw, summary, {
+      passphrase: this.context.passphrase,
+      check: async () => {
+        if (this.signer().publicKey() !== maker)
+          throw new AquariusError("The connected account changed. Review the order again.");
+        const [current, ledger, currentAccount] = await Promise.all([
+          this.getSettlementConfig(),
+          this.context.server.getLatestLedger(),
+          this.context.loadAccount(maker),
+        ]);
+        if (current.executorRewardXlm !== settings.executorRewardXlm)
+          throw new AquariusError("The execution fee changed. Review your order again.");
+        if (
+          ledger.sequence > approved.expiresAtLedger ||
+          approved.expiresAtLedger >
+            ledger.sequence + Math.min(current.maxOrderTtl, LIMIT_ORDER_MAX_TTL_LEDGERS)
+        )
+          throw new AquariusError("The order expiry is no longer valid. Review your order again.");
+        if (detached && !this.canAuthorize(currentAccount, maker))
+          throw new AquariusError("The account authorization changed. Review your order again.");
+        if (!requireTrustline && this.needsTrustline(currentAccount, approved.to, maker))
+          throw new AquariusError("The receive trustline changed. Review your order again.");
+        if (this.signer().publicKey() !== maker)
+          throw new AquariusError("The connected account changed. Review the order again.");
+      },
+      signAuthorization: async (entry) => {
+        const signer = this.signer();
+        if (signer.signAuthEntry) return signer.signAuthEntry(entry);
+        if ("secret" in signer)
+          return (
+            await authorizeEntry(
+              xdr.SorobanAuthorizationEntry.fromXDR(entry, "base64"),
+              Keypair.fromSecret(signer.secret()),
+              approved.expiresAtLedger,
+              this.context.passphrase,
+            )
+          ).toXDR("base64");
+        throw new AquariusError("The signer no longer supports detached authorization.");
       },
       authorize: async (signed) => {
         if (raw.placement_mode !== "DETACHED")
@@ -209,7 +304,7 @@ export class LimitOrderManager {
         const signature = await normalizeSignedAuthEntry(
           raw.unsigned_authorization_xdr,
           signed,
-          request.maker,
+          maker,
           this.context.passphrase,
         );
         const result = (await this.context.api.authorizeLimitOrder(
@@ -217,17 +312,67 @@ export class LimitOrderManager {
           raw.order_id,
           signature,
         )) as LimitOrderRecordPayload;
-        this.validateRecord(result, request.maker);
+        this.validateRecord(result, maker);
         if (result.order_id !== raw.order_id)
           throw new AquariusError(
             "The registry returned a different order. Refresh your orders before trying again.",
           );
-        return result;
+        return this.fromRecord(result);
       },
+      buildTransaction: () => {
+        if (raw.placement_mode !== "CONTRACT_ONCHAIN")
+          throw new AquariusError(
+            "Detached orders use an authorization entry, not a placement transaction.",
+          );
+        return this.buildPlacementTransaction(raw, xlm, requireTrustline, {
+          request,
+          executorRewardXlm: settings.executorRewardXlm,
+        });
+      },
+      submitTransaction: this.context.createSubmitter(),
+      record: (payload) => this.fromRecord(payload),
     });
   }
 
-  private request(params: CreateLimitOrderParams): LimitOrderDraftRequest {
+  private signer(): Signer {
+    if (!this.context.signer)
+      throw new AquariusError("This operation requires a signer — pass one in the client config");
+    return this.context.signer;
+  }
+
+  private canAuthorize(account: LimitOrderAccount, maker: string): boolean {
+    const signer = this.signer();
+    if (!signer.signAuthEntry && !("secret" in signer)) return false;
+    if (!Array.isArray(account.signers) || !account.thresholds)
+      throw new AquariusError("Could not verify account signing requirements.");
+    const active = account.signers.filter((item) => item.weight > 0);
+    return (
+      active.length === 1 &&
+      active[0].key === maker &&
+      active[0].type === "ed25519_public_key" &&
+      active[0].weight >=
+        Math.max(
+          1,
+          account.thresholds.low_threshold,
+          account.thresholds.med_threshold,
+          account.thresholds.high_threshold,
+        )
+    );
+  }
+
+  private needsTrustline(account: LimitOrderAccount, asset: Asset, maker: string): boolean {
+    if (!Array.isArray(account.balances))
+      throw new AquariusError("Could not verify account balances.");
+    if (!asset.issuer || asset.issuer === maker) return false;
+    const balance = account.balances.find(
+      (item) => item.asset_code === asset.code && item.asset_issuer === asset.issuer,
+    );
+    if (balance?.is_authorized === false)
+      throw new AquariusError("The receive trustline requires issuer authorization.");
+    return !balance;
+  }
+
+  private request(params: ResolvedLimitOrderParams): LimitOrderDraftRequest {
     return {
       placement_mode: params.placementMode,
       maker: params.maker,
@@ -428,41 +573,26 @@ export class LimitOrderManager {
   }
 }
 
-export interface CreateLimitOrderParams {
+interface ResolvedLimitOrderParams extends PrepareLimitOrderParams {
   maker: string;
   placementMode: "DETACHED" | "CONTRACT_ONCHAIN";
-  from: Asset;
-  to: Asset;
-  sellAmount: bigint;
-  minBuyAmount: bigint;
   validAfterLedger: number;
   expiresAtLedger: number;
   expectedExecutorRewardXlm: bigint;
-  /** A missing classic receive trustline. Detached auth grants trust at fill; on-chain placement adds it now. */
-  requireTrustline?: boolean;
 }
 
-function snapshotParams(
-  params: CreateLimitOrderParams,
+function snapshotIntent(
+  params: PrepareLimitOrderParams,
   passphrase: string,
-): CreateLimitOrderParams {
-  const amounts = [params.sellAmount, params.minBuyAmount, params.expectedExecutorRewardXlm];
+): PrepareLimitOrderParams {
   if (
-    amounts.some(
+    [params.sellAmount, params.minBuyAmount].some(
       (value) => typeof value !== "bigint" || value <= 0n || value > (1n << 127n) - 1n,
-    ) ||
-    !["DETACHED", "CONTRACT_ONCHAIN"].includes(params.placementMode) ||
-    !Number.isInteger(params.validAfterLedger) ||
-    !Number.isInteger(params.expiresAtLedger) ||
-    params.validAfterLedger < 0 ||
-    params.validAfterLedger > params.expiresAtLedger ||
-    params.expiresAtLedger > 0xffffffff
-  ) {
-    throw new AquariusError("Invalid limit-order amounts or ledger window.");
-  }
-  const maker = new Address(params.maker);
-  if (maker.toString()[0] !== "G")
-    throw new AquariusError("Wallet limit-order preparation requires a G-account maker.");
+    )
+  )
+    throw new AquariusError("Limit-order amounts must fit positive i128 values.");
+  if (!Number.isSafeInteger(params.expiresIn) || params.expiresIn <= 0)
+    throw new AquariusError("Order expiry must be a positive number of seconds.");
   const copyAsset = (asset: Asset) =>
     asset.isNative
       ? Asset.native()
@@ -477,39 +607,28 @@ function snapshotParams(
     throw new AquariusError("A limit order requires two different token contracts.");
   new Address(sell);
   new Address(buy);
-  if (params.requireTrustline && (!to.issuer || to.issuer === params.maker))
-    throw new AquariusError(
-      "A trustline requires a classic receive asset issued by another account.",
-    );
-  return Object.freeze({ ...params, from: Object.freeze(from), to: Object.freeze(to) });
+  return Object.freeze({
+    from: Object.freeze(from),
+    to: Object.freeze(to),
+    sellAmount: params.sellAmount,
+    minBuyAmount: params.minBuyAmount,
+    expiresIn: params.expiresIn,
+  });
 }
 
-export class PreparedLimitOrder {
-  private readonly payload: LimitOrderDraftPayload;
-  constructor(
-    payload: LimitOrderDraftPayload,
-    private readonly actions: {
-      buildTransaction(): Promise<string>;
-      authorize(signature: string): Promise<LimitOrderRecordPayload>;
-    },
-  ) {
-    this.payload = structuredClone(payload);
-  }
-  get raw(): LimitOrderDraftPayload {
-    return structuredClone(this.payload);
-  }
-  get orderId(): string {
-    return this.payload.order_id;
-  }
-  get authorizationEntryXdr(): string {
-    if (this.payload.placement_mode !== "DETACHED")
-      throw new AquariusError("On-chain orders have no detached authorization.");
-    return this.payload.unsigned_authorization_xdr;
-  }
-  buildTransaction(): Promise<string> {
-    return this.actions.buildTransaction();
-  }
-  authorize(signature: string): Promise<LimitOrderRecordPayload> {
-    return this.actions.authorize(signature);
-  }
+export interface PrepareLimitOrderParams {
+  from: Asset;
+  to: Asset;
+  sellAmount: bigint;
+  minBuyAmount: bigint;
+  /** Approximate duration in seconds, bounded by the settlement's maximum allowance lifetime. */
+  expiresIn: number;
+}
+
+/** @internal Horizon account data shared by capability and trustline detection. */
+export interface LimitOrderAccount {
+  balances: { asset_code?: string; asset_issuer?: string; is_authorized?: boolean }[];
+  signers: { key: string; type: string; weight: number }[];
+  thresholds: { low_threshold: number; med_threshold: number; high_threshold: number };
+  flags?: { auth_required?: boolean };
 }

@@ -100,9 +100,8 @@ export {
 
 export {
   LimitOrderManager,
-  PreparedLimitOrder,
   type LimitOrderContext,
-  type CreateLimitOrderParams,
+  type PrepareLimitOrderParams,
   type LimitOrderSettlementConfig,
 } from "./limit-order-manager.js";
 export * from "./limit-order-types.js";
@@ -117,3 +116,11 @@ export {
   assertLimitOrderTransaction,
   assertLimitOrderSignatures,
 } from "./limit-order-transaction.js";
+
+export {
+  PreparedLimitOrder,
+  type LimitOrderSummary,
+  type LimitOrderPlaceOptions,
+  type LimitOrderTransactionResult,
+  type PendingLimitOrder,
+} from "./limit-order-prepared.js";

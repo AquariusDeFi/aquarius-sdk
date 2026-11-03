@@ -26,7 +26,9 @@ import {
   validateOnchainLimitOrderDraft,
   validateExecutorReward,
 } from "./limit-orders.js";
-import { LimitOrderManager } from "./limit-order-manager.js";
+import { assertLimitOrderSignatures, assertLimitOrderTransaction } from "./limit-order-transaction.js";
+import type { LimitOrderTransactionResult } from "./limit-order-prepared.js";
+import { LimitOrderManager, type LimitOrderAccount } from "./limit-order-manager.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
   DepositAmounts,
@@ -38,7 +40,7 @@ import {
   resolveAmounts,
   sortTokenIds,
 } from "./pool.js";
-import { Signer } from "./signer.js";
+import { Signer, signTransaction } from "./signer.js";
 import { ConfirmedTx, SubmitEngine } from "./submit.js";
 
 export interface AquariusConfig {
@@ -263,6 +265,10 @@ export class AquariusClient {
         apiUrl: this.limitOrderApiUrl(),
         api: this.api,
         server: this.server,
+        signer: this.signer,
+        loadAccount: maker => this.fetchHorizonAccount(maker),
+        recordActions: this.limitOrderRecordActions(),
+        createSubmitter: () => this.limitOrderSubmitter(),
         readBatch: calls => this.readBatch(calls, config.batcher ?? this.network.batch),
         readContract: (contract, method, args) => this.readContract(contract, method, args),
         prepare: (maker, operation) => {
@@ -322,73 +328,24 @@ export class AquariusClient {
     return (await this.server.getLatestLedger()).sequence;
   }
 
-  /** Read one validated cursor page from the public order registry. */
-  async listLimitOrders(params: {
+  /** @deprecated Use limitOrders.list(). Retained for existing SDK consumers. */
+  listLimitOrders(params: {
     maker?: string;
     status?: string;
     cursor?: string;
     limit?: number;
   } = {}): Promise<LimitOrderPage> {
-    this.requireLimitOrderConfig();
-    const limit = params.limit ?? 100;
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-      throw new AquariusError("limit-order page size must be between 1 and 100");
-    }
-    const query: Record<string, string> = { limit: String(limit) };
-    if (params.maker !== undefined) query.maker = params.maker;
-    if (params.status !== undefined) query.status = params.status;
-    if (params.cursor !== undefined) query.cursor = params.cursor;
-    const page = await this.api.listLimitOrders(this.limitOrderApiUrl(), query);
-    if (!Array.isArray(page.orders)) {
-      throw new AquariusError("limit-order registry returned an invalid page");
-    }
-    return {
-      orders: page.orders.map(item =>
-        this.parseLimitOrderRecord(item as Record<string, unknown>)),
-      nextCursor: page.next_cursor === null || page.next_cursor === undefined
-        ? null
-        : String(page.next_cursor),
-    };
+    return this.limitOrders.list(params);
   }
 
-  /** Read every open order, following cursor pages defensively. */
-  async openLimitOrders(maker?: string): Promise<LimitOrderRecord[]> {
-    const records: LimitOrderRecord[] = [];
-    const seenOrderIds = new Set<string>();
-    const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-    for (let pageNumber = 0; pageNumber < 10_000; pageNumber++) {
-      const page = await this.listLimitOrders({
-        maker,
-        status: "open",
-        cursor,
-      });
-      for (const order of page.orders) {
-        if (seenOrderIds.has(order.orderId)) {
-          throw new AquariusError(
-            "limit-order registry repeated an order across pages",
-          );
-        }
-        seenOrderIds.add(order.orderId);
-        records.push(order);
-      }
-      if (page.nextCursor === null) return records;
-      if (!page.nextCursor || seenCursors.has(page.nextCursor)) {
-        throw new AquariusError(
-          "limit-order registry returned an invalid pagination cursor",
-        );
-      }
-      seenCursors.add(page.nextCursor);
-      cursor = page.nextCursor;
-    }
-    throw new AquariusError("limit-order pagination exceeded the safety limit");
+  /** @deprecated Use limitOrders.open(). Retained for existing SDK consumers. */
+  openLimitOrders(maker?: string): Promise<LimitOrderRecord[]> {
+    return this.limitOrders.open(maker);
   }
 
-  /** Read and validate one public order-registry record. */
-  async getLimitOrder(orderId: string): Promise<LimitOrderRecord> {
-    return this.parseLimitOrderRecord(
-      await this.api.getLimitOrder(this.limitOrderApiUrl(), orderId),
-    );
+  /** @deprecated Use limitOrders.get(). Retained for existing SDK consumers. */
+  getLimitOrder(orderId: string): Promise<LimitOrderRecord> {
+    return this.limitOrders.get(orderId);
   }
 
   /** Best route for a swap. Pass amountIn (exact input) or amountOut (exact output). */
@@ -555,7 +512,7 @@ export class AquariusClient {
     return validateExecutorReward(scValToNative(value) as bigint);
   }
 
-  /** Create a canonical API draft for programmatic G-account placement. */
+  /** @deprecated Use limitOrders.prepare(). The explicit-ceiling API remains supported for existing programmatic integrations. */
   async createOnchainLimitOrder(
     params: OnchainLimitOrderParams,
   ): Promise<OnchainLimitOrder> {
@@ -1435,6 +1392,61 @@ export class AquariusClient {
     return this.engine.assemble(transaction, operation, simulation);
   }
 
+  private limitOrderSubmitter(): (transactionXdr: string) => Promise<LimitOrderTransactionResult> {
+    let signed: Transaction | undefined;
+    let originalXdr: string | undefined;
+    return async transactionXdr => {
+      if (originalXdr !== transactionXdr) {
+        signed = undefined;
+        originalXdr = transactionXdr;
+      }
+      const transaction = new Transaction(transactionXdr, this.network.passphrase);
+      const hash = Buffer.from(transaction.hash()).toString("hex");
+      const confirmation = (
+        result: rpc.Api.GetTransactionResponse,
+      ): LimitOrderTransactionResult | undefined => {
+        if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+          return {
+            status: "confirmed",
+            transactionHash: hash,
+            ledger: result.ledger,
+            createdAt: result.createdAt,
+          };
+        }
+        if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
+          signed = undefined;
+          return { status: "failed" };
+        }
+        return undefined;
+      };
+      const previous = confirmation(await this.server.getTransaction(hash));
+      if (previous) return previous;
+      const signer = this.requireSigner();
+      if (signer.publicKey() !== transaction.source) {
+        throw new AquariusError("The connected account changed. Review the order again.");
+      }
+      if (!signed) {
+        signed = assertLimitOrderTransaction(
+          transaction,
+          (await signTransaction(signer, transaction, this.network.passphrase)).toXDR(),
+        );
+      }
+      try {
+        assertLimitOrderSignatures(signed, await this.fetchHorizonAccount(transaction.source));
+      } catch (error) {
+        signed = undefined;
+        throw error;
+      }
+      if (signer.publicKey() !== transaction.source) {
+        throw new AquariusError("The connected account changed. Review the order again.");
+      }
+      await this.engine.submitSignedTransaction(signed);
+      const result = confirmation(await this.server.getTransaction(hash));
+      if (!result) throw new AquariusError("The placement transaction is not confirmed yet.", hash);
+      return result;
+    };
+  }
+
   private async buildLimitOrderCancel(record: LimitOrderRecord): Promise<string> {
     this.limitOrderMakerSigner(record);
     const operation = this.buildLimitOrderCancelOperation(record);
@@ -1655,14 +1667,14 @@ export class AquariusClient {
 
   private async fetchHorizonAccount(
     publicKey: string,
-  ): Promise<{ balances: { asset_code?: string; asset_issuer?: string }[] }> {
+  ): Promise<LimitOrderAccount> {
     const response = await fetch(`${this.network.horizonUrl}/accounts/${publicKey}`, {
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!response.ok) {
       throw new AquariusError(`Account lookup failed: HTTP ${response.status}`);
     }
-    return (await response.json()) as { balances: { asset_code?: string; asset_issuer?: string }[] };
+    return (await response.json()) as LimitOrderAccount;
   }
 
   private requireSigner(): Signer {

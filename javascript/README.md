@@ -300,80 +300,90 @@ The client does not see transactions you submit yourself, so
 build (e.g. a withdraw after a deposit into a pool with rewards), pass the
 ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
 
-## Wallet limit orders (JavaScript)
+## Limit orders (JavaScript)
 
-`aqua.limitOrders` provides the browser/wallet flow alongside the existing
-programmatic API below. It uses the same RPC, API client and unsigned transaction
-engine as swaps and pools. Reads do not require a signer; transaction builders
-require a signer identifying the maker but never call its `sign` method or submit.
+Use the same prepare/review/execute pattern as quotes. Configure the deployment
+once; a connected signer supplies the account. A keypair supports detached
+authorization automatically. A wallet adapter can expose `signAuthEntry(xdr)` in
+addition to its usual `sign(transactionXdr)` method. Omit that capability when
+unsupported; the SDK selects transaction placement. Multisig accounts use
+transaction placement even when their wallet supports detached signing.
 
 ```ts
 const aqua = new AquariusClient({
   network: "testnet",
-  signer, // identifies the connected maker
+  signer,
   limitOrders: {
     settlement: settlementAddress,
     batcher: batcherAddress,
-    guard: guardAddress, // required for additive on-chain approvals
+    guard: guardAddress,
     apiUrl: registryUrl,
   },
 });
-const settings = await aqua.limitOrders.getSettlementConfig();
-// Have the user approve the displayed amounts, reward and expiry first.
-const ledger = await aqua.latestLedger();
-const approved = {
-  maker: signer.publicKey(),
-  placementMode: "DETACHED" as const,
-  from: XLM,
-  to: AQUA, // use Asset.classic(code, issuer) for a classic receive asset
-  sellAmount: 100_0000000n,
-  minBuyAmount: 500_0000000n,
-  expectedExecutorRewardXlm: BigInt(settings.executorRewardXlm),
-  validAfterLedger: ledger,
-  expiresAtLedger: ledger + 17_280,
-  requireTrustline: false, // set from the maker's current account state
-};
-const prepared = await aqua.limitOrders.create(approved);
-const signature = await wallet.signAuthEntry(prepared.authorizationEntryXdr);
-const order = await prepared.authorize(signature);
 
-const open = await aqua.limitOrders.open(approved.maker);
-const history = await aqua.limitOrders.history(approved.maker); // 20, newest completion first
-const next = history.next_cursor
-  ? await aqua.limitOrders.history(approved.maker, history.next_cursor)
+const prepared = await aqua.limitOrders.prepare({
+  from: XLM,
+  to: AQUA, // Asset.classic(code, issuer) for a classic receive asset
+  sellAmount: 10_0000000n,
+  minBuyAmount: 100_0000000n,
+  expiresIn: 24 * 60 * 60, // approximate duration, seconds
+});
+
+// Show prepared.summary to the user before placing.
+// Includes the exact reward, expiration, signing path and trustline timing.
+const order = await prepared.place();
+console.log(order.orderId, order.order.sellAmount);
+
+const open = await aqua.limitOrders.open(); // connected maker by default
+const history = await aqua.limitOrders.history();
+const next = history.nextCursor
+  ? await aqua.limitOrders.history(undefined, history.nextCursor)
   : null;
-const cancelXdr = await aqua.limitOrders.buildCancelTransaction(approved.maker, order);
-// Pass cancelXdr through the app's ordinary wallet/multisig signing and submission flow.
+const sameOrder = await aqua.limitOrders.get(order.orderId);
+await sameOrder.cancel();
 ```
 
-For transaction-only wallets, use `placementMode: "CONTRACT_ONCHAIN"` and
-`prepared.buildTransaction()` instead of `authorizationEntryXdr` / `authorize()`.
-The result is unsigned XDR for the application's existing signing, Vault and
-submission flow. A missing receive trustline is added at placement in this mode;
-detached authorization permits the bot to add it at execution. The SDK does not
-choose a wallet or display confirmation UI.
+`prepare()` fetches the current ledger, settlement reward and account state,
+detects a missing receive trustline and pins the signing path before creating a
+validated draft. It neither signs nor submits. `place()` rechecks the reviewed
+conditions, signs and publishes/places that exact order. A change requiring new
+consent stops the operation. Wallet rejection never falls back to a paid path.
 
-Wallet placement **adds** the confirmed order's budget to each verified remaining
-allowance and preserves the longer logical expiry. It validates SAC/Aquarius-token
-storage, guards the settlement fee, unused order ID and current allowances
-atomically, then rechecks the snapshot after simulation. Unknown allowance storage
-fails closed. Order expiry is bounded by the settlement and
-`LIMIT_ORDER_MAX_TTL_LEDGERS` (3,110,399 ledgers). This additive flow is separate
-from the explicit total ceilings of `createOnchainLimitOrder()` below.
+A missing classic receive trustline is authorized for execution with detached
+signing, or added at placement with transaction signing. Existing trustlines,
+native assets, issuer-owned assets and contract-only Soroban assets do not add a
+line. Assets needing issuer authorization are rejected before signing. Pass
+classic assets as code/issuer so the SDK can derive their network-specific SAC.
 
-All drafts are validated against the approved intent, network, settlement,
-canonical order ID and exact authorization tree before being returned for signing.
-Amounts use `bigint` in the creation API and decimal strings in registry payloads.
-`normalizeSignedAuthEntry()` verifies both SEP-43 raw signatures and full signed
-entries; `getAuthEntryPreimage()` supports wallets signing the preimage directly.
-`getLimitOrderFillOperation()` and `getLimitOrderFillAmounts()` decode settlement
-fills for notifications, including Soroban-token amounts from transaction metadata.
+Amounts are `bigint` in base units. `expiresIn` is an approximate duration in
+seconds (5 seconds per ledger), bounded by the settlement and the 3,110,399-ledger
+allowance cap. A request for 180 days uses that cap. No caller-supplied ledger,
+trustline flag, placement mode or independently fetched reward is required.
 
-Keep the prepared object and signed proof after a lost registry response, and retry
-`prepared.authorize()` with that same proof. To resume a saved draft use
-`aqua.limitOrders.fromDraft(savedDraft, approved)`; it revalidates the original
-approval. For on-chain placement retain and check the signed transaction hash before
-resubmitting. Creating a new draft is a new order.
+Wallet placement adds the new budget to verified remaining allowances, preserves
+the longer logical expiry, and atomically guards the fee, unused order ID and
+current allowances. Canonical XDR, approved amounts, network, settlement and the
+exact authorization tree are verified before wallet interaction.
+
+Reuse the same prepared object on retry: it retains the signed authorization or
+transaction, coalesces concurrent placement calls and checks transaction
+confirmation before resubmitting. A new `prepare()` is a new order.
+
+For applications with an existing Vault or external-signature flow,
+`prepared.place({ submitTransaction, prepareTransaction? })` accepts transport
+adapters. The submit callback returns either `{ status: "confirmed",
+transactionHash, ledger, createdAt }`, `{ status: "pending", transactionHash }`,
+or `{ status: "failed" }`. A pending result remains `PENDING_SIGNATURES` and is
+never reported as an open order. The receipt must refer to the exact built
+transaction. `prepareTransaction` can handle the application's restoration UI.
+
+The escape hatches `prepared.buildTransaction()`,
+`prepared.authorizationEntryXdr`, `prepared.authorize(signature)` and
+`order.buildCancelTransaction()` remain available. Normal callers use
+`prepare()` / `place()` and the returned order object's methods. Read-only clients
+can pass an explicit maker to `open(maker)` / `history(maker)` without a signer.
+All registry methods return the same bound `LimitOrderRecord` model; `.raw`
+exposes its registry projection when needed by an existing application.
 
 ### Local frontend integration
 
@@ -385,7 +395,11 @@ Repack and install the newly printed filename after SDK changes; unique filename
 avoid Yarn Classic's stale local-tarball cache. Replace this local dependency with
 the published SDK version before deploying the frontend independently.
 
-## Programmatic on-chain limit orders
+## Legacy programmatic on-chain limit orders
+
+The published explicit-ceiling API below is retained for compatibility. New
+wallet integrations should use `limitOrders.prepare()` above. The legacy read
+methods delegate to the same manager and return the same order model.
 
 **Security migration in 0.6.0:** `createOnchainLimitOrder()` and
 `validateOnchainLimitOrderDraft()` now require `expectedExecutorRewardXlm`.
