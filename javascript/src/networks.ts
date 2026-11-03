@@ -14,7 +14,10 @@ export interface NetworkConfig {
    * convention the documentation examples use).
    */
   readSource: string;
-  /** Provider-fee collector factory; absent where not deployed (testnet). */
+  /**
+   * Provider-fee collector factory; set on both presets. A hand-built config
+   * may omit it — pass `factory` explicitly to `deployFeeCollector` then.
+   */
   collectorFactory?: string;
   /** The protocol reward token (AQUA) — code and issuer of the classic asset. */
   rewardToken: { code: string; issuer: string };
@@ -44,6 +47,7 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     horizonUrl: "https://horizon-testnet.stellar.org",
     passphrase: Networks.TESTNET,
     readSource: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+    collectorFactory: "CCXU6S2PFFFESV65RHUEVJX6TSSN6BYKOCJ3S3LM5M3IXXIWAL5AV4CO",
     rewardToken: { code: "AQUA", issuer: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER" },
     limitOrdersApiUrl: "https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
   },
