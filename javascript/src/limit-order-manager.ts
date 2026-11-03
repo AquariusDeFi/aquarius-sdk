@@ -34,6 +34,7 @@ import { assertLimitOrderAuthorization } from "./limit-order-transaction.js";
 import { validateLimitOrderDraft, validateLimitOrderRecord } from "./limit-order-validation.js";
 import {
   LIMIT_ORDER_MAX_TTL_LEDGERS,
+  LIMIT_ORDER_MAX_DURATION_SECONDS,
   type ContractLimitOrderDraftPayload,
   type LimitOrderDraftRequest,
   type LimitOrderRecordPayload,
@@ -593,6 +594,8 @@ function snapshotIntent(
     throw new AquariusError("Limit-order amounts must fit positive i128 values.");
   if (!Number.isSafeInteger(params.expiresIn) || params.expiresIn <= 0)
     throw new AquariusError("Order expiry must be a positive number of seconds.");
+  if (params.expiresIn > LIMIT_ORDER_MAX_DURATION_SECONDS)
+    throw new AquariusError("Order expiry cannot exceed 6 months (180 days).");
   const copyAsset = (asset: Asset) =>
     asset.isNative
       ? Asset.native()
@@ -621,7 +624,7 @@ export interface PrepareLimitOrderParams {
   to: Asset;
   sellAmount: bigint;
   minBuyAmount: bigint;
-  /** Approximate duration in seconds, bounded by the settlement's maximum allowance lifetime. */
+  /** Approximate duration in seconds, at most 180 days and bounded by the settlement lifetime. */
   expiresIn: number;
 }
 

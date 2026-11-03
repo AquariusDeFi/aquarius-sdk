@@ -10,6 +10,7 @@ import {
 
 import type { Asset } from "./assets.js";
 import { AquariusError } from "./errors.js";
+import { LIMIT_ORDER_MAX_TTL_LEDGERS } from "./limit-order-types.js";
 
 const ORDER_FIELDS = [
   "buy_token",
@@ -43,6 +44,13 @@ function contractAddress(value: string, name: string): string {
     throw new AquariusError(`limit-order ${name} must be a contract address`);
   }
   return value;
+}
+
+/** @internal Apply the same lifetime cap to wallet, legacy and imported orders. */
+export function validateLimitOrderLifetime(validAfterLedger: number, expiresAtLedger: number): void {
+  if (expiresAtLedger - validAfterLedger > LIMIT_ORDER_MAX_TTL_LEDGERS) {
+    throw new AquariusError("Order expiry cannot exceed 6 months (3,110,399 ledgers).");
+  }
 }
 
 export interface LimitOrderConfigInput {
@@ -414,6 +422,7 @@ export function buildOnchainPlacementArgs(
   currentAllowances: ReadonlyMap<string, bigint>,
   xlmToken: string,
 ): xdr.ScVal[] {
+  validateLimitOrderLifetime(order.validAfterLedger, order.expiresAtLedger);
   if (!Number.isInteger(order.allowanceExpirationLedger) ||
       order.allowanceExpirationLedger < order.expiresAtLedger ||
       order.allowanceExpirationLedger > 0xffffffff) {
@@ -659,6 +668,7 @@ function validateLimitOrder(order: LimitOrder): void {
   ) {
     throw new AquariusError("limit order has an invalid ledger window");
   }
+  validateLimitOrderLifetime(order.validAfterLedger, order.expiresAtLedger);
 }
 
 export function validateAuthorizationTree(

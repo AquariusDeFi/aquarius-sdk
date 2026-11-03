@@ -20,6 +20,7 @@ import {
   LimitOrderManager,
   LimitOrderRecord,
   LIMIT_ORDER_MAX_TTL_LEDGERS,
+  LIMIT_ORDER_MAX_DURATION_SECONDS,
 } from "../dist/index.js";
 const fixture = (name) =>
   JSON.parse(
@@ -293,6 +294,23 @@ test("fee, account, signing policy and trustline changes after review stop befor
     assert.equal(wallet.signAuthEntry.mock.callCount(), 0, change);
   }
 });
+
+for (const mode of ["authorization", "transaction"]) {
+  test(`${mode} rejects more than six months before network or wallet interaction`, async () => {
+    const { manager, params, api, context, wallet, submit } = setup(mode);
+    assert.equal(LIMIT_ORDER_MAX_DURATION_SECONDS, 180 * 86400);
+    for (const expiresIn of [LIMIT_ORDER_MAX_DURATION_SECONDS + 1, 181 * 86400]) {
+      await assert.rejects(manager.prepare({ ...params, expiresIn }), /cannot exceed 6 months/);
+    }
+    assert.equal(manager.getSettlementConfig.mock.callCount(), 0);
+    assert.equal(context.server.getLatestLedger.mock.callCount(), 0);
+    assert.equal(context.loadAccount.mock.callCount(), 0);
+    assert.equal(api.createLimitOrderDraft.mock.callCount(), 0);
+    assert.equal(wallet.sign.mock.callCount(), 0);
+    assert.equal(wallet.signAuthEntry?.mock.callCount() ?? 0, 0);
+    assert.equal(submit.mock.callCount(), 0);
+  });
+}
 
 test("expiry supports six months but never exceeds the settlement or allowance cap", async () => {
   const { manager, params } = setup("transaction");

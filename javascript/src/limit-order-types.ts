@@ -87,3 +87,6 @@ export type LimitOrderListPayload = {
 
 /** Maximum allowance lifetime: 180 days minus one ledger. */
 export const LIMIT_ORDER_MAX_TTL_LEDGERS = 3_110_399;
+
+/** Maximum requested duration: 6 months (180 days), at 5 seconds per ledger. */
+export const LIMIT_ORDER_MAX_DURATION_SECONDS = (LIMIT_ORDER_MAX_TTL_LEDGERS + 1) * 5;

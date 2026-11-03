@@ -25,6 +25,7 @@ import {
   validateFillReceipt,
   validateOnchainLimitOrderDraft,
   validateExecutorReward,
+  validateLimitOrderLifetime,
 } from "./limit-orders.js";
 import { assertLimitOrderSignatures, assertLimitOrderTransaction } from "./limit-order-transaction.js";
 import type { LimitOrderTransactionResult } from "./limit-order-prepared.js";
@@ -540,6 +541,7 @@ export class AquariusClient {
         "on-chain limit-order amounts must fit positive i128 values and ledgers must fit u32",
       );
     }
+    validateLimitOrderLifetime(params.validAfterLedger, params.expiresAtLedger);
     if (
       !Number.isInteger(params.allowanceExpirationLedger) ||
       params.allowanceExpirationLedger < params.expiresAtLedger ||
