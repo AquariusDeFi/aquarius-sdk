@@ -11,3 +11,5 @@ node_modules/
 # Local npm package builds
 *.tgz
 javascript/package-lock.json
+/package-lock.json
+/yarn.lock

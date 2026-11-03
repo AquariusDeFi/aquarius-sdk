@@ -359,6 +359,10 @@ Amounts are `bigint` in base units. `expiresIn` is an approximate duration in
 seconds (5 seconds per ledger), bounded by the settlement and the 3,110,399-ledger
 allowance cap. A request for 180 days uses that cap. No caller-supplied ledger,
 trustline flag, placement mode or independently fetched reward is required.
+Durations above `LIMIT_ORDER_MAX_DURATION_SECONDS` (180 days) throw an
+`AquariusError` before any network request or wallet interaction. Legacy and
+imported orders also reject ledger windows exceeding 3,110,399 ledgers; a lower
+settlement limit still applies.
 
 Wallet placement adds the new budget to verified remaining allowances, preserves
 the longer logical expiry, and atomically guards the fee, unused order ID and
@@ -384,6 +388,23 @@ The escape hatches `prepared.buildTransaction()`,
 can pass an explicit maker to `open(maker)` / `history(maker)` without a signer.
 All registry methods return the same bound `LimitOrderRecord` model; `.raw`
 exposes its registry projection when needed by an existing application.
+
+### Testing from GitHub before a release
+
+The repository root provides a private Git-install manifest for this JavaScript
+package. Its `prepare` script builds the same sources and TypeScript declarations;
+normal npm releases continue to be published from `javascript/`.
+Keep the root manifest's version and dependency ranges in sync with
+`javascript/package.json`; the package consistency test checks this.
+
+```sh
+yarn add '@aquariusdefi/sdk@git+https://github.com/AquariusDeFi/aquarius-sdk.git#<full-commit-sha>'
+```
+
+Use a full commit SHA from the reviewed PR so installations are reproducible.
+Git preparation needs development dependencies and lifecycle scripts enabled.
+Before the consuming application's production release, replace the Git URL with
+the published `@aquariusdefi/sdk` version and regenerate its lockfile.
 
 ### Local frontend integration
 
