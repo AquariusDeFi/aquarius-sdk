@@ -24,7 +24,7 @@ export interface LimitOrderSummary {
 }
 
 export type LimitOrderTransactionResult =
-  | { status: "confirmed"; transactionHash: string; ledger: number; createdAt: number }
+  | { status: "confirmed"; transactionHash: string; ledger: number; createdAt: number | string }
   | { status: "pending"; transactionHash: string }
   | { status: "failed" };
 
@@ -136,11 +136,20 @@ export class PreparedLimitOrder {
         draft: structuredClone(this.payload),
         transactionHash: expectedHash,
       };
+    // RPC returns Unix seconds as a string, even though Stellar SDK types it as number.
+    const createdAt =
+      typeof result.createdAt === "number"
+        ? result.createdAt
+        : typeof result.createdAt === "string" && /^\d+$/.test(result.createdAt)
+          ? Number(result.createdAt)
+          : NaN;
     if (
       result.status !== "confirmed" ||
       !Number.isInteger(result.ledger) ||
       result.ledger <= 0 ||
-      !Number.isFinite(result.createdAt)
+      !Number.isSafeInteger(createdAt) ||
+      createdAt < 0 ||
+      !Number.isFinite(new Date(createdAt * 1000).getTime())
     ) {
       throw new AquariusError("The placement transaction is not confirmed yet.");
     }
@@ -149,7 +158,7 @@ export class PreparedLimitOrder {
       status: "OPEN",
       placement_ledger: result.ledger,
       placement_transaction_hash: expectedHash,
-      updated_at: new Date(result.createdAt * 1000).toISOString(),
+      updated_at: new Date(createdAt * 1000).toISOString(),
     });
     return this.placed;
   }

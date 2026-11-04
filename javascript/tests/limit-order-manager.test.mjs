@@ -347,6 +347,37 @@ test("custom Vault transport reports pending and reuses the same prepared transa
   assert.equal(manager.buildPlacementTransaction.mock.callCount(), 1);
 });
 
+test("confirmed placement accepts numeric and RPC string timestamps without resubmitting", async () => {
+  for (const createdAt of [1793782319, "1793782319"]) {
+    const { manager, params, submit } = setup("transaction");
+    const prepared = await manager.prepare(params);
+    const transport = mock.fn(async (raw) => ({ ...(await submit(raw)), createdAt }));
+    const order = await prepared.place({ submitTransaction: transport });
+    assert.equal(order.status, "OPEN");
+    assert.equal(order.placementLedger, 105);
+    assert.equal(order.raw.updated_at, new Date(1793782319 * 1000).toISOString());
+    assert.equal(await prepared.place({ submitTransaction: transport }), order);
+    assert.equal(transport.mock.callCount(), 1);
+  }
+});
+
+test("malformed confirmation timestamps cannot mark an order as placed", async () => {
+  const invalid = [
+    undefined, null, "", " ", true, "invalid", "NaN", NaN, Infinity,
+    -1, "-1", 1.5, "1.5", "1e3", "0x11", 8640000000001,
+  ];
+  for (const createdAt of invalid) {
+    const { manager, params, submit } = setup("transaction");
+    const prepared = await manager.prepare(params);
+    await assert.rejects(
+      prepared.place({
+        submitTransaction: async (raw) => ({ ...(await submit(raw)), createdAt }),
+      }),
+      /not confirmed/,
+    );
+  }
+});
+
 test("a failed transaction can be rebuilt for the same order; unrelated confirmations are rejected", async () => {
   const { manager, params, submit, api } = setup("transaction");
   const prepared = await manager.prepare(params);
@@ -461,7 +492,7 @@ test("client transaction placement retries the identical signed envelope after a
   client.server.getLatestLedger = async () => ({ sequence: 100 });
   let confirmed = false;
   client.server.getTransaction = async () =>
-    confirmed ? { status: "SUCCESS", ledger: 105, createdAt: 1000 } : { status: "NOT_FOUND" };
+    confirmed ? { status: "SUCCESS", ledger: 105, createdAt: "1793782319" } : { status: "NOT_FOUND" };
   client.api.createLimitOrderDraft = async (_, request) => onchainDraft(request);
   client.limitOrders.getSettlementConfig = async () => ({
     maxOrderTtl: 1000,
