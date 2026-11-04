@@ -35,7 +35,8 @@ export const assertLimitOrderTransaction = (expected: Transaction, signedXdr: st
     throw new AquariusError("The wallet returned an invalid signed transaction.");
   }
   // Pin the complete transaction, including fees, auth trees and resources.
-  if (!Buffer.from(signed.hash()).equals(expected.hash()))
+  // Stellar SDK returns Uint8Array; browser Buffer.equals requires Buffer on both sides.
+  if (!Buffer.from(signed.hash()).equals(Buffer.from(expected.hash())))
     throw new AquariusError("The wallet changed the limit order transaction. Review it again.");
   if (!signed.signatures.length)
     throw new AquariusError(
@@ -60,7 +61,7 @@ export const assertLimitOrderSignatures = (
     const valid = signed.signatures.some((signature) => {
       try {
         return (
-          Buffer.from(signature.hint.toBytes()).equals(key.signatureHint()) &&
+          Buffer.from(signature.hint.toBytes()).equals(Buffer.from(key.signatureHint())) &&
           key.verify(hash, signature.signature.toBytes())
         );
       } catch {
