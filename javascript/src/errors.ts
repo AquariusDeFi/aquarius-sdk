@@ -83,7 +83,8 @@ const PAUSED_CODES = new Set([205, 206, 207, 2139]);
 const SLIPPAGE_CODES = new Set([2005, 2006, 2020]);
 
 // Known contract error codes without a dedicated error class — the code alone
-// is opaque, so attach what it means (concentrated position management).
+// is opaque, so attach what it means (concentrated position management, the
+// ICE Locker).
 const CONTRACT_MESSAGES: Record<number, string> = {
   212: "position not found",
   213: "insufficient liquidity",
@@ -93,6 +94,13 @@ const CONTRACT_MESSAGES: Record<number, string> = {
   2114: "amount must be greater than zero",
   2119: "too many positions for this account",
   2120: "liquidity amount too large",
+  2400: "lock amount must be greater than zero",
+  2432: "lock amount is too large",
+  2445: "unlock time must be a Monday 00:00 UTC no more than 3 years ahead",
+  2446: "unlock time must be more than 24 hours from now",
+  2447: "lock position not found",
+  2448: "lock position already withdrawn",
+  2450: "lock position cannot be withdrawn yet: its unlock time has not passed or it has none",
 };
 
 // The token contract reports a missing trustline in its diagnostic output.
@@ -103,8 +111,27 @@ const TRUSTLINE_MARKER = "trustline entry is missing";
 const NO_TRUSTLINE_MESSAGE =
   "The output recipient holds no trustline for the output asset — create the trustline on that recipient before retrying";
 
+const CONTRACT_CODE = Symbol("contractCode");
+
+/**
+ * @internal The contract error code a typed error was classified from. Codes
+ * are per contract, so a caller that knows which contract failed can state
+ * what the code means there.
+ */
+export function contractErrorCode(error: unknown): number | undefined {
+  return error instanceof AquariusError
+    ? (error as AquariusError & { [CONTRACT_CODE]?: number })[CONTRACT_CODE]
+    : undefined;
+}
+
 /** @internal Map a numeric contract error code to a typed error. */
 export function classifyContractCode(code: number, txHash?: string): AquariusError {
+  const error = typedContractError(code, txHash);
+  Object.defineProperty(error, CONTRACT_CODE, { value: code });
+  return error;
+}
+
+function typedContractError(code: number, txHash?: string): AquariusError {
   if (SLIPPAGE_CODES.has(code)) {
     return new SlippageError(
       `Price moved past your guard (contract error #${code}) — re-quote and retry`,

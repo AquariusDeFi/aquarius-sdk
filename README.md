@@ -85,16 +85,23 @@ simulations, reads and writes do not poll.
 3. **Escape hatches at every layer.** `Quote.buildTransaction()` returns unsigned XDR; `client.contract.call()` invokes the router raw; `client.api` is the typed REST client. The SDK wraps, it never traps.
 4. **Protocol details are the SDK's problem.** `swaps_chain` encoding, token-vector sorting, pool hashes, transaction meta v3/v4, u128 conversion — none of these exist in the public surface.
 5. **Typed errors that encode what we know.** Guard failures raise `SlippageError` ("re-quote and retry"), kill switches raise `PausedError` ("not your bug"), missing routes raise `NoRouteError`.
-6. **Language parity is a feature.** Same names, same semantics in both packages, enforced by shared golden fixtures in `testdata/`. Feature releases move in lockstep minor versions (`py-v0.4.x` and `js-v0.4.x` have the same surface).
+6. **Language parity is a feature.** Same names, same semantics in both packages, enforced by shared golden fixtures in `testdata/`. Feature releases move in lockstep minor versions (`py-v0.4.x` and `js-v0.4.x` have the same surface). The one exception is the JavaScript-only ICE Locker and delegation surface.
 7. **Authorization is fixed before submission.** Every contract write supplies client-built authorization and simulates in enforcement mode. Simulation supplies resources and fees, never the authorization to sign. Raw calls default to root-only source-account authorization; calls needing nested authorization must supply their complete tree (see the language READMEs). Read and quote simulations may still record authorization, which is never reused for submission.
 
 ## Scope of v1
 
-Swaps (both modes), provider-fee collectors and separate output recipients, pool discovery, deposit/withdraw/claim, positions overview, trustline and friendbot helpers. Explicitly out: wallet and key management, price oracles, governance/ICE, SDEX rewards, historical data.
+Swaps (both modes), provider-fee collectors and separate output recipients, pool discovery, deposit/withdraw/claim, positions overview, trustline and friendbot helpers. ICE Locker and ICE delegation transactions are JavaScript-only, for browser wallet flows. Explicitly out: wallet and key management, price oracles, governance voting, SDEX rewards, historical data.
 
 ## Releases
 
 Tags trigger publishing: `py-v*` → PyPI, `js-v*` → npm. Independent patches, lockstep minors.
+
+There are two channels:
+
+- **Stable**: `js-vX.Y.Z` / `py-vX.Y.Z`, tagged on `master`. npm publishes it as `latest`.
+- **Testnet**: `js-vX.Y.Z-testnet.N` / `py-vX.Y.ZaN`, tagged on the `testnet` branch. Use it to try a new feature on Stellar testnet before the stable `X.Y.Z`. npm publishes it under the `testnet` dist-tag, and pip installs a pre-release only when it is pinned, so it never reaches someone installing the stable version. Pin the exact version: `npm install @aquariusdefi/sdk@X.Y.Z-testnet.N`, `pip install aquarius-sdk==X.Y.ZaN`.
+
+A feature branch does not change the package version. It is merged into `testnet`, where the testnet version is set and tagged, and it reaches `master` through its own pull request. Several features can be on testnet at once without competing prerelease numbers.
 
 ## Development
 
