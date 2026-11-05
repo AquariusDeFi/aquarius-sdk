@@ -26,7 +26,14 @@ export { batchCallScVal, type BatchCall } from "./batch.js";
 export type { Signer } from "./signer.js";
 export { FeeCollector, type ClaimedFees } from "./collector.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
-export type { FindPathRequest, FindPathResponse, ParsedRoute } from "./api.js";
+export type {
+  FindPathRequest,
+  FindPathResponse,
+  FindPathSplitPart,
+  FindPathSplitRequest,
+  FindPathSplitResponse,
+  ParsedRoute,
+} from "./api.js";
 export { NETWORKS, type NetworkConfig } from "./networks.js";
 export {
   LimitOrder,
@@ -99,15 +106,14 @@ export {
 } from "./errors.js";
 
 export {
-  normalizeSellSwapPlan,
+  normalizeSwapSplitPlan,
   sellAmountToRaw,
   getSwapMinimum,
-  buildSellSwapOperation,
-  type SellSwapLeg,
-  type SellSwapPlan,
-  type SellSwapQuote,
-  type SplitSwapQuoteLeg,
-  type BuildSellSwapOptions,
+  buildSwapSplitOperation,
+  getSwapSplitResult,
+  type SwapSplitPart,
+  type SwapSplitPlan,
+  type BuildSwapSplitOptions,
 } from "./split-swap.js";
 export {
   loadSwapResourceLimits,

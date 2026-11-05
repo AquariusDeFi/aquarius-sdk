@@ -1,7 +1,8 @@
-"""Opt-in exact-input split primitives. These helpers never sign or submit.
+"""Exact-input split swaps through the AMM router's `swap_split`.
 
-Search remains in the API. A caller must simulate the full ordered operation,
-check network resources and bind the aggregate minimum before signing.
+Search stays in the API. A caller validates the API's plan, builds the call with
+a minimum from its own slippage, simulates it once and checks network resources
+before signing. These helpers never sign or submit.
 """
 
 from __future__ import annotations
@@ -22,8 +23,13 @@ from stellar_sdk.xdr import (
 )
 
 from .authorization import authorized_invocation, source_account_entry
+from .errors import NoRouteError
 
 _MAX_AMOUNT = (1 << 127) - 1
+_SHARE_DENOMINATOR = 10_000
+_MAX_STAGES = 4
+_MAX_PARTS = 4
+_MAX_HOPS = 4
 
 
 def _raw(value: str) -> int:
@@ -37,7 +43,13 @@ def _raw(value: str) -> int:
 
 
 @dataclass
-class SellSwapLeg:
+class SwapSplitPart:
+    """One part of a stage: a chain in the `swap_chained` format and its share.
+
+    `share` is in basis points of the stage input; the shares of a stage sum to 10000.
+    """
+
+    share: int
     amount_in: str
     amount_out: str
     swap_chain_xdr: str
@@ -47,10 +59,12 @@ class SellSwapLeg:
 
 
 @dataclass
-class SellSwapPlan:
+class SwapSplitPlan:
+    """A validated plan for the router's `swap_split`; amounts are raw-unit integer strings."""
+
     amount_in: str
     amount_out: str
-    legs: list[SellSwapLeg]
+    stages: list[list[SwapSplitPart]]
 
 
 def _contract(value: SCVal) -> str:
@@ -62,24 +76,26 @@ def _contract(value: SCVal) -> str:
     return address
 
 
-def _leg(value: dict, base: str, counter: str) -> SellSwapLeg:
-    _raw(value["amount_in"])
-    _raw(value["amount_out"])
-    pools, tokens, encoded = (
-        value["pools"],
-        value["tokens_addresses"],
-        value["swap_chain_xdr"],
-    )
+def _is_contract(value) -> bool:
+    return isinstance(value, str) and StrKey.is_valid_contract(value)
+
+
+def _chain(part: SwapSplitPart, token_in: str) -> tuple[SCVal, str]:
+    """Decode a part's route XDR and check it against the displayed token path.
+
+    The route XDR selects token sets, pool indices and outputs, and the path starts
+    at the stage input token. Returns the chain and the token it ends in.
+    """
+    pools, tokens, encoded = part.pools, part.tokens_addresses, part.swap_chain_xdr
     if (
         not isinstance(pools, list)
-        or not 1 <= len(pools) <= 4
+        or not 1 <= len(pools) <= _MAX_HOPS
+        or not all(_is_contract(p) for p in pools)
         or len(set(pools)) != len(pools)
-        or any(not StrKey.is_valid_contract(p) for p in pools)
         or not isinstance(tokens, list)
         or len(tokens) != len(pools) + 1
-        or any(not StrKey.is_valid_contract(t) for t in tokens)
-        or tokens[0] != base
-        or tokens[-1] != counter
+        or not all(_is_contract(t) for t in tokens)
+        or tokens[0] != token_in
         or not isinstance(encoded, str)
         or len(encoded) > 32768
     ):
@@ -109,8 +125,7 @@ def _leg(value: dict, base: str, counter: str) -> SellSwapLeg:
             raise ValueError("Invalid hop fields")
         addresses = [_contract(t) for t in pool_tokens.vec.sc_vec]
         if (
-            len(addresses) < 2
-            or len(set(addresses)) != len(addresses)
+            len(set(addresses)) != len(addresses)
             or tokens[i] not in addresses
             or tokens[i + 1] not in addresses
             or tokens[i] == tokens[i + 1]
@@ -120,57 +135,113 @@ def _leg(value: dict, base: str, counter: str) -> SellSwapLeg:
         if key in used:
             raise ValueError("Repeated pool")
         used.add(key)
-    return SellSwapLeg(
-        value["amount_in"],
-        value["amount_out"],
-        encoded,
-        pools[:],
-        tokens[:],
-        list(value["tokens"]) if isinstance(value.get("tokens"), list) else [],
-    )
+    return chain, tokens[-1]
 
 
-def _split_plan(value: dict, base: str, counter: str, amount_in: str) -> SellSwapPlan:
-    if (
-        value["amount_in"] != amount_in
-        or not isinstance(value["legs"], list)
-        or not 2 <= len(value["legs"]) <= 4
-    ):
-        raise ValueError("Invalid swap quote")
-    legs = [_leg(l, base, counter) for l in value["legs"]]
-    if sum(int(l.amount_in) for l in legs) != int(amount_in) or sum(
-        int(l.amount_out) for l in legs
-    ) != _raw(value["amount_out"]):
-        raise ValueError("Invalid swap quote")
-    return SellSwapPlan(amount_in, value["amount_out"], legs)
+def _stages(plan: SwapSplitPlan, token_in: str, token_out: str) -> SCVal:
+    """The `stages` argument of `swap_split`, encoded from the readable chains.
 
-
-def _ordinary_route(
-    quote: dict, base: str, counter: str, amount_in: str
-) -> SellSwapPlan:
-    if not isinstance(quote.get("amount"), str) or not re.fullmatch(
-        r"[0-9]+(?:\.0+)?", quote["amount"]
-    ):
-        raise ValueError("Invalid swap quote")
-    amount_out = str(int(quote["amount"].split(".")[0]))
-    baseline = _leg(
-        {**quote, "amount_in": amount_in, "amount_out": amount_out}, base, counter
-    )
-    return SellSwapPlan(amount_in, amount_out, [baseline])
-
-
-def normalize_sell_swap_plan(
-    quote: dict, base: str, counter: str, amount_in: str
-) -> SellSwapPlan:
+    The chains are checked as the router runs them: stage by stage from `token_in`,
+    all chains of a stage ending in the next stage's input token and the last
+    stage in `token_out`. Every part's input must be the router's allocation of the
+    stage input, and the parts' outputs make the next stage's input.
+    """
     try:
-        _raw(amount_in)
-        if quote.get("success") is not True or base == counter:
+        stages = plan.stages
+        if (
+            not _is_contract(token_in)
+            or not _is_contract(token_out)
+            or token_in == token_out
+            or not isinstance(stages, list)
+            or not 1 <= len(stages) <= _MAX_STAGES
+        ):
+            raise ValueError("Invalid stages")
+        stage_token, stage_amount = token_in, _raw(plan.amount_in)
+        encoded = []
+        for parts in stages:
+            if not isinstance(parts, list) or not 1 <= len(parts) <= _MAX_PARTS:
+                raise ValueError("Invalid stage")
+            shares, allocated, output, stage_end, values = 0, 0, 0, None, []
+            for index, part in enumerate(parts):
+                share = part.share
+                if type(share) is not int or share < 1:
+                    raise ValueError("Invalid share")
+                shares += share
+                # Every part but the last gets floor(stage input * share / 10000);
+                # the last part takes the rest.
+                if index == len(parts) - 1:
+                    amount = stage_amount - allocated
+                else:
+                    amount = stage_amount * share // _SHARE_DENOMINATOR
+                if _raw(part.amount_in) != amount:
+                    raise ValueError("Invalid allocation")
+                allocated += amount
+                output += _raw(part.amount_out)
+                chain, end = _chain(part, stage_token)
+                if stage_end is not None and end != stage_end:
+                    raise ValueError("Stage chains end in different tokens")
+                stage_end = end
+                values.append(scval.to_vec([chain, scval.to_uint32(share)]))
+            if shares != _SHARE_DENOMINATOR:
+                raise ValueError("Invalid shares")
+            stage_token, stage_amount = stage_end, output
+            encoded.append(scval.to_vec(values))
+        if stage_token != token_out or stage_amount != _raw(plan.amount_out):
+            raise ValueError("Invalid plan output")
+        return scval.to_vec(encoded)
+    except Exception as error:
+        raise ValueError("Invalid swap quote") from error
+
+
+def _list(value) -> list:
+    if not isinstance(value, list):
+        raise ValueError("Invalid swap quote")
+    return list(value)
+
+
+def _read_part(part: dict) -> SwapSplitPart:
+    return SwapSplitPart(
+        part["share"],
+        part["amount_in"],
+        part["amount_out"],
+        part["swap_chain_xdr"],
+        _list(part["pools"]),
+        _list(part["tokens_addresses"]),
+        list(part["tokens"]) if isinstance(part.get("tokens"), list) else [],
+    )
+
+
+def normalize_swap_split_plan(
+    response: dict, token_in: str, token_out: str, amount_in: str
+) -> SwapSplitPlan:
+    """The plan of a `find_path_split` response for the requested exact input.
+
+    Raises NoRouteError when the API found no route, and ValueError("Invalid swap
+    quote") when the plan does not match the request or the router's execution, or
+    `stages_xdr` is not the encoding of the readable stages.
+    """
+    if isinstance(response, dict) and response.get("success") is False:
+        raise NoRouteError("No route found")
+    try:
+        if (
+            response.get("success") is not True
+            or response.get("amount_in") != amount_in
+            or not isinstance(response.get("stages"), list)
+        ):
             raise ValueError("Invalid swap quote")
-        # A backend-selected split is executed as quoted or rejected; a malformed
-        # plan never degrades to the ordinary route.
-        if quote.get("split_plan") is not None:
-            return _split_plan(quote["split_plan"], base, counter, amount_in)
-        return _ordinary_route(quote, base, counter, amount_in)
+        plan = SwapSplitPlan(
+            amount_in,
+            response.get("amount_out"),
+            [
+                [_read_part(part) for part in _list(parts)]
+                for parts in response["stages"]
+            ],
+        )
+        # The call is built from the readable chains; the API's encoding of them
+        # must be the same bytes.
+        if _stages(plan, token_in, token_out).to_xdr() != response.get("stages_xdr"):
+            raise ValueError("Invalid swap quote")
+        return plan
     except Exception as error:
         raise ValueError("Invalid swap quote") from error
 
@@ -192,11 +263,12 @@ def get_swap_minimum(output: str, slippage: str) -> str:
     )
 
 
-def get_sell_swap_result(
-    result: SCVal, leg_count: int, with_trustline: bool = False
-) -> list[int]:
-    if type(leg_count) is not int or not 1 <= leg_count <= 4:
-        raise ValueError("Invalid leg count")
+def get_swap_split_result(result: SCVal, with_trustline: bool = False) -> int:
+    """The total output from the return value of a simulated or executed `swap_split`.
+
+    With a trustline, the batch returns one value per call: void for the trust call,
+    then the swap's output.
+    """
     if with_trustline:
         if (
             result.type != SCValType.SCV_VEC
@@ -204,105 +276,67 @@ def get_sell_swap_result(
             or len(result.vec.sc_vec) != 2
             or result.vec.sc_vec[0].type != SCValType.SCV_VOID
         ):
-            raise ValueError("Unexpected batch result")
+            raise ValueError(
+                "Unexpected swap result. Check the transaction in the explorer."
+            )
         result = result.vec.sc_vec[1]
-    if leg_count > 1 and (result.type != SCValType.SCV_VEC or result.vec is None):
-        raise ValueError("Unexpected split result")
-    values = [result] if leg_count == 1 else result.vec.sc_vec
-    if len(values) != leg_count or any(v.type != SCValType.SCV_U128 for v in values):
-        raise ValueError("Unexpected split result")
-    return [scval.from_uint128(v) for v in values]
+    if result.type != SCValType.SCV_U128:
+        raise ValueError(
+            "Unexpected swap result. Check the transaction in the explorer."
+        )
+    return scval.from_uint128(result)
 
 
-def build_sell_swap_operation(
+def build_swap_split_operation(
     *,
     source: str,
+    router: str,
     token_in: str,
     token_out: str,
-    router: str,
-    plan: SellSwapPlan,
+    plan: SwapSplitPlan,
     minimum: str,
-    split_router: str | None = None,
     batch: str | None = None,
     trustline: dict | None = None,
 ) -> InvokeHostFunction:
-    """Fixed ordered auth; trustline requires asset_code, issuer, network_passphrase."""
-    if (
-        not StrKey.is_valid_ed25519_public_key(source)
-        or not StrKey.is_valid_contract(router)
-        or token_in == token_out
-    ):
+    """`router.swap_split` with its authorization: the call with all its arguments
+    and the one input transfer.
+
+    Checks the plan again before encoding it. `trustline` requires `batch` and
+    asset_code, issuer, network_passphrase of the classic output asset. Does not
+    simulate, sign or submit.
+    """
+    if not StrKey.is_valid_ed25519_public_key(source) or not _is_contract(router):
         raise ValueError("Invalid swap addresses")
-    _raw(plan.amount_in)
-    _raw(plan.amount_out)
+    stages = _stages(plan, token_in, token_out)
     if (
         not isinstance(minimum, str)
         or not re.fullmatch(r"[0-9]+", minimum)
         or int(minimum) > _MAX_AMOUNT
-        or not 1 <= len(plan.legs) <= 4
     ):
-        raise ValueError("Invalid swap minimum or parts")
-    legs = [_leg(vars(l), token_in, token_out) for l in plan.legs]
-    if sum(int(l.amount_in) for l in legs) != int(plan.amount_in) or sum(
-        int(l.amount_out) for l in legs
-    ) != int(plan.amount_out):
-        raise ValueError("Invalid allocation")
-    split = len(legs) > 1
-    if split and (not split_router or not StrKey.is_valid_contract(split_router)):
-        raise ValueError("Split router not configured")
-    children, args_by_leg = [], []
-    for leg in legs:
-        args = [
-            scval.to_address(source),
-            SCVal.from_xdr(leg.swap_chain_xdr),
-            scval.to_address(token_in),
-            scval.to_uint128(int(leg.amount_in)),
-            scval.to_uint128(0 if split else int(minimum)),
-        ]
-        transfer = authorized_invocation(
-            token_in,
-            "transfer",
-            [
-                scval.to_address(source),
-                scval.to_address(router),
-                scval.to_int128(int(leg.amount_in)),
-            ],
-        )
-        children.append(authorized_invocation(router, "swap_chained", args, [transfer]))
-        args_by_leg.append(args)
-    target = split_router if split else router
-    args = (
+        raise ValueError("Invalid swap minimum")
+    args = [
+        scval.to_address(source),
+        stages,
+        scval.to_address(token_in),
+        scval.to_address(token_out),
+        scval.to_uint128(int(plan.amount_in)),
+        scval.to_uint128(int(minimum)),
+    ]
+    transfer = authorized_invocation(
+        token_in,
+        "transfer",
         [
             scval.to_address(source),
-            scval.to_vec(
-                [
-                    scval.to_vec(
-                        [
-                            SCVal.from_xdr(l.swap_chain_xdr),
-                            scval.to_uint128(int(l.amount_in)),
-                        ]
-                    )
-                    for l in legs
-                ]
-            ),
-            scval.to_address(token_in),
-            scval.to_address(token_out),
-            scval.to_uint128(int(plan.amount_in)),
-            scval.to_uint128(int(minimum)),
-        ]
-        if split
-        else args_by_leg[0]
+            scval.to_address(router),
+            scval.to_int128(int(plan.amount_in)),
+        ],
     )
-    root = (
-        authorized_invocation(target, "swap_chained", args, children)
-        if split
-        else children[0]
-    )
-    function = "swap_chained"
+    root = authorized_invocation(router, "swap_split", args, [transfer])
+    target, function = router, "swap_split"
     if trustline is not None:
         if (
             not batch
-            or not StrKey.is_valid_contract(batch)
+            or not _is_contract(batch)
             or not isinstance(trustline, dict)
             or any(
                 not isinstance(trustline.get(key), str)
@@ -326,7 +360,7 @@ def build_sell_swap_operation(
             ),
             scval.to_vec(
                 [
-                    scval.to_address(target),
+                    scval.to_address(router),
                     scval.to_symbol(function),
                     scval.to_vec(args),
                 ]

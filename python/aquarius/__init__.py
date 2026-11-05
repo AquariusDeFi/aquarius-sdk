@@ -56,12 +56,12 @@ from .limit_orders import (
 from .pool import ClaimResult, DepositResult, Pool, PoolQuote, Position, WithdrawResult
 
 from .split_swap import (
-    SellSwapLeg,
-    SellSwapPlan,
-    normalize_sell_swap_plan,
+    SwapSplitPart,
+    SwapSplitPlan,
+    normalize_swap_split_plan,
     get_swap_minimum,
-    get_sell_swap_result,
-    build_sell_swap_operation,
+    get_swap_split_result,
+    build_swap_split_operation,
     sell_amount_to_raw,
 )
 from .swap_resources import (
@@ -83,12 +83,12 @@ __all__ = [
     "assert_swap_resources",
     "assert_swap_authorization",
     "get_swap_result",
-    "SellSwapLeg",
-    "SellSwapPlan",
-    "normalize_sell_swap_plan",
+    "SwapSplitPart",
+    "SwapSplitPlan",
+    "normalize_swap_split_plan",
     "get_swap_minimum",
-    "get_sell_swap_result",
-    "build_sell_swap_operation",
+    "get_swap_split_result",
+    "build_swap_split_operation",
     "APIHTTPError",
     "ApiClient",
     "AquariusClient",
