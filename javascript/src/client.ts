@@ -7,6 +7,15 @@ import { Asset } from "./assets.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { BatchCall, batchArgs, batchOperation, batchResults, isBudgetExceeded } from "./batch.js";
 import { snapTick, tickFromPrice, tickSpacingForFee } from "./concentrated.js";
+import {
+  DelegateParams,
+  IceProxy,
+  UndelegateParams,
+  delegateCalls,
+  delegateProxies,
+  parseDelegations,
+  undelegateCalls,
+} from "./delegation.js";
 import { AquariusError, SlippageError } from "./errors.js";
 import { CollectorContext, FeeCollector } from "./collector.js";
 import {
@@ -1047,7 +1056,7 @@ export class AquariusClient {
     },
   };
 
-  // -- ICE Locker -----------------------------------------------------------------------
+  // -- ICE Locker and delegation ---------------------------------------------------------
 
   /**
    * ICE Locker writes, prepared but not signed: each returns the simulated,
@@ -1077,11 +1086,55 @@ export class AquariusClient {
     },
   };
 
+  /**
+   * ICE delegation writes on the upvoteICE and governICE proxies, prepared
+   * but not signed: each returns the simulated, unsigned envelope XDR. The
+   * signer's account is the owner and the source. Changing both proxies is
+   * one transaction through the batch contract.
+   */
+  readonly delegation = {
+    /**
+     * Set the share of the owner's voting power delegated to `delegate`, per
+     * proxy. The current delegations are read first: the change is refused
+     * when it would put a third delegate on a proxy or more than 100% in total.
+     */
+    buildDelegate: async (params: DelegateParams): Promise<string> => {
+      const contracts = this.delegationProxies();
+      const owner = this.requireSigner().publicKey();
+      const proxies = delegateProxies(owner, params);
+      const values = await this.readBatch(proxies.map(proxy => ({
+        contractId: contracts[proxy],
+        fn: "delegations",
+        args: [new Address(owner).toScVal()],
+      })));
+      const current = Object.fromEntries(
+        proxies.map((proxy, i) => [proxy, parseDelegations(values[i])]),
+      );
+      return this.buildCalls(delegateCalls(contracts, owner, params, current));
+    },
+
+    /** Remove the delegation to `delegate` on the given proxies. */
+    buildUndelegate: async (params: UndelegateParams): Promise<string> => {
+      const contracts = this.delegationProxies();
+      return this.buildCalls(undelegateCalls(contracts, this.requireSigner().publicKey(), params));
+    },
+  };
+
   private lockerContract(): string {
     if (!this.network.locker) {
       throw new AquariusError("No ICE Locker known for this network — pass contracts.locker");
     }
     return this.network.locker;
+  }
+
+  private delegationProxies(): Record<IceProxy, string> {
+    const { upvoteIceProxy, governIceProxy } = this.network;
+    if (!upvoteIceProxy || !governIceProxy) {
+      throw new AquariusError(
+        "No ICE delegation proxies known for this network — pass contracts.upvoteIceProxy and contracts.governIceProxy",
+      );
+    }
+    return { upvote: upvoteIceProxy, govern: governIceProxy };
   }
 
   /**

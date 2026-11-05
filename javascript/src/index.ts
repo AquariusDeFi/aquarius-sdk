@@ -26,6 +26,13 @@ export { batchCallScVal, type BatchCall } from "./batch.js";
 export type { Signer } from "./signer.js";
 export { FeeCollector, type ClaimedFees } from "./collector.js";
 export type { CreateLockParams } from "./locker.js";
+export {
+  DELEGATION_FRACTION_DENOMINATOR,
+  MAX_DELEGATES_PER_PROXY,
+  type DelegateParams,
+  type IceProxy,
+  type UndelegateParams,
+} from "./delegation.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
 export type { FindPathRequest, FindPathResponse, ParsedRoute } from "./api.js";
 export { NETWORKS, type NetworkConfig } from "./networks.js";
