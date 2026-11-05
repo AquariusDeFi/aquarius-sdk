@@ -151,13 +151,13 @@ export const assertSwapResources = (
     limits.protocolVersion >= 23
       ? keys.filter((key) => !isContractKey(key)).length + archived.length
       : keys.length;
-  // The current Sell flow uses a V1 envelope (no fee bump). Reserve every
-  // legal decorated-signature slot: 4-byte hint + 4-byte length + 64 bytes.
+  // The swap is a V1 envelope (no fee bump). Reserve every legal
+  // decorated-signature slot: 4-byte hint + 4-byte length + 64 bytes.
   // This also covers public/multisig signing without changing wallet flows.
   const signedSize = envelope.toXdr().length + (20 - tx.signatures.length) * 72;
   // RPC wraps all host events in DiagnosticEvent. Core charges only successful
-  // non-diagnostic ContractEvent XDR, plus the final return ScVal (including
-  // the outer batch vector for trust + split); never the diagnostic wrapper.
+  // non-diagnostic ContractEvent XDR, plus the final return ScVal (with a
+  // trustline, the batch's whole result vector); never the diagnostic wrapper.
   if (!Array.isArray(invocation.events))
     throw new Error("Missing swap simulation events.");
   const eventBytes = invocation.events.reduce((total, diagnostic) => {
@@ -211,60 +211,4 @@ export const assertSwapAuthorization = (
   ) {
     throw new Error("Swap authorization changed. Please try again.");
   }
-};
-
-export const getSwapResult = (
-  result: xdr.ScVal,
-  withTrustline: boolean,
-): xdr.ScVal => {
-  if (!withTrustline) return result;
-  if (result.type !== "scvVec") {
-    throw new Error(
-      "Unexpected swap result. Check the transaction in the explorer.",
-    );
-  }
-  const values = result.vec!;
-  if (
-    values.length !== 2 ||
-    values[0].type !== "scvVoid" ||
-    values[1].type !== "scvU128"
-  ) {
-    throw new Error(
-      "Unexpected swap result. Check the transaction in the explorer.",
-    );
-  }
-  return values[1];
-};
-
-export const getSellSwapResult = (
-  result: xdr.ScVal,
-  legCount: number,
-  withTrustline: boolean,
-): bigint[] => {
-  const invalid = () =>
-    new Error("Unexpected swap result. Check the transaction in the explorer.");
-  if (!Number.isInteger(legCount) || legCount < 1 || legCount > 4)
-    throw invalid();
-  let swapResult = result;
-  if (withTrustline) {
-    if (result.type !== "scvVec") throw invalid();
-    const batch = result.vec!;
-    if (batch.length !== 2 || batch[0].type !== "scvVoid") throw invalid();
-    swapResult = batch[1];
-  }
-  if (legCount > 1 && swapResult.type !== "scvVec") throw invalid();
-  const values =
-    legCount === 1
-      ? [swapResult]
-      : swapResult.type === "scvVec"
-        ? (swapResult.vec ?? [])
-        : [];
-  if (values.length !== legCount) throw invalid();
-  return values.map((value) => {
-    if (value.type !== "scvU128") throw invalid();
-    return (
-      (BigInt(value.u128!.hi.toString()) << 64n) +
-      BigInt(value.u128!.lo.toString())
-    );
-  });
 };

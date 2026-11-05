@@ -1,4 +1,4 @@
-"""Current network limits and fixed-auth checks for prepared Sell transactions.
+"""Current network limits and fixed-auth checks for prepared swap_split transactions.
 
 Declarations include the RPC reserve. These checks do not measure memory or
 replace full ordered simulation/Core admission. Never trim declarations to fit.
@@ -194,19 +194,3 @@ def assert_swap_authorization(
         != [a.to_xdr() for a in operation.body.invoke_host_function_op.auth]
     ):
         raise ValueError("Swap authorization changed. Please try again.")
-
-
-def get_swap_result(result: xdr.SCVal, with_trustline: bool) -> xdr.SCVal:
-    if not with_trustline:
-        return result
-    if (
-        result.type != xdr.SCValType.SCV_VEC
-        or result.vec is None
-        or len(result.vec.sc_vec) != 2
-        or result.vec.sc_vec[0].type != xdr.SCValType.SCV_VOID
-        or result.vec.sc_vec[1].type != xdr.SCValType.SCV_U128
-    ):
-        raise ValueError(
-            "Unexpected swap result. Check the transaction in the explorer."
-        )
-    return result.vec.sc_vec[1]
