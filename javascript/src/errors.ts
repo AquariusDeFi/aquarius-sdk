@@ -100,7 +100,7 @@ const CONTRACT_MESSAGES: Record<number, string> = {
   2446: "unlock time must be more than 24 hours from now",
   2447: "lock position not found",
   2448: "lock position already withdrawn",
-  2450: "lock position has not unlocked yet",
+  2450: "lock position cannot be withdrawn yet: its unlock time has not passed or it has none",
 };
 
 // The token contract reports a missing trustline in its diagnostic output.

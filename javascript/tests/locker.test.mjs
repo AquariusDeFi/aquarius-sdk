@@ -348,11 +348,12 @@ test("archived entries restored inside the transaction need no separate restore"
 test("Locker contract errors carry what they mean", () => {
   for (const [code, pattern] of [
     [2400, /greater than zero/],
+    [2432, /too large/],
     [2445, /Monday 00:00 UTC/],
     [2446, /24 hours/],
     [2447, /not found/],
     [2448, /already withdrawn/],
-    [2450, /not unlocked yet/],
+    [2450, /unlock time has not passed or it has none/],
   ]) {
     const error = classifyContractError(`HostError: Error(Contract, #${code})`);
     assert.ok(error instanceof AquariusError);
