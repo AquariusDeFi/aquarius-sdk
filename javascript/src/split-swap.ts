@@ -33,43 +33,103 @@ export type SwapSplitPlan = {
 };
 
 const MAX_AMOUNT = (1n << 127n) - 1n;
-const SHARE_DENOMINATOR = 10_000n;
+const U128_MAX = (1n << 128n) - 1n;
+const SHARE_DENOMINATOR = 10_000;
 const MAX_STAGES = 4;
 const MAX_PARTS = 4;
 const MAX_HOPS = 4;
-const invalidQuote = () =>
-  new Error("Invalid swap quote. Please request a new quote.");
+const MAX_CHAIN_XDR_LENGTH = 32_768;
+// Canonical padded base64; decoders differ on everything else.
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
-const rawAmount = (value: string): bigint => {
-  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value))
-    throw invalidQuote();
-  const parsed = BigInt(value);
-  if (parsed > MAX_AMOUNT) throw invalidQuote();
+// Every error this module raises on purpose; the catch-alls keep its reason.
+class SwapError extends Error {}
+
+/** A quote the SDK will not build from; the reason names the failed check. */
+function ensure(ok: unknown, reason: string): asserts ok {
+  if (!ok)
+    throw new SwapError(
+      `Invalid swap quote: ${reason}. Please request a new quote.`,
+    );
+}
+
+/** An argument the SDK will not build with. */
+function ensureSwap(ok: unknown, reason: string): asserts ok {
+  if (!ok) throw new SwapError(`Invalid swap: ${reason}.`);
+}
+
+const malformed = (error: unknown) =>
+  error instanceof SwapError
+    ? error
+    : new SwapError(
+        "Invalid swap quote: the plan is malformed. Please request a new quote.",
+      );
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isContract = (value: unknown): value is string =>
+  typeof value === "string" && StrKey.isValidContract(value);
+
+// A canonical integer from 1 to 2^127 - 1 (a token amount), or undefined.
+const parseAmount = (value: unknown): bigint | undefined =>
+  typeof value === "string" &&
+  /^[1-9]\d*$/.test(value) &&
+  BigInt(value) <= MAX_AMOUNT
+    ? BigInt(value)
+    : undefined;
+
+const quoteAmount = (value: unknown, label: string): bigint => {
+  const parsed = parseAmount(value);
+  ensure(
+    parsed !== undefined,
+    `${label} is not an integer from 1 to 2^127 - 1`,
+  );
   return parsed;
 };
 
 export const sellAmountToRaw = (amount: string, decimals: number): string => {
-  if (
-    !Number.isSafeInteger(decimals) ||
-    decimals < 0 ||
-    decimals > 38 ||
-    !/^\d+(?:\.\d+)?$/.test(amount)
-  )
-    throw invalidQuote();
+  ensureSwap(
+    Number.isSafeInteger(decimals) && decimals >= 0 && decimals <= 38,
+    "decimals is not an integer from 0 to 38",
+  );
+  ensureSwap(
+    typeof amount === "string" && /^\d+(?:\.\d+)?$/.test(amount),
+    "the amount is not a decimal number",
+  );
   const [whole, fraction = ""] = amount.split(".");
-  if (fraction.slice(decimals).replace(/0/g, "")) throw invalidQuote();
+  ensureSwap(
+    !fraction.slice(decimals).replace(/0/g, ""),
+    "the amount has more decimal places than the token",
+  );
   const raw = BigInt(
     whole + fraction.slice(0, decimals).padEnd(decimals, "0"),
   ).toString();
-  rawAmount(raw);
+  ensureSwap(
+    parseAmount(raw) !== undefined,
+    "the amount is not an integer from 1 to 2^127 - 1",
+  );
   return raw;
 };
 
-const contractAddress = (value: xdr.ScVal) => {
-  if (value.type !== "scvAddress") throw invalidQuote();
-  const address = Address.fromScVal(value).toString();
-  if (!StrKey.isValidContract(address)) throw invalidQuote();
+const contractAddress = (value: xdr.ScVal): string => {
+  ensure(value.type === "scvAddress", "a hop token is not an address");
+  let address = "";
+  try {
+    address = Address.fromScVal(value).toString();
+  } catch {
+    // An address type the SDK cannot print is not a contract either.
+  }
+  ensure(isContract(address), "a hop token is not a contract");
   return address;
+};
+
+const decode = (encoded: string): xdr.ScVal | undefined => {
+  try {
+    return xdr.ScVal.fromXdr(encoded, "base64");
+  } catch {
+    return undefined;
+  }
 };
 
 // The route XDR selects token sets, pool indices and outputs. Validate it
@@ -81,142 +141,182 @@ const decodeChain = (
   tokenIn: string,
 ): [xdr.ScVal, string] => {
   const { pools, tokensAddresses: tokens, swapChainXdr: encoded } = part;
-  if (
-    !Array.isArray(pools) ||
-    !pools.length ||
-    pools.length > MAX_HOPS ||
-    pools.some((pool) => !StrKey.isValidContract(pool)) ||
-    new Set(pools).size !== pools.length ||
-    !Array.isArray(tokens) ||
-    tokens.length !== pools.length + 1 ||
-    tokens.some((token) => !StrKey.isValidContract(token)) ||
-    tokens[0] !== tokenIn ||
-    typeof encoded !== "string" ||
-    encoded.length > 32_768
-  ) {
-    throw invalidQuote();
-  }
-  // Base64 decoders differ on padding and stray characters; accept only an
-  // encoding that round-trips exactly.
-  const chain = xdr.ScVal.fromXdr(encoded, "base64");
-  if (
-    chain.toXdr("base64") !== encoded ||
-    chain.type !== "scvVec" ||
-    chain.vec?.length !== pools.length
-  ) {
-    throw invalidQuote();
-  }
+  ensure(Array.isArray(pools), "pools are not a list");
+  ensure(pools.length > 0, "a chain has no hops");
+  ensure(pools.length <= MAX_HOPS, `a chain has more than ${MAX_HOPS} hops`);
+  ensure(pools.every(isContract), "a pool is not a contract");
+  ensure(new Set(pools).size === pools.length, "a chain lists a pool twice");
+  ensure(Array.isArray(tokens), "tokens_addresses are not a list");
+  ensure(
+    tokens.length === pools.length + 1,
+    "tokens_addresses do not match the pools",
+  );
+  ensure(tokens.every(isContract), "a token address is not a contract");
+  ensure(tokens[0] === tokenIn, "a chain does not start at its stage input");
+  ensure(typeof encoded === "string", "swap_chain_xdr is not a string");
+  ensure(
+    encoded.length <= MAX_CHAIN_XDR_LENGTH,
+    "swap_chain_xdr is too long",
+  );
+  ensure(BASE64.test(encoded), "swap_chain_xdr is not base64");
+  const chain = decode(encoded);
+  ensure(chain !== undefined, "swap_chain_xdr does not decode");
+  ensure(
+    chain.toXdr("base64") === encoded,
+    "swap_chain_xdr is not canonical",
+  );
+  ensure(chain.type === "scvVec", "swap_chain_xdr is not a list of hops");
+  const hops = chain.vec ?? [];
+  ensure(
+    hops.length === pools.length,
+    "swap_chain_xdr does not have one hop per pool",
+  );
   const usedPools = new Set<string>();
-  chain.vec!.forEach((hop, index) => {
-    if (hop.type !== "scvVec" || hop.vec?.length !== 3) throw invalidQuote();
-    const [poolTokens, poolIndex, output] = hop.vec!;
-    if (
-      poolTokens.type !== "scvVec" ||
-      !poolTokens.vec ||
-      poolIndex.type !== "scvBytes" ||
-      poolIndex.bytes!.toBytes().length !== 32 ||
-      contractAddress(output) !== tokens[index + 1]
-    ) {
-      throw invalidQuote();
-    }
-    const addresses = poolTokens.vec.map(contractAddress);
-    if (
-      new Set(addresses).size !== addresses.length ||
-      !addresses.includes(tokens[index]) ||
-      !addresses.includes(tokens[index + 1]) ||
-      tokens[index] === tokens[index + 1]
-    ) {
-      throw invalidQuote();
-    }
-    const poolKey = `${addresses.join(",")}:${Buffer.from(poolIndex.bytes!.toBytes()).toString("hex")}`;
-    if (usedPools.has(poolKey)) throw invalidQuote();
+  hops.forEach((hop, index) => {
+    const fields = hop.type === "scvVec" ? (hop.vec ?? []) : [];
+    ensure(fields.length === 3, "a hop is not a triple");
+    const [poolTokens, poolIndex, output] = fields;
+    ensure(
+      poolTokens.type === "scvVec",
+      "a hop's pool tokens are not a list",
+    );
+    ensure(poolIndex.type === "scvBytes", "a hop's pool index is not bytes");
+    const indexBytes = Buffer.from(poolIndex.bytes.toBytes());
+    ensure(indexBytes.length === 32, "a hop's pool index is not 32 bytes");
+    ensure(
+      contractAddress(output) === tokens[index + 1],
+      "a hop's output is not the next token of the path",
+    );
+    const addresses = (poolTokens.vec ?? []).map(contractAddress);
+    ensure(
+      new Set(addresses).size === addresses.length,
+      "a hop's pool tokens repeat",
+    );
+    ensure(
+      addresses.includes(tokens[index]),
+      "a hop's pool does not hold its input",
+    );
+    ensure(
+      addresses.includes(tokens[index + 1]),
+      "a hop's pool does not hold its output",
+    );
+    ensure(
+      tokens[index] !== tokens[index + 1],
+      "a hop's input and output are the same token",
+    );
+    const poolKey = `${addresses.join(",")}:${indexBytes.toString("hex")}`;
+    ensure(!usedPools.has(poolKey), "a chain uses a pool twice");
     usedPools.add(poolKey);
   });
   return [chain, tokens[tokens.length - 1]];
 };
 
 // The `stages` argument of `swap_split`, encoded from the readable chains
-// after checking them as the router does: stage by stage from `tokenIn`, all
-// chains of a stage ending in the next stage's input token and the last stage
-// in `tokenOut`. Every part's input must be the router's allocation of the
-// stage input, and the parts' outputs make the next stage's input.
+// after checking them as the router runs them: stage by stage from `tokenIn`,
+// all chains of a stage ending in the next stage's input token and the last
+// stage in `tokenOut`. Every part's input must be the router's allocation of
+// the stage input, and the parts' outputs make the next stage's input, which
+// the router adds up in a u128.
 const encodeStages = (
   plan: SwapSplitPlan,
   tokenIn: string,
   tokenOut: string,
 ): xdr.ScVal => {
   try {
-    const { stages } = plan;
-    if (
-      !StrKey.isValidContract(tokenIn) ||
-      !StrKey.isValidContract(tokenOut) ||
-      tokenIn === tokenOut ||
-      !Array.isArray(stages) ||
-      !stages.length ||
-      stages.length > MAX_STAGES
-    ) {
-      throw invalidQuote();
-    }
+    ensure(isContract(tokenIn), "token_in is not a contract");
+    ensure(isContract(tokenOut), "token_out is not a contract");
+    ensure(tokenIn !== tokenOut, "token_in and token_out are the same");
+    let stageAmount = quoteAmount(plan.amountIn, "amount_in");
     let stageToken = tokenIn;
-    let stageAmount = rawAmount(plan.amountIn);
+    const { stages } = plan;
+    ensure(Array.isArray(stages), "stages are not a list");
+    ensure(stages.length > 0, "the plan has no stages");
+    ensure(
+      stages.length <= MAX_STAGES,
+      `the plan has more than ${MAX_STAGES} stages`,
+    );
     const encoded = stages.map((parts) => {
-      if (!Array.isArray(parts) || !parts.length || parts.length > MAX_PARTS)
-        throw invalidQuote();
-      let shares = 0n;
+      ensure(Array.isArray(parts), "a stage is not a list");
+      ensure(parts.length > 0, "a stage has no parts");
+      ensure(
+        parts.length <= MAX_PARTS,
+        `a stage has more than ${MAX_PARTS} parts`,
+      );
+      let shares = 0;
       let allocated = 0n;
       let output = 0n;
       let stageEnd: string | undefined;
       const values = parts.map((part, index) => {
-        const { share } = part;
-        if (!Number.isInteger(share) || share < 1) throw invalidQuote();
-        shares += BigInt(share);
+        ensure(isObject(part), "a part is not an object");
+        const share = Number.isInteger(part.share) ? part.share : undefined;
+        ensure(
+          share !== undefined && share >= 1 && share <= SHARE_DENOMINATOR,
+          `a share is not an integer from 1 to ${SHARE_DENOMINATOR}`,
+        );
+        shares += share;
         // Every part but the last gets floor(stage input * share / 10000);
         // the last part takes the rest.
         const amount =
           index === parts.length - 1
             ? stageAmount - allocated
-            : (stageAmount * BigInt(share)) / SHARE_DENOMINATOR;
-        if (rawAmount(part.amountIn) !== amount) throw invalidQuote();
+            : (stageAmount * BigInt(share)) / BigInt(SHARE_DENOMINATOR);
+        ensure(
+          quoteAmount(part.amountIn, "a part's amount_in") === amount,
+          "a part's amount_in is not the router's allocation",
+        );
         allocated += amount;
-        output += rawAmount(part.amountOut);
+        output += quoteAmount(part.amountOut, "a part's amount_out");
         const [chain, end] = decodeChain(part, stageToken);
-        if (stageEnd !== undefined && end !== stageEnd) throw invalidQuote();
-        stageEnd = end;
+        // As in the router, the first chain sets the token the stage ends in.
+        stageEnd ??= end;
+        ensure(
+          end === stageEnd,
+          "the chains of a stage end in different tokens",
+        );
         return xdr.ScVal.scvVec([chain, xdr.ScVal.scvU32(share)]);
       });
-      if (shares !== SHARE_DENOMINATOR) throw invalidQuote();
+      ensure(
+        shares === SHARE_DENOMINATOR,
+        `the shares of a stage do not sum to ${SHARE_DENOMINATOR}`,
+      );
+      ensure(output <= U128_MAX, "a stage's output does not fit in u128");
       stageToken = stageEnd!;
       stageAmount = output;
       return xdr.ScVal.scvVec(values);
     });
-    if (stageToken !== tokenOut || stageAmount !== rawAmount(plan.amountOut))
-      throw invalidQuote();
+    ensure(stageToken === tokenOut, "the last stage does not end at token_out");
+    ensure(
+      stageAmount === quoteAmount(plan.amountOut, "amount_out"),
+      "amount_out is not the output of the last stage",
+    );
     return xdr.ScVal.scvVec(encoded);
-  } catch {
-    throw invalidQuote();
+  } catch (error) {
+    throw malformed(error);
   }
 };
 
-const list = <T>(value: T[]): T[] => {
-  if (!Array.isArray(value)) throw invalidQuote();
-  return [...value];
-};
+const copied = (value: unknown) => (Array.isArray(value) ? [...value] : value);
 
-const readPart = (part: FindPathSplitPart): SwapSplitPart => ({
-  share: part.share,
-  amountIn: part.amount_in,
-  amountOut: part.amount_out,
-  swapChainXdr: part.swap_chain_xdr,
-  pools: list(part.pools),
-  tokensAddresses: list(part.tokens_addresses),
-  tokens: Array.isArray(part.tokens) ? [...part.tokens] : [],
-});
+// The response's plan in SDK form; `encodeStages` checks it.
+const readPart = (part: FindPathSplitPart) =>
+  isObject(part)
+    ? {
+        share: part.share,
+        amountIn: part.amount_in,
+        amountOut: part.amount_out,
+        swapChainXdr: part.swap_chain_xdr,
+        pools: copied(part.pools),
+        tokensAddresses: copied(part.tokens_addresses),
+        tokens: Array.isArray(part.tokens) ? [...part.tokens] : [],
+      }
+    : part;
 
 /**
  * The plan of a `findPathSplit` response for the requested exact input.
  * Throws NoRouteError when the API found no route, and an "Invalid swap
- * quote" error when the plan does not match the request or the router's
- * execution, or `stages_xdr` is not the encoding of the readable stages.
+ * quote" error naming the failed check when the plan does not match the
+ * request or the router's execution of it, or `stages_xdr` is not the
+ * encoding of the readable stages.
  */
 export const normalizeSwapSplitPlan = (
   response: FindPathSplitResponse,
@@ -224,45 +324,55 @@ export const normalizeSwapSplitPlan = (
   tokenOut: string,
   amountIn: string,
 ): SwapSplitPlan => {
-  if (response?.success === false) throw new NoRouteError("No route found.");
+  if (isObject(response) && response.success === false)
+    throw new NoRouteError("No route found.");
   try {
-    if (
-      response.success !== true ||
-      response.amount_in !== amountIn ||
-      !Array.isArray(response.stages)
-    ) {
-      throw invalidQuote();
-    }
-    const plan: SwapSplitPlan = {
+    ensure(isObject(response), "the response is not an object");
+    ensure(response.success === true, "success is not true");
+    ensure(
+      response.amount_in === amountIn,
+      "amount_in is not the requested amount",
+    );
+    const { stages } = response;
+    const plan = {
       amountIn,
       amountOut: response.amount_out,
-      stages: response.stages.map((parts) => list(parts).map(readPart)),
-    };
+      stages: Array.isArray(stages)
+        ? stages.map((parts) =>
+            Array.isArray(parts) ? parts.map(readPart) : parts,
+          )
+        : stages,
+    } as SwapSplitPlan;
     // The call is built from the readable chains; the API's encoding of
     // them must be the same bytes.
-    if (
-      encodeStages(plan, tokenIn, tokenOut).toXdr("base64") !==
-      response.stages_xdr
-    ) {
-      throw invalidQuote();
-    }
+    ensure(
+      encodeStages(plan, tokenIn, tokenOut).toXdr("base64") ===
+        response.stages_xdr,
+      "stages_xdr is not the encoding of the stages",
+    );
     return plan;
-  } catch {
-    throw invalidQuote();
+  } catch (error) {
+    throw malformed(error);
   }
 };
 
 export const getSwapMinimum = (output: string, slippage: string): string => {
-  if (!/^\d+(?:\.\d+)?$/.test(slippage) || slippage.length > 100)
-    throw new Error("Invalid swap slippage.");
+  ensureSwap(
+    typeof slippage === "string" &&
+      slippage.length <= 100 &&
+      /^\d+(?:\.\d+)?$/.test(slippage),
+    "the slippage is not a decimal percentage",
+  );
   const [whole, fraction = ""] = slippage.split(".");
   const scale = 10n ** BigInt(fraction.length);
   const tolerance = BigInt(whole) * scale + BigInt(fraction || "0");
-  if (tolerance > 10n * scale) throw new Error("Invalid swap slippage.");
-  return (
-    (rawAmount(output) * (100n * scale - tolerance)) /
-    (100n * scale)
-  ).toString();
+  ensureSwap(tolerance <= 10n * scale, "the slippage is above 10%");
+  const quoted = parseAmount(output);
+  ensureSwap(
+    quoted !== undefined,
+    "the output is not an integer from 1 to 2^127 - 1",
+  );
+  return ((quoted * (100n * scale - tolerance)) / (100n * scale)).toString();
 };
 
 export interface BuildSwapSplitOptions {
@@ -280,6 +390,18 @@ export interface BuildSwapSplitOptions {
   trustline?: { assetCode: string; issuer: string; networkPassphrase: string };
 }
 
+const assetContract = (
+  trustline: NonNullable<BuildSwapSplitOptions["trustline"]>,
+) => {
+  try {
+    return new StellarAsset(trustline.assetCode, trustline.issuer).contractId(
+      trustline.networkPassphrase,
+    );
+  } catch {
+    return undefined;
+  }
+};
+
 /**
  * `router.swap_split` with its authorization: the call with all its
  * arguments and the one input transfer. Checks the plan again before
@@ -290,18 +412,17 @@ export function buildSwapSplitOperation(
 ): xdr.Operation {
   const { source, router, tokenIn, tokenOut, plan, minimum, batch, trustline } =
     options;
-  if (
-    !StrKey.isValidEd25519PublicKey(source) ||
-    !StrKey.isValidContract(router)
-  )
-    throw invalidQuote();
+  ensureSwap(
+    typeof source === "string" && StrKey.isValidEd25519PublicKey(source),
+    "source is not an account",
+  );
+  ensureSwap(isContract(router), "router is not a contract");
   const stages = encodeStages(plan, tokenIn, tokenOut);
-  if (
-    typeof minimum !== "string" ||
-    !/^\d+$/.test(minimum) ||
-    BigInt(minimum) > MAX_AMOUNT
-  )
-    throw invalidQuote();
+  ensureSwap(
+    typeof minimum === "string" && /^\d+$/.test(minimum),
+    "minimum is not a non-negative integer string",
+  );
+  ensureSwap(BigInt(minimum) <= MAX_AMOUNT, "minimum is above 2^127 - 1");
   const addr = (s: string) => new Address(s).toScVal();
   const args = [
     addr(source),
@@ -324,20 +445,22 @@ export function buildSwapSplitOperation(
       args,
       auth: [sourceAccountEntry(root)],
     });
-  if (
-    !batch ||
-    !StrKey.isValidContract(batch) ||
-    typeof trustline !== "object" ||
-    Array.isArray(trustline) ||
-    [trustline.assetCode, trustline.issuer, trustline.networkPassphrase].some(
-      (value) => typeof value !== "string",
-    ) ||
-    trustline.issuer === source ||
-    new StellarAsset(trustline.assetCode, trustline.issuer).contractId(
-      trustline.networkPassphrase,
-    ) !== tokenOut
-  )
-    throw new Error("This asset does not support automatic trustlines.");
+  ensureSwap(isContract(batch), "batch is not a contract");
+  ensureSwap(
+    isObject(trustline) &&
+      [trustline.assetCode, trustline.issuer, trustline.networkPassphrase].every(
+        (value) => typeof value === "string",
+      ),
+    "trustline is not an asset code, issuer and network passphrase",
+  );
+  ensureSwap(
+    trustline.issuer !== source,
+    "the trustline asset is issued by the source",
+  );
+  ensureSwap(
+    assetContract(trustline) === tokenOut,
+    "the trustline asset is not token_out",
+  );
   const trust = { contractId: tokenOut, fn: "trust", args: [addr(source)] };
   return batchOperation(
     batch,
