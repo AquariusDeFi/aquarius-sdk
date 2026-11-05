@@ -35,7 +35,9 @@ jobs:
         working-directory: javascript
       - run: node javascript/e2e/testnet_lifecycle.mjs
 
+  # Testnet branch runs and PRs targeting testnet never access Mainnet.
   mainnet-readonly-python:
+    if: github.ref != 'refs/heads/testnet' && github.base_ref != 'testnet'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -47,6 +49,7 @@ jobs:
       - run: python e2e/mainnet_readonly.py
 
   mainnet-readonly-javascript:
+    if: github.ref != 'refs/heads/testnet' && github.base_ref != 'testnet'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -60,9 +63,9 @@ jobs:
         working-directory: javascript
       - run: node javascript/e2e/mainnet_readonly.mjs
 
-  # Real funds, pull requests included — deliberately. A testnet pass proves
+  # Real funds, non-testnet pull requests included — deliberately. A testnet pass proves
   # nothing about the production contracts (the two networks can run
-  # different versions), so every PR must carry a live mainnet write proof;
+  # different versions), so a non-testnet PR must carry a live mainnet write proof;
   # that is the default gate for write-path changes, not an afterthought.
   # Safe on PRs because GitHub withholds secrets from fork PRs (the script
   # then self-skips), and the shared non-cancelling concurrency group keeps
@@ -70,7 +73,7 @@ jobs:
   # against each other on the shared wallet. Post-merge pushes are excluded:
   # the PR already proved the exact commits, and the nightly covers drift.
   mainnet-lifecycle-python:
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' && github.ref != 'refs/heads/testnet' && github.base_ref != 'testnet'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
@@ -89,7 +92,7 @@ jobs:
   # Runs after the Python lifecycle: both share the wallet, and each starts
   # from the flat state the other leaves behind.
   mainnet-lifecycle-javascript:
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' && github.ref != 'refs/heads/testnet' && github.base_ref != 'testnet'
     needs: mainnet-lifecycle-python
     runs-on: ubuntu-latest
     timeout-minutes: 15
