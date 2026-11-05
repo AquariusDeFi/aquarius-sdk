@@ -209,7 +209,8 @@ export interface IncentivesConfig {
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
 const U32_MAX = 2 ** 32 - 1;
 
-function validateProviderFee(config: ProviderFeeConfig): void {
+/** @internal Shared validation for chained and split swaps. */
+export function validateProviderFee(config: ProviderFeeConfig): void {
   if (typeof config.contractId !== "string" || config.contractId.length === 0) {
     throw new AquariusError("provider fee contractId must be a non-empty address");
   }
@@ -1515,6 +1516,16 @@ export class AquariusClient {
         return { txHash: result.txHash, order: record, receipt: confirmedReceipt };
       },
     );
+  }
+
+  /** Assemble an already simulated fixed operation with the configured CPU and fee
+   * headroom. Does not simulate, sign, submit, or restore storage. */
+  async assembleTransaction(
+    transaction: Transaction,
+    operation: xdr.Operation,
+    simulation: rpc.Api.SimulateTransactionSuccessResponse,
+  ): Promise<Transaction> {
+    return this.engine.assemble(transaction, operation, simulation);
   }
 
   /** @internal Exposed for deterministic simulation/assembly tests. */

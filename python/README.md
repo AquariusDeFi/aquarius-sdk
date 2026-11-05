@@ -293,6 +293,81 @@ valid-after ledger is in the future. The allowance horizon must satisfy the
 network's current allowance limit and cover the order. Annual orders are not
 supported by the agreed one-signature flow.
 
+## Split swaps
+
+An exact-input swap that the backend splits across routes runs as one call to
+the router's `swap_split`. `find_path_split` returns one plan, split or not. The
+SDK checks it, then builds the call with the user's whole authorization:
+`swap_split` with all its arguments and the one input transfer.
+
+```python
+from aquarius import (
+    normalize_swap_split_plan, get_swap_minimum, build_swap_split_operation,
+    load_swap_resource_limits, assert_swap_authorization, assert_swap_resources,
+    get_swap_split_result,
+)
+
+response = aqua.api.find_path_split(
+    {"token_in_address": token_in, "token_out_address": token_out, "amount": amount_in}
+)
+plan = normalize_swap_split_plan(response, token_in, token_out, amount_in)
+minimum = get_swap_minimum(plan.amount_out, "1")  # percent: "1" = 1%
+operation = build_swap_split_operation(
+    source=source, router=aqua.network.router, token_in=token_in,
+    token_out=token_out, plan=plan, minimum=minimum,
+)
+limits = load_swap_resource_limits(server, network_passphrase)
+# Your code: simulate once with this fixed authorization, reject restore or
+# error results, and assemble the unsigned transaction.
+tx, events, retval, ledger = simulate_and_assemble(operation)
+assert_swap_authorization(tx, source, operation.to_xdr_object().to_xdr())
+if ledger < limits.latest_ledger:
+    raise ValueError("Stale simulation")
+assert_swap_resources(tx, limits, {"events": events, "retval": retval})
+output = get_swap_split_result(retval)
+# Show the plan, minimum, output and fee before signing.
+```
+
+`normalize_swap_split_plan` raises `NoRouteError` without a route, and
+`ValueError("Invalid swap quote: <failed check>")` for a plan that does not
+match the request or the router's execution of it: ask for a new quote, there
+is no fallback. It checks the requested input, stage shares (integers summing
+to 10000), every chain token by token from `token_in` through each stage to
+`token_out`, each part's input against the router's allocation of its stage
+input, outputs that add up to the next stage's input (within u128) and to
+`amount_out`, and that `stages_xdr` is the encoding of the readable stages the
+builder encodes. A plan has at most 4 stages, 4 parts per stage and 4 hops per
+chain. `pools` and `tokens` are display data from the API: the signed call is
+built only from the validated token addresses, pool indexes, shares and
+amounts.
+
+The minimum comes from your slippage on the quoted `amount_out`, never from the
+API's `amount_out_min`. To authorize the output trustline inside the swap, pass
+`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}` and
+omit `batch`. The builder verifies the asset is `token_out` and nests `trust`
+under the swap authorization. The updated contract opens missing lines atomically;
+XLM, WASM tokens, issuers, contract recipients and existing lines need no new line.
+A missing line requires the recipient's authorization and XLM reserve; issuer
+authorization restrictions still apply. Read `get_swap_split_result(retval)`.
+
+For provider fees, pass the same `ProviderFeeConfig` as `provider_fee` to
+`get_swap_minimum(plan.amount_out, slippage, provider_fee)` and
+`build_swap_split_operation`. The quote is gross; the minimum and returned
+amount are net of one fee rounded up on the total. An explicit recipient selects
+`swap_split_to`. Missing-line authorization is supported only for `source`;
+a different recipient needs an existing line or separately supplied authorization.
+Use the collector's actual fee denominator and cap. Existing collectors are not
+upgradeable: split swaps require a newly deployed compatible collector, as well
+as the updated router. Publishing the SDK does not upgrade either contract.
+
+Use `aqua.assemble_transaction(transaction, operation, simulation)` after your
+successful simulation to preserve the fixed operation and apply SDK CPU and
+resource-fee headroom; then check the assembled envelope's resources. It does
+not simulate again, sign, submit or restore storage.
+Explicit `batch` retains legacy external `[trust, swap_split]` behavior; only
+that mode uses `get_swap_split_result(retval, with_trustline=True)`.
+Install this prerelease with `pip install aquarius-sdk==0.7.0a2`.
+
 ## What the SDK handles for you
 
 - **Routing** — quotes come from the find-path API; the swap chain XDR is passed through untouched.
