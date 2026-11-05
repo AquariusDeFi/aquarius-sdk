@@ -7,6 +7,14 @@ import { Asset } from "./assets.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { BatchCall, batchArgs, batchOperation, batchResults, isBudgetExceeded } from "./batch.js";
 import { snapTick, tickFromPrice, tickSpacingForFee } from "./concentrated.js";
+import {
+  DelegateParams,
+  IceProxy,
+  UndelegateParams,
+  delegateCalls,
+  delegationError,
+  undelegateCalls,
+} from "./delegation.js";
 import { AquariusError, SlippageError } from "./errors.js";
 import { CollectorContext, FeeCollector } from "./collector.js";
 import {
@@ -26,6 +34,7 @@ import {
   validateOnchainLimitOrderDraft,
   validateExecutorReward,
 } from "./limit-orders.js";
+import { CreateLockParams, createLockError, createLockPlan, withdrawCalls } from "./locker.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
   DepositAmounts,
@@ -52,7 +61,12 @@ export interface AquariusConfig {
    * for instance, is the network's preset with another router (and usually
    * another `apiUrl`). Unspecified addresses keep the preset's values.
    */
-  contracts?: Partial<Pick<NetworkConfig, "router" | "batch" | "collectorFactory">>;
+  contracts?: Partial<
+    Pick<
+      NetworkConfig,
+      "router" | "batch" | "collectorFactory" | "locker" | "upvoteIceProxy" | "governIceProxy"
+    >
+  >;
   /** Inclusion fee bid in stroops. Default 100000 (0.01 XLM). */
   baseFee?: string;
   /**
@@ -264,6 +278,9 @@ export class AquariusClient {
       router: config.contracts?.router ?? preset.router,
       batch: config.contracts?.batch ?? preset.batch,
       collectorFactory: config.contracts?.collectorFactory ?? preset.collectorFactory,
+      locker: config.contracts?.locker ?? preset.locker,
+      upvoteIceProxy: config.contracts?.upvoteIceProxy ?? preset.upvoteIceProxy,
+      governIceProxy: config.contracts?.governIceProxy ?? preset.governIceProxy,
     };
     this.api = new ApiClient(this.network.apiUrl);
     this.server = new rpc.Server(this.network.rpcUrl);
@@ -1037,6 +1054,108 @@ export class AquariusClient {
       };
     },
   };
+
+  // -- ICE Locker and delegation ---------------------------------------------------------
+
+  /**
+   * ICE Locker writes, prepared but not signed: each returns the simulated,
+   * unsigned envelope XDR. The signer's account is the owner and the source.
+   */
+  readonly locker = {
+    /**
+     * Lock `amount` AQUA until `unlockTime`. Authorizes `create_lock` and,
+     * beneath it, the AQUA transfer from the owner to the Locker. A missing
+     * AQUA trustline or a balance below `amount` fails with a message saying so.
+     */
+    buildCreateLock: async (params: CreateLockParams): Promise<string> => {
+      const locker = this.lockerContract();
+      const owner = this.requireSigner().publicKey();
+      const { code, issuer } = this.network.rewardToken;
+      const token = Asset.classic(code, issuer).contractId(this.network.passphrase);
+      const { args, auth } = createLockPlan(locker, token, owner, params);
+      try {
+        return await this.buildContract(locker, "create_lock", args, [sourceAccountEntry(auth)]);
+      } catch (error) {
+        throw createLockError(error);
+      }
+    },
+
+    /**
+     * Withdraw unlocked positions. One position calls the Locker directly;
+     * several are withdrawn in one transaction through the batch contract.
+     */
+    buildWithdraw: async (positionIds: readonly number[]): Promise<string> => {
+      const locker = this.lockerContract();
+      return this.buildCalls(withdrawCalls(locker, this.requireSigner().publicKey(), positionIds));
+    },
+  };
+
+  /**
+   * ICE delegation writes on the upvoteICE and governICE proxies, prepared
+   * but not signed: each returns the simulated, unsigned envelope XDR. The
+   * signer's account is the owner and the source. Changing both proxies is
+   * one transaction through the batch contract. The proxy enforces the rules
+   * that depend on its state, such as the number of delegates and the 100%
+   * total; its errors state what they mean.
+   */
+  readonly delegation = {
+    /** Set the share of the owner's voting power delegated to `delegate`, per proxy. */
+    buildDelegate: async (params: DelegateParams): Promise<string> => {
+      const contracts = this.delegationProxies();
+      const calls = delegateCalls(contracts, this.requireSigner().publicKey(), params);
+      try {
+        return await this.buildCalls(calls);
+      } catch (error) {
+        throw delegationError(error);
+      }
+    },
+
+    /** Remove the delegation to `delegate` on the given proxies. */
+    buildUndelegate: async (params: UndelegateParams): Promise<string> => {
+      const contracts = this.delegationProxies();
+      const calls = undelegateCalls(contracts, this.requireSigner().publicKey(), params);
+      try {
+        return await this.buildCalls(calls);
+      } catch (error) {
+        throw delegationError(error);
+      }
+    },
+  };
+
+  private lockerContract(): string {
+    if (!this.network.locker) {
+      throw new AquariusError("No ICE Locker known for this network — pass contracts.locker");
+    }
+    return this.network.locker;
+  }
+
+  private delegationProxies(): Record<IceProxy, string> {
+    const { upvoteIceProxy, governIceProxy } = this.network;
+    if (!upvoteIceProxy || !governIceProxy) {
+      throw new AquariusError(
+        "No ICE delegation proxies known for this network — pass contracts.upvoteIceProxy and contracts.governIceProxy",
+      );
+    }
+    return { upvote: upvoteIceProxy, govern: governIceProxy };
+  }
+
+  /**
+   * One call authorized on its own, directly; several through the batch
+   * contract, each call authorized beneath `batch`.
+   */
+  private buildCalls(calls: BatchCall[]): Promise<string> {
+    if (calls.length === 1) {
+      const [{ contractId, fn, args }] = calls;
+      return this.buildContract(contractId, fn, args, [
+        sourceAccountEntry(authorizedInvocation(contractId, fn, args)),
+      ]);
+    }
+    return this.buildBatch(
+      calls,
+      calls.map(call => authorizedInvocation(call.contractId, call.fn, call.args)),
+      false,
+    );
+  }
 
   // -- batch reads ------------------------------------------------------------------------
 
