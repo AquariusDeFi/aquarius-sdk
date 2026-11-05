@@ -342,13 +342,31 @@ built only from the validated token addresses, pool indexes, shares and
 amounts.
 
 The minimum comes from your slippage on the quoted `amount_out`, never from the
-API's `amount_out_min`. To add the output trustline, pass `batch` and
-`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}`: the
-builder checks that the classic asset is `token_out` and runs
-`[trust, swap_split]` through the batch contract; read its result with
-`get_swap_split_result(retval, with_trustline=True)`. The helpers never sign,
-submit or restore storage. JavaScript has the same helpers in camelCase, and
-both test suites run the shared cases in `testdata/split-*.json`.
+API's `amount_out_min`. To authorize the output trustline inside the swap, pass
+`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}` and
+omit `batch`. The builder verifies the asset is `token_out` and nests `trust`
+under the swap authorization. The updated contract opens missing lines atomically;
+XLM, WASM tokens, issuers, contract recipients and existing lines need no new line.
+A missing line requires the recipient's authorization and XLM reserve; issuer
+authorization restrictions still apply. Read `get_swap_split_result(retval)`.
+
+For provider fees, pass the same `ProviderFeeConfig` as `provider_fee` to
+`get_swap_minimum(plan.amount_out, slippage, provider_fee)` and
+`build_swap_split_operation`. The quote is gross; the minimum and returned
+amount are net of one fee rounded up on the total. An explicit recipient selects
+`swap_split_to`. Missing-line authorization is supported only for `source`;
+a different recipient needs an existing line or separately supplied authorization.
+Use the collector's actual fee denominator and cap. Existing collectors are not
+upgradeable: split swaps require a newly deployed compatible collector, as well
+as the updated router. Publishing the SDK does not upgrade either contract.
+
+Use `aqua.assemble_transaction(transaction, operation, simulation)` after your
+successful simulation to preserve the fixed operation and apply SDK CPU and
+resource-fee headroom; then check the assembled envelope's resources. It does
+not simulate again, sign, submit or restore storage.
+Explicit `batch` retains legacy external `[trust, swap_split]` behavior; only
+that mode uses `get_swap_split_result(retval, with_trustline=True)`.
+Install this prerelease with `pip install aquarius-sdk==0.7.0a1`.
 
 ## What the SDK handles for you
 

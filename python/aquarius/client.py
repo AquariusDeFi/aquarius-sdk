@@ -699,6 +699,15 @@ class AquariusClient:
         )
         return self.engine.sign_and_submit(tx, signer)
 
+    def assemble_transaction(self, transaction, operation, simulation):
+        """Assemble a fixed operation with configured CPU and fee headroom.
+
+        Uses the supplied simulation only; does not sign, submit or restore.
+        """
+        return self.engine._assemble(
+            transaction, simulation, (operation.to_xdr_object().to_xdr(),)
+        )
+
     # -- internals ---------------------------------------------------------------------
 
     def _swap_append(self, quote: Quote):
