@@ -14,9 +14,9 @@ import {
 import {
   loadSwapResourceLimits,
   assertSwapResources,
-  getSellSwapResult,
   assertSwapAuthorization,
 } from "../dist/swap-resources.js";
+import { getSwapSplitResult } from "../dist/split-swap.js";
 import {
   swapResourceConfig,
   swapResourceNetwork,
@@ -94,10 +94,7 @@ test("events and full return count, diagnostics and reverted calls do not", asyn
   ];
   const retval = xdr.ScVal.scvVec([
     xdr.ScVal.scvVoid(),
-    xdr.ScVal.scvVec([
-      nativeToScVal(1n, { type: "u128" }),
-      nativeToScVal(2n, { type: "u128" }),
-    ]),
+    nativeToScVal(3n, { type: "u128" }),
   ]);
   const bytes =
     events[0].event.toXdr().length +
@@ -119,8 +116,8 @@ test("events and full return count, diagnostics and reverted calls do not", asyn
       ),
     /events and return/,
   );
-  assert.deepEqual(getSellSwapResult(retval, 2, true), [1n, 2n]);
-  assert.throws(() => getSellSwapResult(retval, 1, true));
+  assert.equal(getSwapSplitResult(retval, true), 3n);
+  assert.throws(() => getSwapSplitResult(retval, false));
 });
 test("prepared transaction cannot replace source or invocation", () => {
   assert.doesNotThrow(() =>

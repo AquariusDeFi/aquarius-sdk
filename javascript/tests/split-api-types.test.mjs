@@ -2,7 +2,7 @@ import { test } from "node:test";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-test("typed API response composes with split normalization", () => {
+test("typed find-path-split response composes with normalization and the builder", () => {
   execFileSync(
     process.execPath,
     [
