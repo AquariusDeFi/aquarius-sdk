@@ -17,10 +17,15 @@ const cases = read("split-behavior.json"),
   resource = read("split-resources.json");
 const { request } = fixture;
 
-// Fixture changes: set or delete the value at a path of keys and indices.
+// Fixture changes: set or delete the value at a path of keys and indices;
+// an empty path replaces the whole value.
 const patched = (value, changes = []) => {
-  const copy = structuredClone(value);
+  let copy = structuredClone(value);
   for (const change of changes) {
+    if (!change.path.length) {
+      copy = structuredClone(change.value);
+      continue;
+    }
     const key = change.path[change.path.length - 1];
     const parent = change.path
       .slice(0, -1)
@@ -66,17 +71,24 @@ const buildOptions = (plan, minimum, extra = {}) => ({
   minimum,
   ...extra,
 });
+// The SDK's message for a rejection: its family and the failed check.
+const rejection = (family, reason) => ({
+  message:
+    family === "swap"
+      ? `Invalid swap: ${reason}.`
+      : `Invalid swap quote: ${reason}. Please request a new quote.`,
+});
 
 for (const c of cases.amounts)
   test("shared decimal: " + JSON.stringify(c), () => {
     const run = () => sdk.sellAmountToRaw(c.amount, c.decimals);
-    if (c.error) assert.throws(run);
+    if (c.error) assert.throws(run, rejection(c.error, c.reason));
     else assert.equal(run(), c.expected);
   });
 for (const c of cases.minimums)
   test("shared minimum: " + JSON.stringify(c), () => {
     const run = () => sdk.getSwapMinimum(c.output, c.slippage);
-    if (c.error) assert.throws(run);
+    if (c.error) assert.throws(run, rejection(c.error, c.reason));
     else assert.equal(run(), c.expected);
   });
 for (const c of cases.quotes)
@@ -84,7 +96,7 @@ for (const c of cases.quotes)
     const response = patched(base(c.base).response, c.patch);
     const run = () => normalize(response, c.request);
     if (c.error === "noRoute") assert.throws(run, sdk.NoRouteError);
-    else if (c.error) assert.throws(run, /Invalid swap quote/);
+    else if (c.error) assert.throws(run, rejection(c.error, c.reason));
     else {
       const plan = run();
       assert.deepEqual(plan, planOf(response));
@@ -109,7 +121,7 @@ for (const c of cases.builds)
           { ...trust, ...c.options },
         ),
       );
-    if (c.error) assert.throws(run);
+    if (c.error) assert.throws(run, rejection(c.error, c.reason));
     else assert.doesNotThrow(run);
   });
 
@@ -230,10 +242,11 @@ test("an over-long route XDR is rejected before decoding", () => {
   const response = patched(fixture.plans.single.response, [
     { path: ["stages", 0, 0, "swap_chain_xdr"], value: "A".repeat(32_772) },
   ]);
-  assert.throws(() => normalize(response), /Invalid swap quote/);
+  const tooLong = rejection("quote", "swap_chain_xdr is too long");
+  assert.throws(() => normalize(response), tooLong);
   assert.throws(
     () => sdk.buildSwapSplitOperation(buildOptions(planOf(response), "1")),
-    /Invalid swap quote/,
+    tooLong,
   );
 });
 test("both public SDKs expose every split capability in shared contract", () => {

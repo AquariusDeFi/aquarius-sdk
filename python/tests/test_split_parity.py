@@ -25,9 +25,13 @@ OPTION_NAMES = {"tokenIn": "token_in", "tokenOut": "token_out"}
 
 
 def patched(value, changes=()):
-    """Fixture changes: set or delete the value at a path of object keys and indices."""
+    """Fixture changes: set or delete the value at a path of keys and indices;
+    an empty path replaces the whole value."""
     value = deepcopy(value)
     for change in changes:
+        if not change["path"]:
+            value = deepcopy(change["value"])
+            continue
         *parents, last = change["path"]
         node = value
         for step in parents:
@@ -96,22 +100,34 @@ def build_options(plan, minimum, extra=None):
     return options
 
 
+def assert_rejected(run, family, reason):
+    """The SDK's message for a rejection: its family and the failed check."""
+    with pytest.raises(ValueError) as caught:
+        run()
+    prefix = "Invalid swap" if family == "swap" else "Invalid swap quote"
+    assert str(caught.value) == f"{prefix}: {reason}"
+
+
 @pytest.mark.parametrize("case", CASES["amounts"])
 def test_shared_amounts(case):
+    def run():
+        return sell_amount_to_raw(case["amount"], case["decimals"])
+
     if case.get("error"):
-        with pytest.raises(ValueError):
-            sell_amount_to_raw(case["amount"], case["decimals"])
+        assert_rejected(run, case["error"], case["reason"])
     else:
-        assert sell_amount_to_raw(case["amount"], case["decimals"]) == case["expected"]
+        assert run() == case["expected"]
 
 
 @pytest.mark.parametrize("case", CASES["minimums"])
 def test_shared_minimums(case):
+    def run():
+        return get_swap_minimum(case["output"], case["slippage"])
+
     if case.get("error"):
-        with pytest.raises(ValueError):
-            get_swap_minimum(case["output"], case["slippage"])
+        assert_rejected(run, case["error"], case["reason"])
     else:
-        assert get_swap_minimum(case["output"], case["slippage"]) == case["expected"]
+        assert run() == case["expected"]
 
 
 @pytest.mark.parametrize("case", CASES["quotes"], ids=lambda c: c["name"])
@@ -125,15 +141,14 @@ def test_shared_quotes(case):
         with pytest.raises(NoRouteError):
             run()
     elif case.get("error"):
-        with pytest.raises(ValueError, match="Invalid swap quote"):
-            run()
+        assert_rejected(run, case["error"], case["reason"])
     else:
         plan = run()
         assert asdict(plan) == asdict(plan_of(response))
         assert plan.amount_out == case["expected"]["amountOut"]
-        assert [[part.share for part in stage] for stage in plan.stages] == case[
-            "expected"
-        ]["shares"]
+        shares = [[part.share for part in stage] for stage in plan.stages]
+        assert shares == case["expected"]["shares"]
+        assert all(type(share) is int for stage in shares for share in stage)
 
 
 @pytest.mark.parametrize("case", CASES["builds"], ids=lambda c: c["name"])
@@ -150,8 +165,9 @@ def test_shared_builds(case):
         {**trust, **case.get("options", {})},
     )
     if case.get("error"):
-        with pytest.raises(ValueError):
-            build_swap_split_operation(**options)
+        assert_rejected(
+            lambda: build_swap_split_operation(**options), case["error"], case["reason"]
+        )
     else:
         build_swap_split_operation(**options)
 
@@ -295,10 +311,13 @@ def test_over_long_route_xdr_is_rejected_before_decoding():
         FIXTURE["plans"]["single"]["response"],
         [{"path": ["stages", 0, 0, "swap_chain_xdr"], "value": "A" * 32772}],
     )
-    with pytest.raises(ValueError, match="Invalid swap quote"):
-        normalize(response)
-    with pytest.raises(ValueError, match="Invalid swap quote"):
-        build_swap_split_operation(**build_options(plan_of(response), "1"))
+    reason = "swap_chain_xdr is too long"
+    assert_rejected(lambda: normalize(response), "quote", reason)
+    assert_rejected(
+        lambda: build_swap_split_operation(**build_options(plan_of(response), "1")),
+        "quote",
+        reason,
+    )
 
 
 def test_public_capability_parity():
