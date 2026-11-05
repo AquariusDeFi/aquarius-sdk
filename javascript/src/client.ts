@@ -26,6 +26,7 @@ import {
   validateOnchainLimitOrderDraft,
   validateExecutorReward,
 } from "./limit-orders.js";
+import { CreateLockParams, createLockPlan, withdrawCalls } from "./locker.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
   DepositAmounts,
@@ -1045,6 +1046,61 @@ export class AquariusClient {
       };
     },
   };
+
+  // -- ICE Locker -----------------------------------------------------------------------
+
+  /**
+   * ICE Locker writes, prepared but not signed: each returns the simulated,
+   * unsigned envelope XDR. The signer's account is the owner and the source.
+   */
+  readonly locker = {
+    /**
+     * Lock `amount` AQUA until `unlockTime`. Authorizes `create_lock` and,
+     * beneath it, the AQUA transfer from the owner to the Locker.
+     */
+    buildCreateLock: async (params: CreateLockParams): Promise<string> => {
+      const locker = this.lockerContract();
+      const owner = this.requireSigner().publicKey();
+      const { code, issuer } = this.network.rewardToken;
+      const token = Asset.classic(code, issuer).contractId(this.network.passphrase);
+      const { args, auth } = createLockPlan(locker, token, owner, params);
+      return this.buildContract(locker, "create_lock", args, [sourceAccountEntry(auth)]);
+    },
+
+    /**
+     * Withdraw unlocked positions. One position calls the Locker directly;
+     * several are withdrawn in one transaction through the batch contract.
+     */
+    buildWithdraw: async (positionIds: readonly number[]): Promise<string> => {
+      const locker = this.lockerContract();
+      return this.buildCalls(withdrawCalls(locker, this.requireSigner().publicKey(), positionIds));
+    },
+  };
+
+  private lockerContract(): string {
+    if (!this.network.locker) {
+      throw new AquariusError("No ICE Locker known for this network — pass contracts.locker");
+    }
+    return this.network.locker;
+  }
+
+  /**
+   * One call authorized on its own, directly; several through the batch
+   * contract, each call authorized beneath `batch`.
+   */
+  private buildCalls(calls: BatchCall[]): Promise<string> {
+    if (calls.length === 1) {
+      const [{ contractId, fn, args }] = calls;
+      return this.buildContract(contractId, fn, args, [
+        sourceAccountEntry(authorizedInvocation(contractId, fn, args)),
+      ]);
+    }
+    return this.buildBatch(
+      calls,
+      calls.map(call => authorizedInvocation(call.contractId, call.fn, call.args)),
+      false,
+    );
+  }
 
   // -- batch reads ------------------------------------------------------------------------
 

@@ -25,6 +25,7 @@ export {
 export { batchCallScVal, type BatchCall } from "./batch.js";
 export type { Signer } from "./signer.js";
 export { FeeCollector, type ClaimedFees } from "./collector.js";
+export type { CreateLockParams } from "./locker.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
 export type { FindPathRequest, FindPathResponse, ParsedRoute } from "./api.js";
 export { NETWORKS, type NetworkConfig } from "./networks.js";
