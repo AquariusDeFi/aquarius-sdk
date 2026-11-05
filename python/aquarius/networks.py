@@ -16,8 +16,8 @@ class NetworkConfig:
     # reads (simulations need an existing source account; the AQUA issuer is the
     # convention the documentation examples use).
     read_source: str
-    # Provider-fee collector factory; None where not deployed (testnet) — pass
-    # factory= explicitly to deploy_fee_collector there.
+    # Provider-fee collector factory; set on both presets. A hand-built config
+    # may leave it None — pass factory= explicitly to deploy_fee_collector then.
     collector_factory: str | None = None
     limit_orders_api_url: str | None = None
 
@@ -42,6 +42,7 @@ NETWORKS: dict[str, NetworkConfig] = {
         horizon_url="https://horizon-testnet.stellar.org",
         passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
         read_source="GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+        collector_factory="CCXU6S2PFFFESV65RHUEVJX6TSSN6BYKOCJ3S3LM5M3IXXIWAL5AV4CO",
         limit_orders_api_url="https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
     ),
 }

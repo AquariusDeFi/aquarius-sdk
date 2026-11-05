@@ -1,4 +1,6 @@
 """Provider-fee collectors: read/claim/deploy wiring and auth shape on a fake client."""
+from dataclasses import replace
+
 import pytest
 from stellar_sdk import Address, scval
 
@@ -163,7 +165,7 @@ def test_deploy_requires_a_factory_on_networks_without_one():
     client = AquariusClient.__new__(AquariusClient)
     from aquarius.networks import NETWORKS
 
-    client.network = NETWORKS["testnet"]
+    client.network = replace(NETWORKS["testnet"], collector_factory=None)
     client._read_source = lambda require_signer=False: OWNER
     with pytest.raises(AquariusError, match="factory"):
         client.deploy_fee_collector(max_fee_fraction=100)
