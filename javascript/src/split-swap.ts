@@ -4,35 +4,19 @@ import {
   Operation,
   StrKey,
   nativeToScVal,
+  scValToNative,
   xdr,
 } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
+import type { FindPathSplitPart, FindPathSplitResponse } from "./api.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { batchOperation } from "./batch.js";
+import { NoRouteError } from "./errors.js";
 
-export interface SplitSwapQuoteLeg {
-  amount_in: string;
-  amount_out: string;
-  swap_chain_xdr: string;
-  pools: string[];
-  tokens_addresses: string[];
-  tokens?: string[];
-}
-export interface SellSwapQuote {
-  success: boolean;
-  amount: string | number;
-  swap_chain_xdr: string;
-  pools: string[];
-  tokens_addresses: string[];
-  tokens?: string[];
-  split_plan?: {
-    amount_in: string;
-    amount_out: string;
-    legs: SplitSwapQuoteLeg[];
-  } | null;
-}
-
-export type SellSwapLeg = {
+/** One part of a stage: a chain in the `swap_chained` format and its share. */
+export type SwapSplitPart = {
+  /** Basis points of the stage input; the shares of a stage sum to 10000. */
+  share: number;
   amountIn: string;
   amountOut: string;
   swapChainXdr: string;
@@ -41,13 +25,16 @@ export type SellSwapLeg = {
   tokens: string[];
 };
 
-export type SellSwapPlan = {
+/** A validated `swap_split` plan; amounts are raw-unit integer strings. */
+export type SwapSplitPlan = {
   amountIn: string;
   amountOut: string;
-  legs: SellSwapLeg[];
+  stages: SwapSplitPart[][];
 };
 
 const MAX_AMOUNT = (1n << 127n) - 1n;
+const SHARE_DENOMINATOR = 10_000n;
+const MAX_STAGES = 4;
 const MAX_PARTS = 4;
 const MAX_HOPS = 4;
 const invalidQuote = () =>
@@ -85,16 +72,15 @@ const contractAddress = (value: xdr.ScVal) => {
   return address;
 };
 
-// The route XDR selects token sets, pool indices and outputs. Validate it against
-// the displayed token path before it can become spending authorization.
-const normalizeLeg = (
-  leg: SplitSwapQuoteLeg,
-  base: string,
-  counter: string,
-): SellSwapLeg => {
-  rawAmount(leg.amount_in);
-  rawAmount(leg.amount_out);
-  const { pools, tokens_addresses: tokens, swap_chain_xdr: encoded } = leg;
+// The route XDR selects token sets, pool indices and outputs. Validate it
+// against the displayed token path, which starts at the stage input token,
+// before it can become spending authorization. Returns the chain and the
+// token it ends in.
+const decodeChain = (
+  part: SwapSplitPart,
+  tokenIn: string,
+): [xdr.ScVal, string] => {
+  const { pools, tokensAddresses: tokens, swapChainXdr: encoded } = part;
   if (
     !Array.isArray(pools) ||
     !pools.length ||
@@ -104,8 +90,7 @@ const normalizeLeg = (
     !Array.isArray(tokens) ||
     tokens.length !== pools.length + 1 ||
     tokens.some((token) => !StrKey.isValidContract(token)) ||
-    tokens[0] !== base ||
-    tokens[tokens.length - 1] !== counter ||
+    tokens[0] !== tokenIn ||
     typeof encoded !== "string" ||
     encoded.length > 32_768
   ) {
@@ -115,27 +100,27 @@ const normalizeLeg = (
   // encoding that round-trips exactly.
   const chain = xdr.ScVal.fromXdr(encoded, "base64");
   if (
-    chain.toXDR("base64") !== encoded ||
+    chain.toXdr("base64") !== encoded ||
     chain.type !== "scvVec" ||
-    chain.vec!.length !== pools.length
+    chain.vec?.length !== pools.length
   ) {
     throw invalidQuote();
   }
   const usedPools = new Set<string>();
   chain.vec!.forEach((hop, index) => {
-    if (hop.type !== "scvVec" || hop.vec!.length !== 3) throw invalidQuote();
+    if (hop.type !== "scvVec" || hop.vec?.length !== 3) throw invalidQuote();
     const [poolTokens, poolIndex, output] = hop.vec!;
     if (
       poolTokens.type !== "scvVec" ||
+      !poolTokens.vec ||
       poolIndex.type !== "scvBytes" ||
       poolIndex.bytes!.toBytes().length !== 32 ||
       contractAddress(output) !== tokens[index + 1]
     ) {
       throw invalidQuote();
     }
-    const addresses = poolTokens.vec!.map(contractAddress);
+    const addresses = poolTokens.vec.map(contractAddress);
     if (
-      addresses.length < 2 ||
       new Set(addresses).size !== addresses.length ||
       !addresses.includes(tokens[index]) ||
       !addresses.includes(tokens[index + 1]) ||
@@ -147,81 +132,121 @@ const normalizeLeg = (
     if (usedPools.has(poolKey)) throw invalidQuote();
     usedPools.add(poolKey);
   });
-  return {
-    amountIn: leg.amount_in,
-    amountOut: leg.amount_out,
-    swapChainXdr: encoded,
-    pools: [...pools],
-    tokensAddresses: [...tokens],
-    tokens: Array.isArray(leg.tokens) ? [...leg.tokens] : [],
-  };
+  return [chain, tokens[tokens.length - 1]];
 };
 
-const normalizeSplitPlan = (
-  plan: NonNullable<SellSwapQuote["split_plan"]>,
-  base: string,
-  counter: string,
-  amountIn: string,
-): SellSwapPlan => {
-  if (
-    plan.amount_in !== amountIn ||
-    !Array.isArray(plan.legs) ||
-    plan.legs.length < 2 ||
-    plan.legs.length > MAX_PARTS
-  ) {
-    throw invalidQuote();
-  }
-  const legs = plan.legs.map((leg) => normalizeLeg(leg, base, counter));
-  if (
-    legs.reduce((sum, leg) => sum + BigInt(leg.amountIn), 0n) !==
-      BigInt(amountIn) ||
-    legs.reduce((sum, leg) => sum + BigInt(leg.amountOut), 0n) !==
-      rawAmount(plan.amount_out)
-  ) {
-    throw invalidQuote();
-  }
-  return { amountIn, amountOut: plan.amount_out, legs };
-};
-
-const normalizeOrdinaryRoute = (
-  quote: SellSwapQuote,
-  base: string,
-  counter: string,
-  amountIn: string,
-): SellSwapPlan => {
-  // The legacy DRF DecimalField serializes raw integer outputs with 18 zero
-  // decimal places. Only that representation is relaxed; allocations stay
-  // canonical integer strings and genuinely fractional units are rejected.
-  if (
-    typeof quote.amount !== "string" ||
-    !/^\d+(?:\.0+)?$/.test(quote.amount)
-  ) {
-    throw invalidQuote();
-  }
-  const baselineAmount = BigInt(quote.amount.split(".")[0]).toString();
-  rawAmount(baselineAmount);
-  const baseline = normalizeLeg(
-    { ...quote, amount_in: amountIn, amount_out: baselineAmount },
-    base,
-    counter,
-  );
-  return { amountIn, amountOut: baselineAmount, legs: [baseline] };
-};
-
-export const normalizeSellSwapPlan = (
-  quote: SellSwapQuote,
-  base: string,
-  counter: string,
-  amountIn: string,
-): SellSwapPlan => {
+// The `stages` argument of `swap_split`, encoded from the readable chains
+// after checking them as the router does: stage by stage from `tokenIn`, all
+// chains of a stage ending in the next stage's input token and the last stage
+// in `tokenOut`. Every part's input must be the router's allocation of the
+// stage input, and the parts' outputs make the next stage's input.
+const encodeStages = (
+  plan: SwapSplitPlan,
+  tokenIn: string,
+  tokenOut: string,
+): xdr.ScVal => {
   try {
-    rawAmount(amountIn);
-    if (quote.success !== true || base === counter) throw invalidQuote();
-    // A backend-selected split is executed as quoted or rejected; a malformed
-    // plan never degrades to the ordinary route.
-    return quote.split_plan !== undefined && quote.split_plan !== null
-      ? normalizeSplitPlan(quote.split_plan, base, counter, amountIn)
-      : normalizeOrdinaryRoute(quote, base, counter, amountIn);
+    const { stages } = plan;
+    if (
+      !StrKey.isValidContract(tokenIn) ||
+      !StrKey.isValidContract(tokenOut) ||
+      tokenIn === tokenOut ||
+      !Array.isArray(stages) ||
+      !stages.length ||
+      stages.length > MAX_STAGES
+    ) {
+      throw invalidQuote();
+    }
+    let stageToken = tokenIn;
+    let stageAmount = rawAmount(plan.amountIn);
+    const encoded = stages.map((parts) => {
+      if (!Array.isArray(parts) || !parts.length || parts.length > MAX_PARTS)
+        throw invalidQuote();
+      let shares = 0n;
+      let allocated = 0n;
+      let output = 0n;
+      let stageEnd: string | undefined;
+      const values = parts.map((part, index) => {
+        const { share } = part;
+        if (!Number.isInteger(share) || share < 1) throw invalidQuote();
+        shares += BigInt(share);
+        // Every part but the last gets floor(stage input * share / 10000);
+        // the last part takes the rest.
+        const amount =
+          index === parts.length - 1
+            ? stageAmount - allocated
+            : (stageAmount * BigInt(share)) / SHARE_DENOMINATOR;
+        if (rawAmount(part.amountIn) !== amount) throw invalidQuote();
+        allocated += amount;
+        output += rawAmount(part.amountOut);
+        const [chain, end] = decodeChain(part, stageToken);
+        if (stageEnd !== undefined && end !== stageEnd) throw invalidQuote();
+        stageEnd = end;
+        return xdr.ScVal.scvVec([chain, xdr.ScVal.scvU32(share)]);
+      });
+      if (shares !== SHARE_DENOMINATOR) throw invalidQuote();
+      stageToken = stageEnd!;
+      stageAmount = output;
+      return xdr.ScVal.scvVec(values);
+    });
+    if (stageToken !== tokenOut || stageAmount !== rawAmount(plan.amountOut))
+      throw invalidQuote();
+    return xdr.ScVal.scvVec(encoded);
+  } catch {
+    throw invalidQuote();
+  }
+};
+
+const list = <T>(value: T[]): T[] => {
+  if (!Array.isArray(value)) throw invalidQuote();
+  return [...value];
+};
+
+const readPart = (part: FindPathSplitPart): SwapSplitPart => ({
+  share: part.share,
+  amountIn: part.amount_in,
+  amountOut: part.amount_out,
+  swapChainXdr: part.swap_chain_xdr,
+  pools: list(part.pools),
+  tokensAddresses: list(part.tokens_addresses),
+  tokens: Array.isArray(part.tokens) ? [...part.tokens] : [],
+});
+
+/**
+ * The plan of a `findPathSplit` response for the requested exact input.
+ * Throws NoRouteError when the API found no route, and an "Invalid swap
+ * quote" error when the plan does not match the request or the router's
+ * execution, or `stages_xdr` is not the encoding of the readable stages.
+ */
+export const normalizeSwapSplitPlan = (
+  response: FindPathSplitResponse,
+  tokenIn: string,
+  tokenOut: string,
+  amountIn: string,
+): SwapSplitPlan => {
+  if (response?.success === false) throw new NoRouteError("No route found.");
+  try {
+    if (
+      response.success !== true ||
+      response.amount_in !== amountIn ||
+      !Array.isArray(response.stages)
+    ) {
+      throw invalidQuote();
+    }
+    const plan: SwapSplitPlan = {
+      amountIn,
+      amountOut: response.amount_out,
+      stages: response.stages.map((parts) => list(parts).map(readPart)),
+    };
+    // The call is built from the readable chains; the API's encoding of
+    // them must be the same bytes.
+    if (
+      encodeStages(plan, tokenIn, tokenOut).toXdr("base64") !==
+      response.stages_xdr
+    ) {
+      throw invalidQuote();
+    }
+    return plan;
   } catch {
     throw invalidQuote();
   }
@@ -240,124 +265,62 @@ export const getSwapMinimum = (output: string, slippage: string): string => {
   ).toString();
 };
 
-export interface BuildSellSwapOptions {
+export interface BuildSwapSplitOptions {
   source: string;
+  /** The AMM router, which runs `swap_split`. */
+  router: string;
   tokenIn: string;
   tokenOut: string;
-  router: string;
-  splitRouter?: string;
-  batch?: string;
-  plan: SellSwapPlan;
+  plan: SwapSplitPlan;
+  /** The least total output to accept, raw units; see `getSwapMinimum`. */
   minimum: string;
+  /** The batch contract; required with `trustline`. */
+  batch?: string;
   /** Only a verified classic output asset can receive an atomic trust call. */
   trustline?: { assetCode: string; issuer: string; networkPassphrase: string };
 }
 
-/** Build fixed spending authorization. Does not simulate, sign or submit. */
-export function buildSellSwapOperation(
-  options: BuildSellSwapOptions,
+/**
+ * `router.swap_split` with its authorization: the call with all its
+ * arguments and the one input transfer. Checks the plan again before
+ * encoding it. Does not simulate, sign or submit.
+ */
+export function buildSwapSplitOperation(
+  options: BuildSwapSplitOptions,
 ): xdr.Operation {
-  const {
-    source,
-    tokenIn,
-    tokenOut,
-    router,
-    splitRouter,
-    batch,
-    plan,
-    minimum,
-    trustline,
-  } = options;
+  const { source, router, tokenIn, tokenOut, plan, minimum, batch, trustline } =
+    options;
   if (
     !StrKey.isValidEd25519PublicKey(source) ||
-    !StrKey.isValidContract(router) ||
-    tokenIn === tokenOut
+    !StrKey.isValidContract(router)
   )
     throw invalidQuote();
-  rawAmount(plan.amountIn);
-  rawAmount(plan.amountOut);
-  if (!/^\d+$/.test(minimum) || BigInt(minimum) > MAX_AMOUNT)
-    throw invalidQuote();
+  const stages = encodeStages(plan, tokenIn, tokenOut);
   if (
-    !Array.isArray(plan.legs) ||
-    plan.legs.length < 1 ||
-    plan.legs.length > MAX_PARTS
+    typeof minimum !== "string" ||
+    !/^\d+$/.test(minimum) ||
+    BigInt(minimum) > MAX_AMOUNT
   )
     throw invalidQuote();
-  const legs = plan.legs.map((leg) =>
-    normalizeLeg(
-      {
-        amount_in: leg.amountIn,
-        amount_out: leg.amountOut,
-        swap_chain_xdr: leg.swapChainXdr,
-        pools: leg.pools,
-        tokens_addresses: leg.tokensAddresses,
-        tokens: leg.tokens,
-      },
-      tokenIn,
-      tokenOut,
-    ),
-  );
-  if (
-    legs.reduce((n, l) => n + BigInt(l.amountIn), 0n) !==
-      BigInt(plan.amountIn) ||
-    legs.reduce((n, l) => n + BigInt(l.amountOut), 0n) !==
-      BigInt(plan.amountOut)
-  )
-    throw invalidQuote();
-  const isSplit = legs.length > 1;
-  if (isSplit && (!splitRouter || !StrKey.isValidContract(splitRouter)))
-    throw new Error("Split swaps are not configured for this network.");
   const addr = (s: string) => new Address(s).toScVal();
-  const uint = (s: string) => nativeToScVal(BigInt(s), { type: "u128" });
-  const swaps = legs.map((leg) => {
-    const args = [
-      addr(source),
-      xdr.ScVal.fromXdr(leg.swapChainXdr, "base64"),
-      addr(tokenIn),
-      uint(leg.amountIn),
-      uint(isSplit ? "0" : minimum),
-    ];
-    const transfer = authorizedInvocation(tokenIn, "transfer", [
-      addr(source),
-      addr(router),
-      nativeToScVal(BigInt(leg.amountIn), { type: "i128" }),
-    ]);
-    return {
-      args,
-      root: authorizedInvocation(router, "swap_chained", args, [transfer]),
-    };
-  });
-  const contract = isSplit ? splitRouter! : router;
-  const args = isSplit
-    ? [
-        addr(source),
-        xdr.ScVal.scvVec(
-          legs.map((l) =>
-            xdr.ScVal.scvVec([
-              xdr.ScVal.fromXdr(l.swapChainXdr, "base64"),
-              uint(l.amountIn),
-            ]),
-          ),
-        ),
-        addr(tokenIn),
-        addr(tokenOut),
-        uint(plan.amountIn),
-        uint(minimum),
-      ]
-    : swaps[0].args;
-  const root = isSplit
-    ? authorizedInvocation(
-        contract,
-        "swap_chained",
-        args,
-        swaps.map((s) => s.root),
-      )
-    : swaps[0].root;
+  const args = [
+    addr(source),
+    stages,
+    addr(tokenIn),
+    addr(tokenOut),
+    nativeToScVal(BigInt(plan.amountIn), { type: "u128" }),
+    nativeToScVal(BigInt(minimum), { type: "u128" }),
+  ];
+  const transfer = authorizedInvocation(tokenIn, "transfer", [
+    addr(source),
+    addr(router),
+    nativeToScVal(BigInt(plan.amountIn), { type: "i128" }),
+  ]);
+  const root = authorizedInvocation(router, "swap_split", args, [transfer]);
   if (trustline === undefined || trustline === null)
     return Operation.invokeContractFunction({
-      contract,
-      function: "swap_chained",
+      contract: router,
+      function: "swap_split",
       args,
       auth: [sourceAccountEntry(root)],
     });
@@ -379,8 +342,34 @@ export function buildSellSwapOperation(
   return batchOperation(
     batch,
     source,
-    [trust, { contractId: contract, fn: "swap_chained", args }],
+    [trust, { contractId: router, fn: "swap_split", args }],
     [authorizedInvocation(tokenOut, "trust", trust.args), root],
     true,
   );
 }
+
+/**
+ * The total output from the return value of a simulated or executed
+ * `swap_split`; with a trustline, from the batch's results.
+ */
+export const getSwapSplitResult = (
+  result: xdr.ScVal,
+  withTrustline: boolean,
+): bigint => {
+  const unexpected = () =>
+    new Error("Unexpected swap result. Check the transaction in the explorer.");
+  let value = result;
+  if (withTrustline) {
+    // The batch returns one value per call: void for the trust call, then
+    // the swap's output.
+    if (
+      result.type !== "scvVec" ||
+      result.vec?.length !== 2 ||
+      result.vec[0].type !== "scvVoid"
+    )
+      throw unexpected();
+    value = result.vec[1];
+  }
+  if (value.type !== "scvU128") throw unexpected();
+  return scValToNative(value) as bigint;
+};
