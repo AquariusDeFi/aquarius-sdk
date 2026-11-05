@@ -82,6 +82,12 @@ test("API HTTP failures raise typed errors and every request is time-bounded", a
       api.findPath({ token_in_address: "a", token_out_address: "b", amount: "1" }, true),
       AquariusError,
     );
+    await assert.rejects(
+      api.findPathSplit({ token_in_address: "a", token_out_address: "b", amount: "1" }),
+      (error) =>
+        error instanceof AquariusError &&
+        error.message === "Find-path-split request failed: HTTP 503",
+    );
     await assert.rejects(api.poolsByAddresses(["CPOOL"]), AquariusError);
     await assert.rejects(api.userPools("GUSER"), AquariusError);
     await assert.rejects(api.createLimitOrderDraft("https://api.invalid/orders", {}), AquariusError);
@@ -90,7 +96,7 @@ test("API HTTP failures raise typed errors and every request is time-bounded", a
   } finally {
     globalThis.fetch = realFetch;
   }
-  assert.equal(signals.length, 6);
+  assert.equal(signals.length, 7);
   assert.ok(signals.every(s => s instanceof AbortSignal));
 });
 

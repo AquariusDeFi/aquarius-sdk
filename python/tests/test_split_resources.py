@@ -4,11 +4,11 @@ from dataclasses import replace
 import pytest
 from stellar_sdk import TransactionEnvelope, Keypair, xdr
 from stellar_sdk.soroban_rpc import GetNetworkResponse, GetLedgerEntriesResponse
+from aquarius.split_swap import get_swap_split_result
 from aquarius.swap_resources import (
     load_swap_resource_limits,
     assert_swap_resources,
     assert_swap_authorization,
-    get_swap_result,
 )
 
 FIXTURE = json.loads(
@@ -92,25 +92,24 @@ def test_configuration_rejects_wrong_network_and_missing_keys():
         load_swap_resource_limits(reader, FIXTURE["networkPassphrase"])
 
 
-def test_shared_exact_builder_wire():
-    from stellar_sdk import StrKey
-    from aquarius import normalize_sell_swap_plan, build_sell_swap_operation
+def test_shared_transaction_carries_the_built_swap_split():
+    from aquarius import normalize_swap_split_plan, build_swap_split_operation
 
-    api = json.loads(
-        (Path(__file__).parents[2] / "testdata/split-api-response.json").read_text()
+    plans = json.loads(
+        (Path(__file__).parents[2] / "testdata/split-plans.json").read_text()
     )
-    r = api["request"]
-    plan = normalize_sell_swap_plan(
-        api["response"], r["token_in_address"], r["token_out_address"], r["amount"]
+    r = plans["request"]
+    response = plans["plans"]["diamond"]["response"]
+    plan = normalize_swap_split_plan(
+        response, r["token_in_address"], r["token_out_address"], r["amount"]
     )
-    operation = build_sell_swap_operation(
+    operation = build_swap_split_operation(
         source=FIXTURE["source"],
+        router=plans["router"],
         token_in=r["token_in_address"],
         token_out=r["token_out_address"],
-        router=StrKey.encode_contract(bytes([8]) * 32),
-        split_router=StrKey.encode_contract(bytes([9]) * 32),
         plan=plan,
-        minimum="123",
+        minimum=response["amount_out_min"],
     )
     assert operation.to_xdr_object().to_xdr() == FIXTURE["operationXdr"]
 
@@ -132,35 +131,24 @@ def test_shared_archived_footprint(case):
 
 @pytest.mark.parametrize("case", FIXTURE["results"], ids=lambda c: c["name"])
 def test_shared_results(case):
-    from aquarius import get_sell_swap_result
-
     value = xdr.SCVal.from_xdr(case["xdr"])
     if case.get("error"):
-        with pytest.raises(ValueError):
-            get_sell_swap_result(value, case["legCount"], case["withTrustline"])
+        with pytest.raises(ValueError, match="Unexpected swap result"):
+            get_swap_split_result(value, case["withTrustline"])
     else:
         assert (
-            list(
-                map(
-                    str,
-                    get_sell_swap_result(
-                        value, case["legCount"], case["withTrustline"]
-                    ),
-                )
-            )
-            == case["expected"]
+            str(get_swap_split_result(value, case["withTrustline"])) == case["expected"]
         )
-    if case.get("ordinary"):
-        assert get_swap_result(value, True).to_xdr() == value.vec.sc_vec[1].to_xdr()
 
 
-def test_changed_global_minimum_rejected():
+def test_changed_minimum_rejected():
     from stellar_sdk import scval
 
     tx = transaction()
-    tx.transaction.operations[0].auth[0].root_invocation.function.contract_fn.args[
-        5
-    ] = scval.to_uint128(124)
+    args = (
+        tx.transaction.operations[0].auth[0].root_invocation.function.contract_fn.args
+    )
+    args[5] = scval.to_uint128(scval.from_uint128(args[5]) + 1)
     with pytest.raises(ValueError):
         assert_swap_authorization(tx, FIXTURE["source"], FIXTURE["operationXdr"])
 

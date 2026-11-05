@@ -66,222 +66,1574 @@
       "output": "0",
       "slippage": "1",
       "error": true
+    },
+    {
+      "output": "58029507394061",
+      "slippage": "0.5",
+      "expected": "57739359857090"
     }
   ],
   "quotes": [
     {
-      "name": "backend split plan",
-      "expectedParts": 2,
-      "expectedOutput": "181322178776"
+      "name": "single plan",
+      "base": "single",
+      "expected": {
+        "amountOut": "56813485616194",
+        "shares": [
+          [
+            10000
+          ]
+        ]
+      }
     },
     {
-      "name": "null split plan uses ordinary route",
-      "quote": {
-        "split_plan": null
+      "name": "parallel plan",
+      "base": "parallel",
+      "expected": {
+        "amountOut": "58858310911438",
+        "shares": [
+          [
+            6000,
+            4000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "diamond plan",
+      "base": "diamond",
+      "expected": {
+        "amountOut": "58029507394061",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            3500,
+            6500
+          ]
+        ]
+      }
+    },
+    {
+      "name": "prefixSuffix plan",
+      "base": "prefixSuffix",
+      "expected": {
+        "amountOut": "56091184078512",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            5000,
+            5000
+          ],
+          [
+            10000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fourHops plan",
+      "base": "fourHops",
+      "expected": {
+        "amountOut": "55329925542005",
+        "shares": [
+          [
+            10000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fourParts plan",
+      "base": "fourParts",
+      "expected": {
+        "amountOut": "58976300763205",
+        "shares": [
+          [
+            4000,
+            2500,
+            2000,
+            1500
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fourStages plan",
+      "base": "fourStages",
+      "expected": {
+        "amountOut": "55329925542005",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            10000
+          ],
+          [
+            10000
+          ],
+          [
+            10000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "display names are optional",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens"
+          ],
+          "delete": true
+        }
+      ],
+      "expected": {
+        "amountOut": "58029507394061",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            3500,
+            6500
+          ]
+        ]
+      }
+    },
+    {
+      "name": "amount_out_min is not used",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out_min"
+          ],
+          "value": "0"
+        }
+      ],
+      "expected": {
+        "amountOut": "58029507394061",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            3500,
+            6500
+          ]
+        ]
+      }
+    },
+    {
+      "name": "no route",
+      "base": "noRoute",
+      "error": "noRoute"
+    },
+    {
+      "name": "success is the string true",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "success"
+          ],
+          "value": "true"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "success is missing",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "success"
+          ],
+          "delete": true
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "amount_in differs from the request",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "200000000004"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "requested amount zero",
+      "base": "diamond",
+      "request": {
+        "amount": "0"
       },
-      "expectedParts": 1,
-      "expectedOutput": "166249791563"
-    },
-    {
-      "name": "absent split plan uses ordinary route",
-      "omit": [
-        "split_plan"
-      ],
-      "expectedParts": 1,
-      "expectedOutput": "166249791563"
-    },
-    {
-      "name": "four legs",
-      "legs": [
+      "patch": [
         {
-          "from": 0,
-          "amount_in": "50000000000",
-          "amount_out": "45330544694"
-        },
-        {
-          "from": 1,
-          "amount_in": "50000000000",
-          "amount_out": "45330544694"
-        },
-        {
-          "from": 0,
-          "amount_in": "50000000000",
-          "amount_out": "45330544694"
-        },
-        {
-          "from": 1,
-          "amount_in": "50000000003",
-          "amount_out": "45330544694"
+          "path": [
+            "amount_in"
+          ],
+          "value": "0"
         }
       ],
-      "expectedParts": 4,
-      "expectedOutput": "181322178776"
+      "error": "invalid"
     },
     {
-      "name": "empty split plan",
-      "quote": {
-        "split_plan": {}
+      "name": "requested amount negative",
+      "base": "diamond",
+      "request": {
+        "amount": "-1"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "-1"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "requested amount fractional",
+      "base": "diamond",
+      "request": {
+        "amount": "1.5"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "1.5"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "requested amount in exponent form",
+      "base": "diamond",
+      "request": {
+        "amount": "1e2"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "1e2"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "requested amount with a leading zero",
+      "base": "diamond",
+      "request": {
+        "amount": "0200000000003"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "0200000000003"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "requested amount above 2^127 - 1",
+      "base": "diamond",
+      "request": {
+        "amount": "170141183460469231731687303715884105728"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "170141183460469231731687303715884105728"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "requested amount as a number",
+      "base": "diamond",
+      "request": {
+        "amount": 200000000003
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": 200000000003
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "amount_out with a leading zero",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": "058029507394061"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "amount_out is a number",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": 58029507394061
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "amount_out differs from the last stage",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": "58029507394062"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "same input and output token",
+      "base": "diamond",
+      "request": {
+        "token_out_address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+      },
+      "error": "invalid"
+    },
+    {
+      "name": "input token is not a contract",
+      "base": "diamond",
+      "request": {
+        "token_in_address": "native"
+      },
+      "error": "invalid"
+    },
+    {
+      "name": "first stage does not start at token_in",
+      "base": "diamond",
+      "request": {
+        "token_in_address": "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN"
+      },
+      "error": "invalid"
+    },
+    {
+      "name": "last stage does not end at token_out",
+      "base": "diamond",
+      "request": {
+        "token_out_address": "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5"
+      },
+      "error": "invalid"
+    },
+    {
+      "name": "stages are missing",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages"
+          ],
+          "delete": true
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "no stages",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages"
+          ],
+          "value": []
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "stages are not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages"
+          ],
+          "value": {}
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "five stages",
+      "base": "fiveStages",
+      "error": "invalid"
+    },
+    {
+      "name": "stage is not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1
+          ],
+          "value": {}
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "empty stage",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1
+          ],
+          "value": []
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "five parts in a stage",
+      "base": "fiveParts",
+      "error": "invalid"
+    },
+    {
+      "name": "part is not an object",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0
+          ],
+          "value": "part"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "share is a string",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": "10000"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "share is a boolean",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": true
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "share is fractional",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "share"
+          ],
+          "value": 3499.5
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "share"
+          ],
+          "value": 6500.5
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "share is zero",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": 0
+        },
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "share"
+          ],
+          "value": 10000
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "share is negative",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": -1
+        },
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "share"
+          ],
+          "value": 10001
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "shares sum below 10000",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "share"
+          ],
+          "value": 3999
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "shares sum above 10000",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "share"
+          ],
+          "value": 4001
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "part input differs from the router's allocation",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "amount_in"
+          ],
+          "value": "120000000002"
+        },
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "amount_in"
+          ],
+          "value": "80000000001"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "part input rounds down to zero",
+      "base": "parallel",
+      "request": {
+        "amount": "1"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "1"
+        },
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "amount_in"
+          ],
+          "value": "0"
+        },
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "amount_in"
+          ],
+          "value": "1"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "part input with a leading zero",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "amount_in"
+          ],
+          "value": "0120000000001"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "part output is zero",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "amount_out"
+          ],
+          "value": "0"
+        },
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": "37912396137806"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "stage output differs from the next stage input",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "amount_out"
+          ],
+          "value": "58650508855"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "last stage output differs from amount_out",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "amount_out"
+          ],
+          "value": "37912396137807"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "route XDR is not XDR",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "invalid"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "route XDR without padding",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaA"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "route XDR with a stray character",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAA!AAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "route XDR is not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAAwAAAAE="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "route has fewer hops than pools",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOA=="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "route without hops",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAAA"
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "pools"
+          ],
+          "value": []
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN"
+          ]
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "five-hop route",
+      "base": "fiveHops",
+      "error": "invalid"
+    },
+    {
+      "name": "pools are not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "pools"
+          ],
+          "value": "CCTKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKMC2L"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "pool is not a contract",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "pools",
+            0
+          ],
+          "value": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "pool repeats in the displayed route",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "pools"
+          ],
+          "value": [
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM",
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM"
+          ]
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "token path is not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "tokens_addresses"
+          ],
+          "value": "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "token path is missing a token",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "token in the path is not a contract",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens_addresses",
+            1
+          ],
+          "value": "USDC"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "part does not start at the stage input",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "hop is not a triple",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYG"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "hop pool tokens are not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAA0AAAAgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "pool token is not a contract",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAADAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAASAAAAAAAAAAAHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwAAAA0AAAAgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4"
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "pool index is not 32 bytes",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAHwYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOA=="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "hop output is not an address",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAAwAAAAE="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "hop output differs from the token path",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaA=="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "stage input is not in the first hop's pool",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "hop output is not in its pool",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "hop output equals its input",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "pools"
+          ],
+          "value": [
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM",
+            "CCTKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKMC2L"
+          ]
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "pool tokens repeat",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAADAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "pool repeats in the route",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAADAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAADQAAACAFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAAQAAAAAQAAAAMAAAAQAAAAAQAAAAIAAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAA0AAAAgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4"
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "pools"
+          ],
+          "value": [
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM",
+            "CCT2PJ5HU6T2PJ5HU6T2PJ5HU6T2PJ5HU6T2PJ5HU6T2PJ5HU6T2PNCJ",
+            "CCTKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKMC2L"
+          ]
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5",
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "chains of a stage end in different tokens",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2Vfw=="
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "pools"
+          ],
+          "value": [
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM"
+          ]
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5"
+          ]
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "stages_xdr is missing",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "delete": true
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "stages_xdr has another share",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrQAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZYw=="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "stages_xdr has another chain",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACD//////////////////////////////////////////wAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA=="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "stages_xdr has the parts in another order",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAAMAABlkAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrA=="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "stages_xdr has an extra stage",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAADAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZAAAABAAAAABAAAAAQAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACABAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAADAAAnEA=="
+        }
+      ],
+      "error": "invalid"
+    },
+    {
+      "name": "stages_xdr is not canonical base64",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA==\n"
+        }
+      ],
+      "error": "invalid"
+    }
+  ],
+  "builds": [
+    {
+      "name": "zero minimum",
+      "base": "diamond",
+      "options": {
+        "minimum": "0"
+      }
+    },
+    {
+      "name": "source is a contract",
+      "base": "diamond",
+      "options": {
+        "source": "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD"
       },
       "error": true
     },
     {
-      "name": "plan amount_in differs from request",
-      "plan": {
-        "amount_in": "1"
+      "name": "source is not an address",
+      "base": "diamond",
+      "options": {
+        "source": "GABC"
       },
       "error": true
     },
     {
-      "name": "leg outputs differ from plan amount_out",
-      "plan": {
-        "amount_out": "1"
+      "name": "router is an account",
+      "base": "diamond",
+      "options": {
+        "router": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
       },
       "error": true
     },
     {
-      "name": "single leg",
-      "legs": [
-        {
-          "from": 0,
-          "amount_in": "200000000003",
-          "amount_out": "181322178776"
-        }
-      ],
-      "error": true
-    },
-    {
-      "name": "five legs",
-      "legs": [
-        {
-          "from": 0,
-          "amount_in": "40000000000",
-          "amount_out": "36264435755"
-        },
-        {
-          "from": 1,
-          "amount_in": "40000000000",
-          "amount_out": "36264435755"
-        },
-        {
-          "from": 0,
-          "amount_in": "40000000000",
-          "amount_out": "36264435755"
-        },
-        {
-          "from": 1,
-          "amount_in": "40000000000",
-          "amount_out": "36264435755"
-        },
-        {
-          "from": 0,
-          "amount_in": "40000000003",
-          "amount_out": "36264435756"
-        }
-      ],
-      "error": true
-    },
-    {
-      "name": "leg inputs differ from plan amount_in",
-      "legs": [
-        {
-          "from": 0,
-          "amount_in": "1"
-        },
-        {
-          "from": 1
-        }
-      ],
-      "error": true
-    },
-    {
-      "name": "malformed leg route XDR",
-      "legs": [
-        {
-          "from": 0,
-          "swap_chain_xdr": "AAAA"
-        },
-        {
-          "from": 1
-        }
-      ],
-      "error": true
-    },
-    {
-      "name": "zero leg output",
-      "legs": [
-        {
-          "from": 0,
-          "amount_out": "0"
-        },
-        {
-          "from": 1
-        }
-      ],
-      "error": true
-    },
-    {
-      "name": "unpadded leg route XDR",
-      "legs": [
-        {
-          "from": 0,
-          "swap_chain_xdr": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAABAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAANAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEgAAAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
-        },
-        {
-          "from": 1
-        }
-      ],
-      "error": true
-    },
-    {
-      "name": "invalid character in leg route XDR",
-      "legs": [
-        {
-          "from": 0,
-          "swap_chain_xdr": "AAAAEAAA!AAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAABAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAANAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEgAAAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg=="
-        },
-        {
-          "from": 1
-        }
-      ],
-      "error": true
-    },
-    {
-      "name": "unpadded ordinary route XDR",
-      "quote": {
-        "split_plan": null,
-        "swap_chain_xdr": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAABAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAANAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEgAAAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+      "name": "same input and output token",
+      "base": "diamond",
+      "options": {
+        "tokenOut": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
       },
       "error": true
     },
     {
-      "name": "invalid character in ordinary route XDR",
-      "quote": {
-        "split_plan": null,
-        "swap_chain_xdr": "AAAAEAAA!AAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAABAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAANAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEgAAAAECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg=="
-      },
-      "error": true
-    },
-    {
-      "name": "truncated ordinary route XDR",
-      "quote": {
-        "split_plan": null,
-        "swap_chain_xdr": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAA"
-      },
-      "error": true
-    },
-    {
-      "name": "ordinary route without pools",
-      "omit": [
-        "split_plan",
-        "pools"
+      "name": "plan input differs from its stages",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "200000000004"
+        }
       ],
+      "error": true
+    },
+    {
+      "name": "plan share changed",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "share"
+          ],
+          "value": 3501
+        }
+      ],
+      "error": true
+    },
+    {
+      "name": "plan chain changed",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaA=="
+        }
+      ],
+      "error": true
+    },
+    {
+      "name": "plan output changed",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": "58029507394062"
+        }
+      ],
+      "error": true
+    },
+    {
+      "name": "minimum is negative",
+      "base": "diamond",
+      "options": {
+        "minimum": "-1"
+      },
+      "error": true
+    },
+    {
+      "name": "minimum is fractional",
+      "base": "diamond",
+      "options": {
+        "minimum": "1.5"
+      },
+      "error": true
+    },
+    {
+      "name": "minimum is above 2^127 - 1",
+      "base": "diamond",
+      "options": {
+        "minimum": "170141183460469231731687303715884105728"
+      },
+      "error": true
+    },
+    {
+      "name": "minimum is a number",
+      "base": "diamond",
+      "options": {
+        "minimum": 1
+      },
+      "error": true
+    },
+    {
+      "name": "trustline without batch",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "batch": null
+      },
+      "error": true
+    },
+    {
+      "name": "batch is not a contract",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "batch": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+      },
+      "error": true
+    },
+    {
+      "name": "trustline for another asset",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": {
+          "assetCode": "USDC",
+          "issuer": "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+          "networkPassphrase": "Test SDF Network ; September 2015"
+        }
+      },
+      "error": true
+    },
+    {
+      "name": "trustline on another network",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": {
+          "assetCode": "AQUA",
+          "issuer": "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+          "networkPassphrase": "Public Global Stellar Network ; September 2015"
+        }
+      },
+      "error": true
+    },
+    {
+      "name": "trustline issued by the source",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "source": "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+      },
+      "error": true
+    },
+    {
+      "name": "trustline is empty",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": {}
+      },
+      "error": true
+    },
+    {
+      "name": "trustline is false",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": false
+      },
+      "error": true
+    },
+    {
+      "name": "trustline is zero",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": 0
+      },
+      "error": true
+    },
+    {
+      "name": "trustline is an empty string",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": ""
+      },
       "error": true
     }
   ],
   "capabilities": [
     [
-      "normalizeSellSwapPlan",
-      "normalize_sell_swap_plan"
+      "normalizeSwapSplitPlan",
+      "normalize_swap_split_plan"
     ],
     [
       "sellAmountToRaw",
@@ -292,16 +1644,12 @@
       "get_swap_minimum"
     ],
     [
-      "buildSellSwapOperation",
-      "build_sell_swap_operation"
+      "buildSwapSplitOperation",
+      "build_swap_split_operation"
     ],
     [
-      "getSellSwapResult",
-      "get_sell_swap_result"
-    ],
-    [
-      "getSwapResult",
-      "get_swap_result"
+      "getSwapSplitResult",
+      "get_swap_split_result"
     ],
     [
       "loadSwapResourceLimits",
