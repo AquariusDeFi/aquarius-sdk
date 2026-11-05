@@ -490,10 +490,11 @@ const undelegateXdr = await aqua.delegation.buildUndelegate({
 ```
 
 `buildDelegate` sets the delegate's share on each proxy named in `fractions`,
-replacing any previous share. It reads the owner's current delegations first
-and refuses self-delegation, a third delegate on a proxy (at most
-`MAX_DELEGATES_PER_PROXY`, 2) and a total above 100%. Each proxy call
-authorizes itself alone; changing both proxies is one batch transaction.
+replacing any previous share. The delegate must be an account other than the
+owner, and each fraction an integer from 1 to 10_000_000. The proxy enforces
+the rules that depend on its state, such as the number of delegates and the
+100% total, and the builders report its errors with what they mean. Each proxy
+call authorizes itself alone; changing both proxies is one batch transaction.
 
 Like every other `build*` method, the Locker and delegation builders throw
 `RestoreRequiredError` when a separate restore is required.

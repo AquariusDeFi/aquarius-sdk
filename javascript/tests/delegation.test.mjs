@@ -1,5 +1,5 @@
-// ICE delegation builders: encodings, client-built auth trees, input and
-// current-state validation, enforce-mode preparation with headroom, and
+// ICE delegation builders: encodings, client-built auth trees, input
+// validation, proxy errors, enforce-mode preparation with headroom, and
 // restore handling, on a fake RPC — no network.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -10,17 +10,16 @@ import {
   Networks,
   SorobanDataBuilder,
   TransactionBuilder,
-  nativeToScVal,
   rpc,
   scValToNative,
   xdr,
 } from "@stellar/stellar-sdk";
 
+import { classifyContractError } from "../dist/errors.js";
 import {
   AquariusClient,
   AquariusError,
   DELEGATION_FRACTION_DENOMINATOR,
-  MAX_DELEGATES_PER_PROXY,
   NETWORKS,
   RestoreRequiredError,
 } from "../dist/index.js";
@@ -32,7 +31,6 @@ const BATCH = "CCNMIX72UQIM44MB4T3LIKIMADPFBNIBVHTX27QTFLB6IACJLRWM6PA4";
 const OWNER = "GD6PLWCIV2Y7C6DYRB57DOTA72G3C32LQHGYZWLWTFY7QMPPECAQRID5";
 const D1 = "GANCGG3D7DEAADOOFUPKJXVZ6A6MZAIM5QROJGIAQG65BEYFLO7MOV5L";
 const D2 = "GAT5YA7ICWMBWBKDZB66CLHBWATKBJSRGT4QGHX3VHMOLGDCIAGEV57J";
-const D3 = "GDZXVUW56YFXWSURNKVYZJETNYYGBNUEBORC2ZTPF3HVTNO6S4KPLDWT";
 const CONTRACT_DELEGATE = "CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ";
 
 // The testnet transaction 966e7325…f9261e that revoked one delegation on
@@ -60,12 +58,6 @@ const b64 = value => Buffer.from(value.toXDR()).toString("base64");
 const fnName = inv => inv.function.contractFn.functionName.toString();
 const contractOf = inv => Address.fromScAddress(inv.function.contractFn.contractAddress).toString();
 
-const edge = (delegate, fraction) => xdr.ScVal.scvVec([
-  new Address(delegate).toScVal(),
-  xdr.ScVal.scvU32(fraction),
-  nativeToScVal(0n, { type: "u64" }),
-]);
-
 function simulation(retval = xdr.ScVal.scvVoid()) {
   return {
     id: "1",
@@ -81,31 +73,21 @@ function simulation(retval = xdr.ScVal.scvVoid()) {
 }
 
 /**
- * A testnet client on a fake RPC. Reads of `delegations` answer from
- * `current` (edges per proxy contract); enforce-mode simulations answer
- * with `prepared`. It never signs or sends.
+ * A testnet client on a fake RPC whose enforce-mode simulations answer with
+ * `prepared`. The builders read nothing first; they never sign or send.
  */
-function fakeClient({ current = {}, prepared = simulation(), config = {} } = {}) {
+function fakeClient({ prepared = simulation(), config = {} } = {}) {
   const signer = {
     publicKey: () => OWNER,
     sign: () => { throw new Error("builds must not sign"); },
   };
   const client = new AquariusClient({ network: "testnet", signer, baseFee: "100", ...config });
-  const seen = { modes: [], reads: [], sent: 0 };
+  const seen = { modes: [], sent: 0 };
   client.server.getAccount = async id => new Account(id, "100");
   client.server.simulateTransaction = async (tx, resources, mode) => {
     assert.equal(resources, undefined);
     seen.modes.push(mode);
-    if (mode === "enforce") return rpc.parseRawSimulation(prepared);
-    const call = tx.operations[0].func.invokeContract;
-    assert.equal(call.functionName.toString(), "batch");
-    const values = call.args[1].vec.map(row => {
-      const [contract, fn, args] = row.vec;
-      const id = Address.fromScVal(contract).toString();
-      seen.reads.push([id, fn.sym.toString(), args.vec.map(a => Address.fromScVal(a).toString())]);
-      return xdr.ScVal.scvVec((current[id] ?? []).map(([d, f]) => edge(d, f)));
-    });
-    return rpc.parseRawSimulation(simulation(xdr.ScVal.scvVec(values)));
+    return rpc.parseRawSimulation(prepared);
   };
   client.server.sendTransaction = async () => {
     seen.sent += 1;
@@ -132,7 +114,6 @@ test("testnet knows both proxies; mainnet has none and contracts overrides apply
   assert.equal(NETWORKS.mainnet.upvoteIceProxy, undefined);
   assert.equal(NETWORKS.mainnet.governIceProxy, undefined);
   assert.equal(DELEGATION_FRACTION_DENOMINATOR, 10_000_000);
-  assert.equal(MAX_DELEGATES_PER_PROXY, 2);
 
   const signer = { publicKey: () => OWNER, sign: () => "" };
   const mainnet = new AquariusClient({ network: "mainnet", signer });
@@ -161,7 +142,7 @@ test("the delegation builders require a signer", async () => {
 // --- delegate ------------------------------------------------------------------------
 
 test("buildDelegate on one proxy calls it directly, authorized alone", async () => {
-  const { client, seen } = fakeClient({ current: { [UPVOTE]: [[D1, 1_322_559], [D2, 5_290_246]] } });
+  const { client, seen } = fakeClient();
   const { tx, op } = parse(await client.delegation.buildDelegate({ delegate: D1, fractions: { upvote: 1_000_000 } }));
   assert.equal(tx.source, OWNER);
   assert.equal(tx.signatures.length, 0);
@@ -169,9 +150,8 @@ test("buildDelegate on one proxy calls it directly, authorized alone", async () 
   assert.deepEqual(op.auth.map(b64), [DELEGATE_UPVOTE_AUTH]);
   assert.equal(op.auth[0].credentials.type, "sorobanCredentialsSourceAccount");
   assert.equal(op.auth[0].rootInvocation.subInvocations.length, 0);
-  // only the selected proxy's delegations are read, for the owner
-  assert.deepEqual(seen.reads, [[UPVOTE, "delegations", [OWNER]]]);
-  assert.deepEqual(seen.modes, [undefined, "enforce"]);
+  // one enforce-mode simulation, no state read first
+  assert.deepEqual(seen.modes, ["enforce"]);
   assert.equal(seen.sent, 0);
 });
 
@@ -194,46 +174,16 @@ test("buildDelegate on both proxies is one batch: govern, then upvote, each bene
   assert.ok(fractions.every(f => f.type === "scvU32"));
   assert.deepEqual(fractions.map(f => f.u32), [2_000_000, 1_000_000]);
   assert.equal(scValToNative(op.hostFunction.invokeContract.args[2]), false);
-  assert.deepEqual(seen.reads.map(([id]) => id), [GOVERN, UPVOTE]);
-  assert.deepEqual(seen.modes, [undefined, "enforce"]);
+  assert.deepEqual(seen.modes, ["enforce"]);
 });
 
-test("buildDelegate accepts the full share and replacing a delegate's own share", async () => {
-  const { client } = fakeClient({ current: { [UPVOTE]: [[D1, 6_000_000], [D2, 4_000_000]] } });
-  // D1's share is replaced, not added to: 4_000_000 + 6_000_000 = 100%
-  await client.delegation.buildDelegate({ delegate: D1, fractions: { upvote: 6_000_000 } });
-  const { op } = parse(await client.delegation.buildDelegate({ delegate: D2, fractions: { upvote: 4_000_000 } }));
-  assert.equal(op.auth[0].rootInvocation.function.contractFn.args[2].u32, 4_000_000);
-
-  const empty = fakeClient().client;
-  const full = parse(await empty.delegation.buildDelegate({
-    delegate: D3,
+test("buildDelegate accepts the full share", async () => {
+  const { client } = fakeClient();
+  const { op } = parse(await client.delegation.buildDelegate({
+    delegate: D1,
     fractions: { govern: DELEGATION_FRACTION_DENOMINATOR },
   }));
-  assert.equal(full.op.auth[0].rootInvocation.function.contractFn.args[2].u32, 10_000_000);
-});
-
-test("buildDelegate refuses a third delegate on a proxy", async () => {
-  const { client, seen } = fakeClient({
-    current: { [UPVOTE]: [[D1, 1_000_000], [D2, 1_000_000]], [GOVERN]: [[D1, 1_000_000]] },
-  });
-  await assert.rejects(
-    client.delegation.buildDelegate({ delegate: D3, fractions: { upvote: 1_000_000, govern: 1_000_000 } }),
-    error => error instanceof AquariusError && /upvote proxy already has 2 delegates/.test(error.message),
-  );
-  // the same new delegate fits where a slot is free
-  await client.delegation.buildDelegate({ delegate: D3, fractions: { govern: 1_000_000 } });
-  assert.equal(seen.modes.filter(mode => mode === "enforce").length, 1);
-});
-
-test("buildDelegate refuses a total share above 100%", async () => {
-  const { client, seen } = fakeClient({ current: { [GOVERN]: [[D1, 2_645_123], [D2, 5_290_246]] } });
-  await assert.rejects(
-    client.delegation.buildDelegate({ delegate: D1, fractions: { govern: 10_000_000 - 5_290_246 + 1 } }),
-    /cannot exceed 100%/,
-  );
-  await client.delegation.buildDelegate({ delegate: D1, fractions: { govern: 10_000_000 - 5_290_246 } });
-  assert.deepEqual(seen.modes, [undefined, undefined, "enforce"]);
+  assert.equal(op.auth[0].rootInvocation.function.contractFn.args[2].u32, 10_000_000);
 });
 
 for (const [label, params, pattern] of [
@@ -249,7 +199,7 @@ for (const [label, params, pattern] of [
   ["a bigint fraction", { delegate: D1, fractions: { upvote: 1n } }, /fraction/],
   ["an undefined fraction", { delegate: D1, fractions: { upvote: undefined } }, /fraction/],
 ]) {
-  test(`buildDelegate rejects ${label} before reading or simulating`, async () => {
+  test(`buildDelegate rejects ${label} before simulating`, async () => {
     const { client, seen } = fakeClient();
     await assert.rejects(
       client.delegation.buildDelegate(params),
@@ -259,16 +209,6 @@ for (const [label, params, pattern] of [
   });
 }
 
-test("buildDelegate rejects an unexpected delegations response", async () => {
-  const { client } = fakeClient();
-  client.server.simulateTransaction = async () =>
-    rpc.parseRawSimulation(simulation(xdr.ScVal.scvVec([xdr.ScVal.scvVec([xdr.ScVal.scvU32(1)])])));
-  await assert.rejects(
-    client.delegation.buildDelegate({ delegate: D1, fractions: { upvote: 1 } }),
-    /Unexpected delegations response/,
-  );
-});
-
 // --- undelegate ----------------------------------------------------------------------
 
 test("buildUndelegate on both proxies reproduces the testnet revocation byte for byte", async () => {
@@ -276,11 +216,10 @@ test("buildUndelegate on both proxies reproduces the testnet revocation byte for
   const { op } = parse(await client.delegation.buildUndelegate({ delegate: D2, proxies: ["upvote", "govern"] }));
   assert.equal(b64(op.hostFunction), UNDELEGATE_BOTH_HOST_FN);
   assert.deepEqual(op.auth.map(b64), [UNDELEGATE_BOTH_AUTH]);
-  // selection order does not matter, and nothing is read first
+  // selection order does not matter
   const again = parse(await client.delegation.buildUndelegate({ delegate: D2, proxies: ["govern", "upvote"] }));
   assert.equal(b64(again.op.hostFunction), UNDELEGATE_BOTH_HOST_FN);
   assert.deepEqual(seen.modes, ["enforce", "enforce"]);
-  assert.equal(seen.reads.length, 0);
 });
 
 test("buildUndelegate on one proxy calls it directly, authorized alone", async () => {
@@ -360,5 +299,63 @@ test("a restore preamble surfaces as RestoreRequiredError for delegation builds"
     });
     assert.equal(seen.modes.at(-1), "enforce");
     assert.equal(seen.sent, 0);
+  }
+});
+
+// --- proxy errors --------------------------------------------------------------------
+
+const failed = code => ({
+  id: "1",
+  latestLedger: 1,
+  events: [],
+  error: `HostError: Error(Contract, #${code})\n\nEvent log (newest first):\n   0: [Diagnostic Event] contract:${UPVOTE}, topics:[error, Error(Contract, #${code})]`,
+});
+
+for (const [code, pattern] of [
+  [2, /cannot be delegated/],
+  [3, /cannot delegate to itself/],
+  [5, /exceed 100% in total/],
+  [8, /most delegates this proxy allows/],
+  [9, /fraction exceeds 100%/],
+  [10, /fraction must be greater than zero/],
+  [19, /ICE Locker holds no state for the owner/],
+]) {
+  test(`proxy error #${code} states what it means in the delegation builders`, async () => {
+    for (const build of [
+      client => client.delegation.buildDelegate({ delegate: D1, fractions: { upvote: 1 } }),
+      client => client.delegation.buildDelegate({ delegate: D1, fractions: { upvote: 1, govern: 1 } }),
+      client => client.delegation.buildUndelegate({ delegate: D1, proxies: ["upvote"] }),
+      client => client.delegation.buildUndelegate({ delegate: D1, proxies: ["upvote", "govern"] }),
+    ]) {
+      const { client } = fakeClient({ prepared: failed(code) });
+      await assert.rejects(build(client), error =>
+        error instanceof AquariusError &&
+        error.message.startsWith(`Contract error #${code}: `) &&
+        pattern.test(error.message));
+    }
+  });
+}
+
+test("proxy error meanings stay out of other paths", async () => {
+  for (const code of [3, 5, 8, 10, 19]) {
+    assert.equal(classifyContractError(`HostError: Error(Contract, #${code})`).message, `Contract error #${code}`);
+  }
+  const signer = { publicKey: () => OWNER, sign: () => "" };
+  const client = new AquariusClient({ network: "testnet", signer });
+  client.server.getAccount = async id => new Account(id, "100");
+  client.server.simulateTransaction = async () => rpc.parseRawSimulation(failed(10));
+  await assert.rejects(client.locker.buildWithdraw([4]), error => error.message === "Contract error #10");
+});
+
+test("other contract errors pass through the delegation builders unchanged", async () => {
+  for (const [code, message] of [
+    [4, "Contract error #4"],
+    [2447, "Contract error #2447: lock position not found"],
+  ]) {
+    const { client } = fakeClient({ prepared: failed(code) });
+    await assert.rejects(
+      client.delegation.buildUndelegate({ delegate: D1, proxies: ["govern"] }),
+      error => error.message === message,
+    );
   }
 });
