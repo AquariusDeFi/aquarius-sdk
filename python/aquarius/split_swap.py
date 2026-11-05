@@ -90,7 +90,9 @@ def _share(value):
 class SwapSplitPart:
     """One part of a stage: a chain in the `swap_chained` format and its share.
 
-    `share` is in basis points of the stage input; the shares of a stage sum to 10000.
+    `share` is in basis points of the stage input; the shares of a stage sum to
+    10000. `pools` and `tokens` are display data from the API; the signed call is
+    built only from the validated token addresses, pool indexes, shares and amounts.
     """
 
     share: int

@@ -39,7 +39,12 @@ export interface FindPathSplitPart {
   amount_in: string;
   amount_out: string;
   swap_chain_xdr: string;
+  /**
+   * Display data: the signed call is built only from the validated token
+   * addresses, pool indexes, shares and amounts.
+   */
   pools: string[];
+  /** Display data, like `pools`. */
   tokens: string[];
   tokens_addresses: string[];
 }
