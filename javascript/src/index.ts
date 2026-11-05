@@ -28,7 +28,6 @@ export { FeeCollector, type ClaimedFees } from "./collector.js";
 export type { CreateLockParams } from "./locker.js";
 export {
   DELEGATION_FRACTION_DENOMINATOR,
-  MAX_DELEGATES_PER_PROXY,
   type DelegateParams,
   type IceProxy,
   type UndelegateParams,

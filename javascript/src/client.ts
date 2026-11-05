@@ -12,8 +12,7 @@ import {
   IceProxy,
   UndelegateParams,
   delegateCalls,
-  delegateProxies,
-  parseDelegations,
+  delegationError,
   undelegateCalls,
 } from "./delegation.js";
 import { AquariusError, SlippageError } from "./errors.js";
@@ -1095,33 +1094,31 @@ export class AquariusClient {
    * ICE delegation writes on the upvoteICE and governICE proxies, prepared
    * but not signed: each returns the simulated, unsigned envelope XDR. The
    * signer's account is the owner and the source. Changing both proxies is
-   * one transaction through the batch contract.
+   * one transaction through the batch contract. The proxy enforces the rules
+   * that depend on its state, such as the number of delegates and the 100%
+   * total; its errors state what they mean.
    */
   readonly delegation = {
-    /**
-     * Set the share of the owner's voting power delegated to `delegate`, per
-     * proxy. The current delegations are read first: the change is refused
-     * when it would put a third delegate on a proxy or more than 100% in total.
-     */
+    /** Set the share of the owner's voting power delegated to `delegate`, per proxy. */
     buildDelegate: async (params: DelegateParams): Promise<string> => {
       const contracts = this.delegationProxies();
-      const owner = this.requireSigner().publicKey();
-      const proxies = delegateProxies(owner, params);
-      const values = await this.readBatch(proxies.map(proxy => ({
-        contractId: contracts[proxy],
-        fn: "delegations",
-        args: [new Address(owner).toScVal()],
-      })));
-      const current = Object.fromEntries(
-        proxies.map((proxy, i) => [proxy, parseDelegations(values[i])]),
-      );
-      return this.buildCalls(delegateCalls(contracts, owner, params, current));
+      const calls = delegateCalls(contracts, this.requireSigner().publicKey(), params);
+      try {
+        return await this.buildCalls(calls);
+      } catch (error) {
+        throw delegationError(error);
+      }
     },
 
     /** Remove the delegation to `delegate` on the given proxies. */
     buildUndelegate: async (params: UndelegateParams): Promise<string> => {
       const contracts = this.delegationProxies();
-      return this.buildCalls(undelegateCalls(contracts, this.requireSigner().publicKey(), params));
+      const calls = undelegateCalls(contracts, this.requireSigner().publicKey(), params);
+      try {
+        return await this.buildCalls(calls);
+      } catch (error) {
+        throw delegationError(error);
+      }
     },
   };
 
