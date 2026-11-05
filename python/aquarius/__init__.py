@@ -70,7 +70,6 @@ from .swap_resources import (
     load_swap_resource_limits,
     assert_swap_resources,
     assert_swap_authorization,
-    get_swap_result,
 )
 
 __version__ = "0.6.0"
@@ -82,7 +81,6 @@ __all__ = [
     "load_swap_resource_limits",
     "assert_swap_resources",
     "assert_swap_authorization",
-    "get_swap_result",
     "SwapSplitPart",
     "SwapSplitPlan",
     "normalize_swap_split_plan",

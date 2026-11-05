@@ -119,7 +119,5 @@ export {
   loadSwapResourceLimits,
   assertSwapResources,
   assertSwapAuthorization,
-  getSellSwapResult,
-  getSwapResult,
   type SwapResourceLimits,
 } from "./swap-resources.js";
