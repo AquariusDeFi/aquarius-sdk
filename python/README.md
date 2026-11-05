@@ -293,6 +293,60 @@ valid-after ledger is in the future. The allowance horizon must satisfy the
 network's current allowance limit and cover the order. Annual orders are not
 supported by the agreed one-signature flow.
 
+## Split swaps (next release)
+
+An exact-input swap that the backend splits across routes runs as one call to
+the router's `swap_split`. `find_path_split` returns one plan, split or not. The
+SDK checks it, then builds the call with the user's whole authorization:
+`swap_split` with all its arguments and the one input transfer.
+
+```python
+from aquarius import (
+    normalize_swap_split_plan, get_swap_minimum, build_swap_split_operation,
+    load_swap_resource_limits, assert_swap_authorization, assert_swap_resources,
+    get_swap_split_result,
+)
+
+response = aqua.api.find_path_split(
+    {"token_in_address": token_in, "token_out_address": token_out, "amount": amount_in}
+)
+plan = normalize_swap_split_plan(response, token_in, token_out, amount_in)
+minimum = get_swap_minimum(plan.amount_out, "1")  # percent: "1" = 1%
+operation = build_swap_split_operation(
+    source=source, router=aqua.network.router, token_in=token_in,
+    token_out=token_out, plan=plan, minimum=minimum,
+)
+limits = load_swap_resource_limits(server, network_passphrase)
+# Your code: simulate once with this fixed authorization, reject restore or
+# error results, and assemble the unsigned transaction.
+tx, events, retval, ledger = simulate_and_assemble(operation)
+assert_swap_authorization(tx, source, operation.to_xdr_object().to_xdr())
+if ledger < limits.latest_ledger:
+    raise ValueError("Stale simulation")
+assert_swap_resources(tx, limits, {"events": events, "retval": retval})
+output = get_swap_split_result(retval)
+# Show the plan, minimum, output and fee before signing.
+```
+
+`normalize_swap_split_plan` raises `NoRouteError` without a route, and
+`ValueError("Invalid swap quote")` for a plan that does not match the request or
+the router's execution of it: ask for a new quote, there is no fallback. It
+checks the requested input, stage shares (positive, summing to 10000), every
+chain token by token from `token_in` through each stage to `token_out`, each
+part's input against the router's allocation of its stage input, outputs that
+add up to the next stage's input and to `amount_out`, and that `stages_xdr` is
+the encoding of the readable stages the builder encodes. A plan has at most 4
+stages, 4 parts per stage and 4 hops per chain.
+
+The minimum comes from your slippage on the quoted `amount_out`, never from the
+API's `amount_out_min`. To add the output trustline, pass `batch` and
+`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}`: the
+builder checks that the classic asset is `token_out` and runs
+`[trust, swap_split]` through the batch contract; read its result with
+`get_swap_split_result(retval, with_trustline=True)`. The helpers never sign,
+submit or restore storage. JavaScript has the same helpers in camelCase, and
+both test suites run the shared cases in `testdata/split-*.json`.
+
 ## What the SDK handles for you
 
 - **Routing** — quotes come from the find-path API; the swap chain XDR is passed through untouched.
@@ -404,85 +458,3 @@ Questions and integration help: [Discord](https://discord.gg/sgzFscHp4C).
 ## Maintenance
 
 [misty-forest](https://github.com/misty-forest) maintains the Aquarius SDK, including security review, vulnerability remediation, and ongoing development.
-
-### Opt-in split primitives (next release)
-
-`normalize_sell_swap_plan(response, token_in, token_out, amount_in)` returns the
-Sell-only `split_plan` the backend selected, or the ordinary route as a one-leg
-plan when `split_plan` is absent or null; a malformed `split_plan` raises.
-`build_sell_swap_operation(source=..., token_in=..., token_out=..., router=...,
-split_router=..., plan=..., minimum=...)` returns an unsigned operation with
-fixed ordered input-transfer authorization and one aggregate output minimum.
-`get_swap_minimum(output, "1")` accepts slippage as a percent string (1%), and
-`get_sell_swap_result(retval, leg_count, with_trustline=False)` decodes outputs.
-Amounts are canonical raw-unit strings. Optional `batch` plus
-`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}` builds
-atomic classic-output trust + swap and verifies the asset contract.
-
-Both Python and JavaScript expose the same split capabilities. Existing
-`quote`/`swap` and provider-fee behavior stays ordinary.
-
-```python
-from aquarius import (
-    normalize_sell_swap_plan, get_swap_minimum, build_sell_swap_operation,
-    load_swap_resource_limits, assert_swap_resources, assert_swap_authorization,
-    get_sell_swap_result,
-)
-
-plan = normalize_sell_swap_plan(response, token_in, token_out, amount_in)
-minimum = get_swap_minimum(plan.amount_out, "1")
-limits = load_swap_resource_limits(server, network_passphrase)
-operation = build_sell_swap_operation(
-    source=source, token_in=token_in, token_out=token_out, router=router,
-    split_router=split_router, plan=plan, minimum=minimum,
-)
-# Application helper: enforce fixed auth, reject errors/restores, assemble
-# the unsigned transaction and decode the diagnostic events and return XDR.
-tx, events, retval, ledger = simulate_and_assemble(operation)
-assert_swap_authorization(tx, source, operation.to_xdr_object().to_xdr())
-if len(plan.legs) > 1 and ledger < limits.latest_ledger:
-    raise ValueError("Simulation predates network configuration")
-assert_swap_resources(tx, limits, {"events": events, "retval": retval})
-outputs = get_sell_swap_result(retval, len(plan.legs))
-# Display plan, minimum, outputs and the transaction fee.
-```
-
-`simulate_and_assemble` is application code, not an SDK method. It must reject
-restore/error responses and re-check account, network and quote identity across
-network calls. The backend selects the plan; the aggregate minimum is derived
-from the quoted `plan.amount_out` and the operation is simulated once. A
-malformed `split_plan` or a failed simulation is an error: ask for a new quote;
-there is no fallback to the ordinary route. A split requires the resource check;
-for an ordinary route an integration may skip it when the network configuration
-is unavailable. Parts sharing pools must see preceding writes.
-
-Resource checks cover the RPC's declarations, protocol-dependent disk reads,
-footprint, worst-case signed envelope and successful contract/system events plus
-the complete return value. Split and ordinary routes are checked against the
-same per-transaction network caps; the split safety margin belongs to the
-backend's plan selection. RPC does not expose exact memory headroom, so full
-simulation and runtime limits remain necessary. These helpers never trim
-resources to fit, sign, submit or restore storage. Publication is a separate
-release.
-
-### Shared split API contract
-
-| JavaScript | Python |
-| --- | --- |
-| `normalizeSellSwapPlan` | `normalize_sell_swap_plan` |
-| `sellAmountToRaw` | `sell_amount_to_raw` |
-| `getSwapMinimum` | `get_swap_minimum` |
-| `buildSellSwapOperation` | `build_sell_swap_operation` |
-| `getSellSwapResult` | `get_sell_swap_result` |
-| `getSwapResult` | `get_swap_result` |
-| `loadSwapResourceLimits` | `load_swap_resource_limits` |
-| `assertSwapResources` | `assert_swap_resources` |
-| `assertSwapAuthorization` | `assert_swap_authorization` |
-
-Both test suites consume `testdata/split-behavior.json` and
-`testdata/split-resources.json`: exact amounts, split-plan selection, malformed
-quotes, conservation, minimum rounding, resource boundaries, protocol
-configuration, event/return bytes, fixed authorization and identical operation
-XDR. The shared capability list checks both public exports.
-Changes to split behavior must update both implementations and shared cases in
-the same PR.

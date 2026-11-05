@@ -442,6 +442,61 @@ valid-after ledger is in the future. The allowance horizon must satisfy the
 network's current allowance limit and cover the order. Annual orders are not
 supported by the agreed one-signature flow.
 
+## Split swaps (next release)
+
+An exact-input swap that the backend splits across routes runs as one call to
+the router's `swap_split`. `findPathSplit` returns one plan, split or not. The
+SDK checks it, then builds the call with the user's whole authorization:
+`swap_split` with all its arguments and the one input transfer.
+
+```ts
+import {
+  normalizeSwapSplitPlan, getSwapMinimum, buildSwapSplitOperation,
+  loadSwapResourceLimits, assertSwapAuthorization, assertSwapResources,
+  getSwapSplitResult,
+} from "@aquariusdefi/sdk";
+
+const response = await aqua.api.findPathSplit({
+  token_in_address: tokenIn, token_out_address: tokenOut, amount: amountIn,
+});
+const plan = normalizeSwapSplitPlan(response, tokenIn, tokenOut, amountIn);
+const minimum = getSwapMinimum(plan.amountOut, "1"); // percent: "1" = 1%
+const operation = buildSwapSplitOperation({
+  source, router: aqua.network.router, tokenIn, tokenOut, plan, minimum,
+});
+const limits = await loadSwapResourceLimits(server, networkPassphrase);
+// Your code: simulate once with this fixed authorization, reject restore or
+// error results, and assemble the unsigned transaction.
+const { tx, simulation } = await simulateAndAssemble(operation);
+assertSwapAuthorization(tx, source, operation.toXdr("base64"));
+if (simulation.latestLedger < limits.latestLedger) throw new Error("Stale simulation");
+assertSwapResources(tx, limits, {
+  events: simulation.events, retval: simulation.result.retval,
+});
+const output = getSwapSplitResult(simulation.result.retval, false);
+// Show the plan, minimum, output and fee before signing.
+```
+
+`normalizeSwapSplitPlan` throws `NoRouteError` without a route, and an
+"Invalid swap quote" error for a plan that does not match the request or the
+router's execution of it: ask for a new quote, there is no fallback. It checks
+the requested input, stage shares (positive, summing to 10000), every chain
+token by token from `tokenIn` through each stage to `tokenOut`, each part's
+input against the router's allocation of its stage input, outputs that add up
+to the next stage's input and to `amount_out`, and that `stages_xdr` is the
+encoding of the readable stages the builder encodes. A plan has at most 4
+stages, 4 parts per stage and 4 hops per chain.
+
+The minimum comes from your slippage on the quoted `amountOut`, never from the
+API's `amount_out_min`. To add the output trustline, pass `batch` and
+`trustline: {assetCode, issuer, networkPassphrase}`: the builder checks that the
+classic asset is `tokenOut` and runs `[trust, swap_split]` through the batch
+contract; read its result with `getSwapSplitResult(retval, true)`. The helpers
+never sign, submit or restore storage. Python has the same helpers in
+snake_case, and both test suites run the shared cases in `testdata/split-*.json`.
+Until the release, install from a pinned repository commit; the root manifest
+builds `javascript` from its lockfile.
+
 ## What the SDK handles for you
 
 - **Routing** — quotes come from the find-path API; the swap chain XDR is passed through untouched.
@@ -540,68 +595,3 @@ Questions and integration help: [Discord](https://discord.gg/sgzFscHp4C).
 ## Maintenance
 
 [misty-forest](https://github.com/misty-forest) maintains the Aquarius SDK, including security review, vulnerability remediation, and ongoing development.
-
-### Opt-in split swaps (next release)
-
-The split helpers target Sell/exact input only. Existing `quote()`, `swap()` and
-provider-fee flows retain their ordinary-route behavior. Configure the deployed
-micro-router explicitly; there is no production split-router default. Search
-and plan selection stay in the backend (`findPath({...request, split: true}, true)`):
-the response carries a non-null `split_plan` only when the backend chose a split.
-
-```ts
-import {
-  normalizeSellSwapPlan, getSwapMinimum, buildSellSwapOperation,
-  loadSwapResourceLimits, assertSwapResources, assertSwapAuthorization,
-  getSellSwapResult,
-} from "@aquariusdefi/sdk";
-
-const plan = normalizeSellSwapPlan(response, tokenIn, tokenOut, amountIn);
-const minimum = getSwapMinimum(plan.amountOut, "1");
-const limits = await loadSwapResourceLimits(server, networkPassphrase);
-const operation = buildSellSwapOperation({
-  source, tokenIn, tokenOut, router, splitRouter, plan, minimum,
-});
-// Application builds and fully simulates this operation with fixed auth,
-// rejects restore/error responses, then assembles the unsigned transaction.
-const { tx, simulation } = await simulateAndAssemble(operation);
-assertSwapAuthorization(tx, source, operation.toXdr("base64"));
-if (plan.legs.length > 1 && simulation.latestLedger < limits.latestLedger) {
-  throw new Error("Simulation predates network configuration");
-}
-assertSwapResources(tx, limits, {
-  events: simulation.events, retval: simulation.result.retval,
-});
-const outputs = getSellSwapResult(simulation.result.retval, plan.legs.length, false);
-// Display plan, minimum, outputs and transaction fee before signing.
-```
-
-`simulateAndAssemble` is application code, not an SDK method. It must preserve
-fixed authorization; simulations cannot grant extra spending. Helpers never
-sign, submit, restore storage or open wallet dialogs. A malformed `split_plan`
-or a failed simulation is an error: ask for a new quote; there is no fallback to
-the ordinary route. A split requires the resource check; for an ordinary route
-an integration may skip it when the resource configuration is unavailable.
-Re-check network, account and quote identity across awaits. Resource checks
-cover declarations, footprint, maximum signed envelope size and successful
-events plus the complete return value; RPC does not provide exact memory
-headroom. Split and ordinary routes are checked against the same per-transaction
-network limits; the split safety margin belongs to the backend's plan selection.
-Full ordered simulation preserves shared-pool writes. The aggregate minimum is derived from the quoted `plan.amountOut`. Slippage
-is a **percent string** (`"1"` = 1%), unlike `quote()`'s fractional slippage.
-
-To add a classic output trustline atomically, supply `batch` and
-`trustline: {assetCode, issuer, networkPassphrase}` to the builder, and pass
-`true` to `getSellSwapResult`. The builder verifies that the classic asset maps
-to `tokenOut`; the optional trust result is excluded from swap outputs.
-
-These exports are unreleased. A source install may pin an immutable repository
-commit; the root installation manifest builds `javascript` using its lockfile.
-No package version or published tag is changed by this feature.
-
-Python exposes the same split capabilities; see the
-[shared API mapping](../python/README.md#shared-split-api-contract).
-Both language suites consume `testdata/split-behavior.json` and
-`testdata/split-resources.json`, including exact operation XDR, minimum, split-plan
-validation, resource/event/auth boundaries and a public-capability list. Change both
-implementations and the shared scenarios together in the same PR.
