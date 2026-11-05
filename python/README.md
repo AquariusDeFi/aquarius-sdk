@@ -329,14 +329,17 @@ output = get_swap_split_result(retval)
 ```
 
 `normalize_swap_split_plan` raises `NoRouteError` without a route, and
-`ValueError("Invalid swap quote")` for a plan that does not match the request or
-the router's execution of it: ask for a new quote, there is no fallback. It
-checks the requested input, stage shares (positive, summing to 10000), every
-chain token by token from `token_in` through each stage to `token_out`, each
-part's input against the router's allocation of its stage input, outputs that
-add up to the next stage's input and to `amount_out`, and that `stages_xdr` is
-the encoding of the readable stages the builder encodes. A plan has at most 4
-stages, 4 parts per stage and 4 hops per chain.
+`ValueError("Invalid swap quote: <failed check>")` for a plan that does not
+match the request or the router's execution of it: ask for a new quote, there
+is no fallback. It checks the requested input, stage shares (integers summing
+to 10000), every chain token by token from `token_in` through each stage to
+`token_out`, each part's input against the router's allocation of its stage
+input, outputs that add up to the next stage's input (within u128) and to
+`amount_out`, and that `stages_xdr` is the encoding of the readable stages the
+builder encodes. A plan has at most 4 stages, 4 parts per stage and 4 hops per
+chain. `pools` and `tokens` are display data from the API: the signed call is
+built only from the validated token addresses, pool indexes, shares and
+amounts.
 
 The minimum comes from your slippage on the quoted `amount_out`, never from the
 API's `amount_out_min`. To add the output trustline, pass `batch` and

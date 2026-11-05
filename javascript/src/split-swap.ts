@@ -13,7 +13,12 @@ import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { batchOperation } from "./batch.js";
 import { NoRouteError } from "./errors.js";
 
-/** One part of a stage: a chain in the `swap_chained` format and its share. */
+/**
+ * One part of a stage: a chain in the `swap_chained` format and its share.
+ * `pools` and `tokens` are display data from the API; the signed call is
+ * built only from the validated token addresses, pool indexes, shares and
+ * amounts.
+ */
 export type SwapSplitPart = {
   /** Basis points of the stage input; the shares of a stage sum to 10000. */
   share: number;
