@@ -442,6 +442,62 @@ valid-after ledger is in the future. The allowance horizon must satisfy the
 network's current allowance limit and cover the order. Annual orders are not
 supported by the agreed one-signature flow.
 
+## ICE Locker
+
+JavaScript only, for browser wallet flows. The Locker is deployed on testnet
+(`aqua.network.locker`; pass `contracts.locker` for another deployment). Both
+builders return the simulated, unsigned envelope XDR; the signer's account is
+the owner and the transaction source.
+
+```ts
+// Lock 100 AQUA until a Monday 00:00 UTC (unix seconds)
+const lockXdr = await aqua.locker.buildCreateLock({
+  amount: 100_0000000n,
+  unlockTime: 1_799_020_800n,
+});
+
+// Withdraw unlocked positions; several are withdrawn in one transaction
+const withdrawXdr = await aqua.locker.buildWithdraw([4, 7, 9]);
+```
+
+`buildCreateLock` authorizes `create_lock` and, beneath it, the AQUA transfer
+from the owner to the Locker. `buildWithdraw` authorizes each `withdraw`; one
+position calls the Locker directly, several go through the batch contract. The
+Locker sets the unlock-time rules (a Monday 00:00 UTC, more than 24 hours and
+at most three years ahead) and rejects other times during simulation.
+
+## ICE delegation
+
+JavaScript only, for browser wallet flows. An owner delegates a share of their
+upvoteICE and governICE voting power through two proxies, deployed on testnet
+(`aqua.network.upvoteIceProxy`, `aqua.network.governIceProxy`; pass `contracts`
+overrides for another deployment). A fraction is in parts of
+`DELEGATION_FRACTION_DENOMINATOR` (`10_000_000` = 100%). Both builders return
+the simulated, unsigned envelope XDR.
+
+```ts
+// 25% of upvoteICE and 10% of governICE to one account, in one transaction
+const delegateXdr = await aqua.delegation.buildDelegate({
+  delegate: "GDELEGATE...",
+  fractions: { upvote: 2_500_000, govern: 1_000_000 },
+});
+
+// Remove that delegation from both proxies
+const undelegateXdr = await aqua.delegation.buildUndelegate({
+  delegate: "GDELEGATE...",
+  proxies: ["upvote", "govern"],
+});
+```
+
+`buildDelegate` sets the delegate's share on each proxy named in `fractions`,
+replacing any previous share. It reads the owner's current delegations first
+and refuses self-delegation, a third delegate on a proxy (at most
+`MAX_DELEGATES_PER_PROXY`, 2) and a total above 100%. Each proxy call
+authorizes itself alone; changing both proxies is one batch transaction.
+
+Like every other `build*` method, the Locker and delegation builders throw
+`RestoreRequiredError` when a separate restore is required.
+
 ## What the SDK handles for you
 
 - **Routing** — quotes come from the find-path API; the swap chain XDR is passed through untouched.
