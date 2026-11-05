@@ -2253,9 +2253,7 @@
       "trust": true,
       "options": {
         "batch": null
-      },
-      "error": "swap",
-      "reason": "batch is not a contract"
+      }
     },
     {
       "name": "batch is not a contract",

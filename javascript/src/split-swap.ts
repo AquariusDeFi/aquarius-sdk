@@ -12,6 +12,7 @@ import type { FindPathSplitPart, FindPathSplitResponse } from "./api.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { batchOperation } from "./batch.js";
 import { NoRouteError } from "./errors.js";
+import { validateProviderFee, type ProviderFeeConfig } from "./client.js";
 
 /**
  * One part of a stage: a chain in the `swap_chained` format and its share.
@@ -361,7 +362,11 @@ export const normalizeSwapSplitPlan = (
   }
 };
 
-export const getSwapMinimum = (output: string, slippage: string): string => {
+export const getSwapMinimum = (
+  output: string,
+  slippage: string,
+  providerFee?: ProviderFeeConfig,
+): string => {
   ensureSwap(
     typeof slippage === "string" &&
       slippage.length <= 100 &&
@@ -372,11 +377,18 @@ export const getSwapMinimum = (output: string, slippage: string): string => {
   const scale = 10n ** BigInt(fraction.length);
   const tolerance = BigInt(whole) * scale + BigInt(fraction || "0");
   ensureSwap(tolerance <= 10n * scale, "the slippage is above 10%");
-  const quoted = parseAmount(output);
+  let quoted = parseAmount(output);
   ensureSwap(
     quoted !== undefined,
     "the output is not an integer from 1 to 2^127 - 1",
   );
+  if (providerFee) {
+    validateProviderFee(providerFee);
+    const denominator = BigInt(providerFee.feeDenominator);
+    quoted -=
+      (quoted * BigInt(providerFee.feeFraction) + denominator - 1n) /
+      denominator;
+  }
   return ((quoted * (100n * scale - tolerance)) / (100n * scale)).toString();
 };
 
@@ -389,7 +401,10 @@ export interface BuildSwapSplitOptions {
   plan: SwapSplitPlan;
   /** The least total output to accept, raw units; see `getSwapMinimum`. */
   minimum: string;
-  /** The batch contract; required with `trustline`. */
+  /** Optional provider-fee collector; `minimum` bounds its net payout. */
+  providerFee?: ProviderFeeConfig;
+  /** Legacy trust+swap batching for contracts without automatic trustlines.
+   * Omit to authorize `trust` directly under the swap invocation. */
   batch?: string;
   /** Only a verified classic output asset can receive an atomic trust call. */
   trustline?: { assetCode: string; issuer: string; networkPassphrase: string };
@@ -415,13 +430,39 @@ const assetContract = (
 export function buildSwapSplitOperation(
   options: BuildSwapSplitOptions,
 ): xdr.Operation {
-  const { source, router, tokenIn, tokenOut, plan, minimum, batch, trustline } =
-    options;
+  const {
+    source,
+    router,
+    tokenIn,
+    tokenOut,
+    plan,
+    minimum,
+    providerFee,
+    batch,
+    trustline,
+  } = options;
   ensureSwap(
     typeof source === "string" && StrKey.isValidEd25519PublicKey(source),
     "source is not an account",
   );
   ensureSwap(isContract(router), "router is not a contract");
+  if (providerFee) {
+    validateProviderFee(providerFee);
+    ensureSwap(
+      isContract(providerFee.contractId),
+      "provider fee collector is not a contract",
+    );
+    ensureSwap(
+      providerFee.recipient === undefined ||
+        isContract(providerFee.recipient) ||
+        StrKey.isValidEd25519PublicKey(providerFee.recipient),
+      "provider fee recipient is not an address",
+    );
+  }
+  const target = providerFee?.contractId ?? router;
+  const recipient = providerFee?.recipient ?? source;
+  const fn =
+    providerFee?.recipient === undefined ? "swap_split" : "swap_split_to";
   const stages = encodeStages(plan, tokenIn, tokenOut);
   ensureSwap(
     typeof minimum === "string" && /^\d+$/.test(minimum),
@@ -431,31 +472,41 @@ export function buildSwapSplitOperation(
   const addr = (s: string) => new Address(s).toScVal();
   const args = [
     addr(source),
+    ...(providerFee?.recipient === undefined ? [] : [addr(recipient)]),
     stages,
     addr(tokenIn),
     addr(tokenOut),
     nativeToScVal(BigInt(plan.amountIn), { type: "u128" }),
     nativeToScVal(BigInt(minimum), { type: "u128" }),
+    ...(providerFee
+      ? [nativeToScVal(providerFee.feeFraction, { type: "u32" })]
+      : []),
   ];
   const transfer = authorizedInvocation(tokenIn, "transfer", [
     addr(source),
-    addr(router),
+    addr(target),
     nativeToScVal(BigInt(plan.amountIn), { type: "i128" }),
   ]);
-  const root = authorizedInvocation(router, "swap_split", args, [transfer]);
+  const root = authorizedInvocation(target, fn, args, [transfer]);
   if (trustline === undefined || trustline === null)
     return Operation.invokeContractFunction({
-      contract: router,
-      function: "swap_split",
+      contract: target,
+      function: fn,
       args,
       auth: [sourceAccountEntry(root)],
     });
-  ensureSwap(isContract(batch), "batch is not a contract");
+  if (batch != null) ensureSwap(isContract(batch), "batch is not a contract");
+  ensureSwap(
+    recipient === source,
+    "opening another recipient's trustline requires its authorization",
+  );
   ensureSwap(
     isObject(trustline) &&
-      [trustline.assetCode, trustline.issuer, trustline.networkPassphrase].every(
-        (value) => typeof value === "string",
-      ),
+      [
+        trustline.assetCode,
+        trustline.issuer,
+        trustline.networkPassphrase,
+      ].every((value) => typeof value === "string"),
     "trustline is not an asset code, issuer and network passphrase",
   );
   ensureSwap(
@@ -467,10 +518,25 @@ export function buildSwapSplitOperation(
     "the trustline asset is not token_out",
   );
   const trust = { contractId: tokenOut, fn: "trust", args: [addr(source)] };
+  if (batch == null) {
+    return Operation.invokeContractFunction({
+      contract: target,
+      function: fn,
+      args,
+      auth: [
+        sourceAccountEntry(
+          authorizedInvocation(target, fn, args, [
+            authorizedInvocation(tokenOut, "trust", trust.args),
+            transfer,
+          ]),
+        ),
+      ],
+    });
+  }
   return batchOperation(
     batch,
     source,
-    [trust, { contractId: router, fn: "swap_split", args }],
+    [trust, { contractId: target, fn, args }],
     [authorizedInvocation(tokenOut, "trust", trust.args), root],
     true,
   );
@@ -478,7 +544,7 @@ export function buildSwapSplitOperation(
 
 /**
  * The total output from the return value of a simulated or executed
- * `swap_split`; with a trustline, from the batch's results.
+ * `swap_split`; with explicit legacy batch mode, from the batch's results.
  */
 export const getSwapSplitResult = (
   result: xdr.ScVal,

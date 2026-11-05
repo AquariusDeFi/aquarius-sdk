@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 from stellar_sdk import Address, Asset, StrKey, scval
 from stellar_sdk.operation import InvokeHostFunction
@@ -23,6 +24,9 @@ from stellar_sdk.xdr import (
 )
 
 from .authorization import authorized_invocation, source_account_entry
+
+if TYPE_CHECKING:
+    from .client import ProviderFeeConfig
 from .errors import NoRouteError
 
 _MAX_AMOUNT = (1 << 127) - 1
@@ -333,7 +337,9 @@ def normalize_swap_split_plan(
         raise _malformed() from error
 
 
-def get_swap_minimum(output: str, slippage: str) -> str:
+def get_swap_minimum(
+    output: str, slippage: str, provider_fee: ProviderFeeConfig | None = None
+) -> str:
     _ensure_swap(
         isinstance(slippage, str)
         and len(slippage) <= 100
@@ -344,6 +350,13 @@ def get_swap_minimum(output: str, slippage: str) -> str:
     _ensure_swap(tolerance <= 10, "the slippage is above 10%")
     quoted = _parse_amount(output)
     _ensure_swap(quoted is not None, "the output is not an integer from 1 to 2^127 - 1")
+    if provider_fee is not None:
+        from .client import ProviderFeeConfig
+        _ensure_swap(
+            isinstance(provider_fee, ProviderFeeConfig),
+            "provider fee is not a configuration",
+        )
+        quoted = provider_fee._net_amount(quoted)
     return str(
         quoted * (100 - tolerance).numerator // ((100 - tolerance).denominator * 100)
     )
@@ -352,7 +365,7 @@ def get_swap_minimum(output: str, slippage: str) -> str:
 def get_swap_split_result(result: SCVal, with_trustline: bool = False) -> int:
     """The total output from the return value of a simulated or executed `swap_split`.
 
-    With a trustline, the batch returns one value per call: void for the trust call,
+    With legacy batch mode, the batch returns one value per call: void for the trust call,
     then the swap's output.
     """
     if with_trustline:
@@ -390,21 +403,48 @@ def build_swap_split_operation(
     token_out: str,
     plan: SwapSplitPlan,
     minimum: str,
+    provider_fee: ProviderFeeConfig | None = None,
     batch: str | None = None,
     trustline: dict | None = None,
 ) -> InvokeHostFunction:
     """`router.swap_split` with its authorization: the call with all its arguments
     and the one input transfer.
 
-    Checks the plan again before encoding it. `trustline` requires `batch` and
-    asset_code, issuer, network_passphrase of the classic output asset. Does not
-    simulate, sign or submit.
+    Checks the plan again before encoding it. `trustline` authorizes the contract
+    to open the output line, using asset_code, issuer and network_passphrase.
+    Pass `batch` only for legacy external trust+swap batching. A provider fee
+    routes the call through its collector; `minimum` always bounds net output.
+    Does not simulate, sign or submit.
     """
     _ensure_swap(
         isinstance(source, str) and StrKey.is_valid_ed25519_public_key(source),
         "source is not an account",
     )
     _ensure_swap(_is_contract(router), "router is not a contract")
+    if provider_fee is not None:
+        from .client import ProviderFeeConfig
+        _ensure_swap(
+            isinstance(provider_fee, ProviderFeeConfig),
+            "provider fee is not a configuration",
+        )
+        _ensure_swap(
+            _is_contract(provider_fee.contract_id), "provider fee collector is not a contract"
+        )
+        _ensure_swap(
+            provider_fee.recipient is None
+            or _is_contract(provider_fee.recipient)
+            or StrKey.is_valid_ed25519_public_key(provider_fee.recipient),
+            "provider fee recipient is not an address",
+        )
+    target = router if provider_fee is None else provider_fee.contract_id
+    recipient = (
+        source if provider_fee is None or provider_fee.recipient is None
+        else provider_fee.recipient
+    )
+    function = (
+        "swap_split" if provider_fee is None or provider_fee.recipient is None
+        else "swap_split_to"
+    )
     stages = _stages(plan, token_in, token_out)
     _ensure_swap(
         isinstance(minimum, str) and re.fullmatch(r"[0-9]+", minimum),
@@ -413,25 +453,31 @@ def build_swap_split_operation(
     _ensure_swap(int(minimum) <= _MAX_AMOUNT, "minimum is above 2^127 - 1")
     args = [
         scval.to_address(source),
+        *([scval.to_address(recipient)] if function == "swap_split_to" else []),
         stages,
         scval.to_address(token_in),
         scval.to_address(token_out),
         scval.to_uint128(int(plan.amount_in)),
         scval.to_uint128(int(minimum)),
+        *([scval.to_uint32(provider_fee.fee_fraction)] if provider_fee is not None else []),
     ]
     transfer = authorized_invocation(
         token_in,
         "transfer",
         [
             scval.to_address(source),
-            scval.to_address(router),
+            scval.to_address(target),
             scval.to_int128(int(plan.amount_in)),
         ],
     )
-    root = authorized_invocation(router, "swap_split", args, [transfer])
-    target, function = router, "swap_split"
+    root = authorized_invocation(target, function, args, [transfer])
     if trustline is not None:
-        _ensure_swap(_is_contract(batch), "batch is not a contract")
+        if batch is not None:
+            _ensure_swap(_is_contract(batch), "batch is not a contract")
+        _ensure_swap(
+            recipient == source,
+            "opening another recipient's trustline requires its authorization",
+        )
         _ensure_swap(
             isinstance(trustline, dict)
             and all(
@@ -449,34 +495,39 @@ def build_swap_split_operation(
             "the trustline asset is not token_out",
         )
         trust_args = [scval.to_address(source)]
-        calls = [
-            scval.to_vec(
-                [
-                    scval.to_address(token_out),
-                    scval.to_symbol("trust"),
-                    scval.to_vec(trust_args),
-                ]
-            ),
-            scval.to_vec(
-                [
-                    scval.to_address(router),
-                    scval.to_symbol(function),
-                    scval.to_vec(args),
-                ]
-            ),
-        ]
-        args = [
-            scval.to_vec([scval.to_address(source)]),
-            scval.to_vec(calls),
-            scval.to_bool(True),
-        ]
-        root = authorized_invocation(
-            batch,
-            "batch",
-            args,
-            [authorized_invocation(token_out, "trust", trust_args), root],
-        )
-        target, function = batch, "batch"
+        if batch is None:
+            root = authorized_invocation(target, function, args, [
+                authorized_invocation(token_out, "trust", trust_args), transfer,
+            ])
+        else:
+            calls = [
+                scval.to_vec(
+                    [
+                        scval.to_address(token_out),
+                        scval.to_symbol("trust"),
+                        scval.to_vec(trust_args),
+                    ]
+                ),
+                scval.to_vec(
+                    [
+                        scval.to_address(target),
+                        scval.to_symbol(function),
+                        scval.to_vec(args),
+                    ]
+                ),
+            ]
+            args = [
+                scval.to_vec([scval.to_address(source)]),
+                scval.to_vec(calls),
+                scval.to_bool(True),
+            ]
+            root = authorized_invocation(
+                batch,
+                "batch",
+                args,
+                [authorized_invocation(token_out, "trust", trust_args), root],
+            )
+            target, function = batch, "batch"
     host = HostFunction(
         type=HostFunctionType.HOST_FUNCTION_TYPE_INVOKE_CONTRACT,
         invoke_contract=InvokeContractArgs(

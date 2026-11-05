@@ -466,8 +466,9 @@ const operation = buildSwapSplitOperation({
 });
 const limits = await loadSwapResourceLimits(server, networkPassphrase);
 // Your code: simulate once with this fixed authorization, reject restore or
-// error results, and assemble the unsigned transaction.
-const { tx, simulation } = await simulateAndAssemble(operation);
+// error results, then assemble with SDK CPU and resource-fee headroom.
+const { transaction, simulation } = await simulate(operation);
+const tx = await aqua.assembleTransaction(transaction, operation, simulation);
 assertSwapAuthorization(tx, source, operation.toXdr("base64"));
 if (simulation.latestLedger < limits.latestLedger) throw new Error("Stale simulation");
 assertSwapResources(tx, limits, {
@@ -491,14 +492,31 @@ built only from the validated token addresses, pool indexes, shares and
 amounts.
 
 The minimum comes from your slippage on the quoted `amountOut`, never from the
-API's `amount_out_min`. To add the output trustline, pass `batch` and
-`trustline: {assetCode, issuer, networkPassphrase}`: the builder checks that the
-classic asset is `tokenOut` and runs `[trust, swap_split]` through the batch
-contract; read its result with `getSwapSplitResult(retval, true)`. The helpers
-never sign, submit or restore storage. Python has the same helpers in
-snake_case, and both test suites run the shared cases in `testdata/split-*.json`.
-Until the release, install from a pinned repository commit; the root manifest
-builds `javascript` from its lockfile.
+API's `amount_out_min`. To authorize the output trustline inside the swap, pass
+`trustline: {assetCode, issuer, networkPassphrase}` and omit `batch`. The builder
+verifies the classic asset is `tokenOut` and puts `trust(source)` under the swap's
+authorization. The updated contract opens a missing line atomically; XLM, WASM
+tokens, issuers, contract recipients and existing lines need no new line.
+A missing line needs the recipient's authorization and available XLM reserve;
+issuer authorization restrictions still apply. Read the scalar result with
+`getSwapSplitResult(retval)` even when a line was created.
+
+For provider fees, pass the same `providerFee: {contractId, feeFraction,
+feeDenominator, recipient?}` to `getSwapMinimum(plan.amountOut, slippage,
+providerFee)` and `buildSwapSplitOperation`. The quoted amount is gross; the
+minimum and returned amount are net. The collector rounds its fee up once on
+the total output. An explicit recipient selects `swap_split_to`. The builder
+can authorize a missing line only when the recipient is `source`; another
+recipient must already have a line or supply its own authorization separately.
+Use the configured collector's actual denominator and fee cap.
+
+This requires the updated router and provider collector implementation. Existing
+collectors are not upgradeable and must be replaced to support split swaps.
+Explicit `batch` remains supported for legacy external `[trust, swap_split]`
+calls; only that mode uses `getSwapSplitResult(retval, true)`.
+The helpers never sign, submit or restore storage. Python has the same helpers
+in snake_case, with shared fixtures in `testdata/split-*.json`.
+Install this prerelease with `npm install @aquariusdefi/sdk@0.7.0-alpha.1`.
 
 ## What the SDK handles for you
 
