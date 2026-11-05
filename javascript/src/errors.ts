@@ -111,8 +111,27 @@ const TRUSTLINE_MARKER = "trustline entry is missing";
 const NO_TRUSTLINE_MESSAGE =
   "The output recipient holds no trustline for the output asset — create the trustline on that recipient before retrying";
 
+const CONTRACT_CODE = Symbol("contractCode");
+
+/**
+ * @internal The contract error code a typed error was classified from. Codes
+ * are per contract, so a caller that knows which contract failed can state
+ * what the code means there.
+ */
+export function contractErrorCode(error: unknown): number | undefined {
+  return error instanceof AquariusError
+    ? (error as AquariusError & { [CONTRACT_CODE]?: number })[CONTRACT_CODE]
+    : undefined;
+}
+
 /** @internal Map a numeric contract error code to a typed error. */
 export function classifyContractCode(code: number, txHash?: string): AquariusError {
+  const error = typedContractError(code, txHash);
+  Object.defineProperty(error, CONTRACT_CODE, { value: code });
+  return error;
+}
+
+function typedContractError(code: number, txHash?: string): AquariusError {
   if (SLIPPAGE_CODES.has(code)) {
     return new SlippageError(
       `Price moved past your guard (contract error #${code}) — re-quote and retry`,

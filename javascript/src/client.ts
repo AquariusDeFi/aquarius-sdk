@@ -35,7 +35,7 @@ import {
   validateOnchainLimitOrderDraft,
   validateExecutorReward,
 } from "./limit-orders.js";
-import { CreateLockParams, createLockPlan, withdrawCalls } from "./locker.js";
+import { CreateLockParams, createLockError, createLockPlan, withdrawCalls } from "./locker.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
   DepositAmounts,
@@ -1065,7 +1065,8 @@ export class AquariusClient {
   readonly locker = {
     /**
      * Lock `amount` AQUA until `unlockTime`. Authorizes `create_lock` and,
-     * beneath it, the AQUA transfer from the owner to the Locker.
+     * beneath it, the AQUA transfer from the owner to the Locker. A missing
+     * AQUA trustline or a balance below `amount` fails with a message saying so.
      */
     buildCreateLock: async (params: CreateLockParams): Promise<string> => {
       const locker = this.lockerContract();
@@ -1073,7 +1074,11 @@ export class AquariusClient {
       const { code, issuer } = this.network.rewardToken;
       const token = Asset.classic(code, issuer).contractId(this.network.passphrase);
       const { args, auth } = createLockPlan(locker, token, owner, params);
-      return this.buildContract(locker, "create_lock", args, [sourceAccountEntry(auth)]);
+      try {
+        return await this.buildContract(locker, "create_lock", args, [sourceAccountEntry(auth)]);
+      } catch (error) {
+        throw createLockError(error);
+      }
     },
 
     /**

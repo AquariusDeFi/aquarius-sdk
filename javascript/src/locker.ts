@@ -16,10 +16,13 @@ import { Address, nativeToScVal, xdr } from "@stellar/stellar-sdk";
 
 import { authorizedInvocation } from "./authorization.js";
 import { BatchCall } from "./batch.js";
-import { AquariusError } from "./errors.js";
+import { AquariusError, NoTrustlineError, contractErrorCode } from "./errors.js";
 
 const U32_MAX = 0xffff_ffff;
 const U64_MAX = (1n << 64n) - 1n;
+
+// The token contract's error for a balance below the transferred amount.
+const TOKEN_BALANCE_ERROR = 10;
 
 export interface CreateLockParams {
   /** AQUA to lock, in base units (stroops). */
@@ -62,6 +65,21 @@ export function createLockPlan(
     nativeToScVal(amount, { type: "i128" }),
   ]);
   return { args, auth: authorizedInvocation(locker, "create_lock", args, [transfer]) };
+}
+
+/**
+ * @internal A `create_lock` failure in the owner's terms. The Locker's own
+ * errors are 24xx; a missing trustline or a token error comes from the AQUA
+ * transfer out of the owner's account.
+ */
+export function createLockError(error: unknown): unknown {
+  if (error instanceof NoTrustlineError) {
+    return new NoTrustlineError("The owner has no AQUA trustline — add it before locking AQUA");
+  }
+  if (contractErrorCode(error) === TOKEN_BALANCE_ERROR) {
+    return new AquariusError("The owner's AQUA balance is below the lock amount");
+  }
+  return error;
 }
 
 /** @internal One `withdraw` call per position id, in the given order. */

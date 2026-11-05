@@ -18,6 +18,7 @@ import {
   AquariusClient,
   AquariusError,
   NETWORKS,
+  NoTrustlineError,
   RestoreRequiredError,
   authorizedInvocation,
   sourceAccountEntry,
@@ -360,4 +361,40 @@ test("Locker contract errors carry what they mean", () => {
     assert.match(error.message, new RegExp(`#${code}`));
     assert.match(error.message, pattern);
   }
+});
+
+// Abridged testnet simulation errors of create_lock: the AQUA transfer out of
+// an owner without a trustline, and out of an owner without the balance.
+const failed = message => ({ id: "1", latestLedger: 1, events: [], error: message });
+const NO_TRUSTLINE = failed(
+  "HostError: Error(Contract, #13)\n\nEvent log (newest first):\n" +
+  '   2: [Failed Diagnostic Event (not emitted)] contract:CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE, topics:[error, Error(Contract, #13)], data:["trustline entry is missing for account", GAKXHLL6JG3WHTLYL3UH72PYNBPDXAKOBT7IAYPK5JMS7L5PGGGIRATR]',
+);
+const LOW_BALANCE = failed(
+  "HostError: Error(Contract, #10)\n\nEvent log (newest first):\n" +
+  '   2: [Failed Diagnostic Event (not emitted)] contract:CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE, topics:[error, Error(Contract, #10)], data:["resulting balance is not within the allowed range", 0, -10000000, 9223372036854775807]',
+);
+
+test("buildCreateLock states a missing AQUA trustline and a low AQUA balance for the owner", async () => {
+  const noTrustline = fakeClient([NO_TRUSTLINE]).client;
+  await assert.rejects(
+    noTrustline.locker.buildCreateLock({ amount: AMOUNT, unlockTime: UNLOCK }),
+    error => error instanceof NoTrustlineError && /owner has no AQUA trustline/.test(error.message),
+  );
+  const lowBalance = fakeClient([LOW_BALANCE]).client;
+  await assert.rejects(
+    lowBalance.locker.buildCreateLock({ amount: AMOUNT, unlockTime: UNLOCK }),
+    error => error instanceof AquariusError && /AQUA balance is below the lock amount/.test(error.message),
+  );
+  const locker = fakeClient([failed("HostError: Error(Contract, #2445)")]).client;
+  await assert.rejects(
+    locker.locker.buildCreateLock({ amount: AMOUNT, unlockTime: UNLOCK }),
+    /#2445: unlock time must be a Monday/,
+  );
+});
+
+test("contract error #10 keeps its plain wording outside buildCreateLock", async () => {
+  assert.equal(classifyContractError("HostError: Error(Contract, #10)").message, "Contract error #10");
+  const { client } = fakeClient([LOW_BALANCE]);
+  await assert.rejects(client.locker.buildWithdraw([4]), error => error.message === "Contract error #10");
 });
