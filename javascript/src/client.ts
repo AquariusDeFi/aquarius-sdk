@@ -52,7 +52,12 @@ export interface AquariusConfig {
    * for instance, is the network's preset with another router (and usually
    * another `apiUrl`). Unspecified addresses keep the preset's values.
    */
-  contracts?: Partial<Pick<NetworkConfig, "router" | "batch" | "collectorFactory">>;
+  contracts?: Partial<
+    Pick<
+      NetworkConfig,
+      "router" | "batch" | "collectorFactory" | "locker" | "upvoteIceProxy" | "governIceProxy"
+    >
+  >;
   /** Inclusion fee bid in stroops. Default 100000 (0.01 XLM). */
   baseFee?: string;
   /**
@@ -264,6 +269,9 @@ export class AquariusClient {
       router: config.contracts?.router ?? preset.router,
       batch: config.contracts?.batch ?? preset.batch,
       collectorFactory: config.contracts?.collectorFactory ?? preset.collectorFactory,
+      locker: config.contracts?.locker ?? preset.locker,
+      upvoteIceProxy: config.contracts?.upvoteIceProxy ?? preset.upvoteIceProxy,
+      governIceProxy: config.contracts?.governIceProxy ?? preset.governIceProxy,
     };
     this.api = new ApiClient(this.network.apiUrl);
     this.server = new rpc.Server(this.network.rpcUrl);
