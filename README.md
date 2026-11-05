@@ -96,6 +96,11 @@ Swaps (both modes), provider-fee collectors and separate output recipients, pool
 
 Tags trigger publishing: `py-v*` → PyPI, `js-v*` → npm. Independent patches, lockstep minors.
 
+There are two channels:
+
+- **Stable**: `js-vX.Y.Z` / `py-vX.Y.Z`, tagged on `master`. npm publishes it as `latest`.
+- **Testnet**: `js-vX.Y.Z-testnet.N` / `py-vX.Y.ZaN`. Use it to try a new feature on Stellar testnet before the stable `X.Y.Z`. npm publishes it under the `testnet` dist-tag, and pip installs a pre-release only when it is pinned, so it never reaches someone installing the stable version. Pin the exact version: `npm install @aquariusdefi/sdk@X.Y.Z-testnet.N`, `pip install aquarius-sdk==X.Y.ZaN`.
+
 ## Development
 
 - Python: `cd python && pip install -e .[dev] && pytest`
