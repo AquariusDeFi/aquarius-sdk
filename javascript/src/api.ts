@@ -1,5 +1,4 @@
 import { AquariusError, NoRouteError } from "./errors.js";
-import type { SellSwapQuote } from "./split-swap.js";
 
 /** @internal Bound on every HTTP request (matches the Python SDK's 30s) — a dead connection must fail, not hang. */
 export const HTTP_TIMEOUT_MS = 30_000;
@@ -9,16 +8,9 @@ export interface FindPathRequest {
   token_out_address: string;
   /** Base units (stroops for 7-decimal tokens), as a decimal string. */
   amount: string;
-  /** Let the backend select a split plan for exact-input quotes. */
-  split?: boolean;
 }
 
 export interface FindPathResponse {
-  /**
-   * Backend-selected exact-input split, or null for the ordinary route;
-   * validate before building authorization.
-   */
-  split_plan?: SellSwapQuote["split_plan"];
   success: boolean;
   swap_chain_xdr: string;
   pools: string[];
@@ -27,6 +19,41 @@ export interface FindPathResponse {
   /** Expected output (find-path) or required input (strict-receive), base units. */
   amount: number | string;
   amount_with_fee: number | string;
+}
+
+/** Exact-input quote for the router's `swap_split`. */
+export interface FindPathSplitRequest {
+  token_in_address: string;
+  token_out_address: string;
+  /** Exact input in base units, as an integer string. */
+  amount: string;
+  /** Decimal fraction from 0 to 1 (`"0.005"` = 0.5%); it only sets `amount_out_min`. */
+  slippage?: string;
+}
+
+/** One part of a stage: a chain in the `swap_chained` format and its share. */
+export interface FindPathSplitPart {
+  /** Basis points of the stage input; the shares of a stage sum to 10000. */
+  share: number;
+  /** Estimated input and output of the part, base units as integer strings. */
+  amount_in: string;
+  amount_out: string;
+  swap_chain_xdr: string;
+  pools: string[];
+  tokens: string[];
+  tokens_addresses: string[];
+}
+
+export interface FindPathSplitResponse {
+  success: boolean;
+  /** Base units as integer strings; `"0"` without a route. */
+  amount_in: string;
+  amount_out: string;
+  amount_out_min: string;
+  /** The `stages` argument of `swap_split`, base64 XDR. */
+  stages_xdr: string;
+  /** The stages in order, each a list of its parts in order. */
+  stages: FindPathSplitPart[][];
 }
 
 /** Typed client for the public backend API. */
@@ -45,6 +72,23 @@ export class ApiClient {
       throw new AquariusError(`Find-path request failed: HTTP ${response.status}`);
     }
     return (await response.json()) as FindPathResponse;
+  }
+
+  /**
+   * One plan for the router's `swap_split`, split or not. Validate it with
+   * `normalizeSwapSplitPlan` before building a transaction from it.
+   */
+  async findPathSplit(request: FindPathSplitRequest): Promise<FindPathSplitResponse> {
+    const response = await fetch(`${this.baseUrl}/find-path-split/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new AquariusError(`Find-path-split request failed: HTTP ${response.status}`);
+    }
+    return (await response.json()) as FindPathSplitResponse;
   }
 
   /** Indexed metadata for the given pool addresses (type, fee, token labels). */
