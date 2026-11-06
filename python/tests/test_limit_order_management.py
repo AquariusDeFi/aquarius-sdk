@@ -364,7 +364,7 @@ def test_record_cancel_requires_the_maker_and_uses_canonical_order():
         other_record.cancel()
 
 
-def prepared_client(*, resource_fee=17, resource_headroom=0, instruction_headroom=0):
+def prepared_client(*, resource_fee=17, resource_headroom=0, instruction_headroom=0, route_format="legacy"):
     from stellar_sdk import SorobanDataBuilder
     from stellar_sdk.soroban_rpc import AuthMode
     from aquarius.submit import NetworkCompute
@@ -372,7 +372,7 @@ def prepared_client(*, resource_fee=17, resource_headroom=0, instruction_headroo
     payload, filler = detached_payload()
     client = AquariusClient(
         network="testnet", signer=filler,
-        limit_orders=LimitOrderConfig(settlement=SETTLEMENT), base_fee=100,
+        limit_orders=LimitOrderConfig(settlement=SETTLEMENT, route_format=route_format), base_fee=100,
         resource_fee_headroom=resource_headroom,
         instruction_headroom=instruction_headroom,
     )
@@ -489,3 +489,22 @@ def test_detached_trust_authorization_is_exact_and_keeps_the_order_id(mutation):
     else:
         with pytest.raises(AquariusError, match="invocation tree"):
             parse()
+
+
+@pytest.mark.parametrize("split", [False, True])
+def test_typed_fill_preserves_the_maker_proof_and_enforced_simulation(split):
+    from stellar_sdk.soroban_rpc import AuthMode
+
+    from aquarius import SwapSplitPart, SwapSplitPlan
+
+    client, record, _, _ = prepared_client(route_format="typed")
+    route = SwapSplitPlan("1000", "950", [[SwapSplitPart(
+        10000, "1000", "950", route_xdr(), [SETTLEMENT], [SELL_TOKEN, BUY_TOKEN], [],
+    )]]) if split else route_xdr()
+    prepared = record.prepare_fill(route)
+    operation = prepared._transaction.transaction.operations[0]
+    route = operation.host_function.invoke_contract.args[2]
+    assert scval.to_native(route)[0] == ("Split" if split else "Chained")
+    assert operation.auth[0].to_xdr() == record.authorization.to_xdr()
+    assert client.server.simulate_transaction.call_args.kwargs == {"auth_mode": AuthMode.ENFORCE}
+    client.engine.sign_and_submit.assert_not_called()

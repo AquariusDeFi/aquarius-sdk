@@ -33,6 +33,7 @@ from .limit_orders import (
 from .pool import Pool, Position, parse_pools_map, sort_token_ids
 from .networks import NETWORKS, NetworkConfig
 from .signer import signer_public_key
+from .split_swap import SwapSplitPlan
 from .submit import SubmitEngine
 
 _FRIENDBOT_URL = "https://friendbot.stellar.org"
@@ -790,7 +791,7 @@ class AquariusClient:
     def _prepare_limit_order_fill(
         self,
         record: LimitOrderRecord,
-        swap_chain_xdr: str,
+        swap_chain_xdr: str | SwapSplitPlan,
         *,
         reward_to: str | None = None,
     ) -> PreparedLimitOrderFill:
@@ -811,7 +812,10 @@ class AquariusClient:
             lambda builder: builder.append_invoke_contract_function_op(
                 contract_id=record.settlement_address,
                 function_name="fill",
-                parameters=fill_parameters(record, recipient, swap_chain_xdr),
+                parameters=fill_parameters(
+                    record, recipient, swap_chain_xdr,
+                    route_format=self._require_limit_order_config().route_format,
+                ),
                 auth=auth,
             ),
         )

@@ -4,12 +4,13 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from stellar_sdk import Address, Network, scval, xdr
 from stellar_sdk.xdr import SCVal, TransactionEnvelope
 
 from .errors import AquariusError
+from .split_swap import SwapSplitPlan, _stages
 
 if TYPE_CHECKING:
     from .assets import Asset
@@ -56,8 +57,12 @@ class LimitOrderConfig:
     settlement: str
     batcher: str | None = None
     api_url: str | None = None
+    # Select typed only for a settlement upgraded to the Route enum (v221).
+    route_format: Literal["legacy", "typed"] = "legacy"
 
     def __post_init__(self):
+        if self.route_format not in ("legacy", "typed"):
+            raise AquariusError("unknown settlement route format")
         object.__setattr__(
             self, "settlement", _contract_address(self.settlement, "settlement")
         )
@@ -142,7 +147,7 @@ class LimitOrderRecord:
     _client: "AquariusClient | None" = field(default=None, repr=False, compare=False)
 
     def prepare_fill(
-        self, swap_chain_xdr: str, *, reward_to: str | None = None
+        self, swap_chain_xdr: str | SwapSplitPlan, *, reward_to: str | None = None
     ) -> PreparedLimitOrderFill:
         return self._bound_client()._prepare_limit_order_fill(
             self, swap_chain_xdr, reward_to=reward_to
@@ -756,13 +761,35 @@ def route_scval_from_swap_chain(swap_chain_xdr: str) -> SCVal:
 def fill_parameters(
     record: LimitOrderRecord,
     reward_to: str,
-    swap_chain_xdr: str,
+    swap_chain_xdr: str | SwapSplitPlan,
+    *,
+    route_format: Literal["legacy", "typed"] = "legacy",
 ) -> list[SCVal]:
-    return [
-        record.order.order_scval,
-        scval.to_address(reward_to),
-        route_scval_from_swap_chain(swap_chain_xdr),
-    ]
+    if route_format not in ("legacy", "typed"):
+        raise AquariusError("unknown settlement route format")
+    if isinstance(swap_chain_xdr, str):
+        route = route_scval_from_swap_chain(swap_chain_xdr)
+        if route_format == "typed":
+            route = scval.to_vec([scval.to_symbol("Chained"), route])
+    else:
+        if route_format != "typed":
+            raise AquariusError("split routes require the typed settlement interface")
+        plan = swap_chain_xdr
+        if not isinstance(plan, SwapSplitPlan) or plan.amount_in != str(record.order.sell_amount):
+            raise AquariusError("split plan amount must match the order input")
+        # Revalidate mutable plans against the signed order before encoding them.
+        _stages(plan, record.order.sell_token, record.order.buy_token)
+        route = scval.to_vec([scval.to_symbol("Split"), scval.to_vec([
+            scval.to_vec([
+                scval.to_struct({
+                    "hops": route_scval_from_swap_chain(part.swap_chain_xdr),
+                    "share_bps": scval.to_uint32(int(part.share)),
+                })
+                for part in stage
+            ])
+            for stage in plan.stages
+        ])])
+    return [record.order.order_scval, scval.to_address(reward_to), route]
 
 
 def validate_fill_receipt(
