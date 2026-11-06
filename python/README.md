@@ -411,3 +411,8 @@ Questions and integration help: [Discord](https://discord.gg/sgzFscHp4C).
 ## Maintenance
 
 [misty-forest](https://github.com/misty-forest) maintains the Aquarius SDK, including security review, vulnerability remediation, and ongoing development.
+
+Limit-order fills use the automatic restoration entries supplied in simulation
+transaction data (Protocol 23+). Preparation preserves that data and applies the
+normal receipt, authorization and fee checks; it does not submit a separate
+restore transaction.

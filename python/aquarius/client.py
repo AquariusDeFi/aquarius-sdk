@@ -823,10 +823,6 @@ class AquariusClient:
         ledger = getattr(simulation, "latest_ledger", None)
         if type(ledger) is int:
             context["simulation_ledger"] = ledger
-        if simulation.restore_preamble is not None:
-            raise AquariusError("limit-order fill requires footprint restoration", diagnostics={
-                **context, "stage": "simulation", "reason": "restoration_required",
-            })
         if simulation.error is not None:
             code = re.match(r"(?:HostError: )?Error\(Contract, #(\d{1,10})\)", simulation.error)
             if code and int(code[1]) <= 2**32 - 1:

@@ -8,7 +8,6 @@ from test_limit_order_management import fill_receipt, prepared_client, route_xdr
 
 @pytest.mark.parametrize("failure,stage,reason", [
     ("simulation", "simulation", "simulation_failed"),
-    ("restore", "simulation", "restoration_required"),
     ("receipt", "receipt", "invalid_receipt"),
     ("auth", "authorization", "authorization_changed"),
     ("fee", "fee", "fee_cap"),
@@ -21,8 +20,6 @@ def test_fill_failures_carry_safe_diagnostics_without_submitting(failure, stage,
     simulation.latest_ledger = 123
     if failure == "simulation":
         simulation.error = "HostError: Error(Contract, #205) PRIVATE-RPC-TEXT"
-    elif failure == "restore":
-        simulation.restore_preamble = object()
     elif failure == "receipt":
         simulation.results[0].xdr = "PRIVATE-XDR"
     elif failure == "auth":
