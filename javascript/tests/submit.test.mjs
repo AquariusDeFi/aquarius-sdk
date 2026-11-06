@@ -1,12 +1,13 @@
 // SubmitEngine sequence-recovery tests on a fake RPC server — no network.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 
 import { Account, Keypair, Networks, Operation, SorobanDataBuilder, StrKey, rpc, xdr } from "@stellar/stellar-sdk";
 
 import { authorizedInvocation, sourceAccountEntry } from "../dist/authorization.js";
 import { AquariusClient, XLM } from "../dist/index.js";
-import { AquariusError, SlippageError } from "../dist/errors.js";
+import { AquariusError, NoTrustlineError, SlippageError } from "../dist/errors.js";
 import { SubmitEngine } from "../dist/submit.js";
 
 const PASSPHRASE = Networks.TESTNET;
@@ -410,3 +411,32 @@ test("waitForNextLedger rejects invalid arguments before polling", async () => {
   }
   assert.deepEqual(server.calls, []);
 });
+
+const handledProbe = JSON.parse(readFileSync(
+  new URL("../../testdata/simulation_error_after_handled_probe.json", import.meta.url), "utf8",
+));
+const missingTrustline = JSON.parse(readFileSync(
+  new URL("../../testdata/diagnostic_events_missing_trustline.json", import.meta.url), "utf8",
+));
+for (const method of ["prepare", "read"]) {
+  for (const [label, message, events, errorType] of [
+    ["handled ICE trustline probe", handledProbe.error, handledProbe.events_xdr, SlippageError],
+    ["missing diagnostics", handledProbe.error, undefined, SlippageError],
+    ["undecodable diagnostics", handledProbe.error, ["invalid"], SlippageError],
+    ["failing output trustline", missingTrustline.sim_error_first_line, missingTrustline.events_xdr, NoTrustlineError],
+  ]) {
+    test(`${method} diagnoses the simulation failure: ${label}`, async () => {
+      const server = new FakeServer([]);
+      server.simulateTransaction = async () => ({ _parsed: true, error: message, events: events?.map(raw => {
+        try { return xdr.DiagnosticEvent.fromXdr(raw, "base64"); } catch { return raw; }
+      }), latestLedger: 100 });
+      const engine = new SubmitEngine(server, PASSPHRASE, "100");
+      await assert.rejects(engine[method](KEYPAIR.publicKey(), () => Operation.manageData({ name: "test", value: "1" })), error => {
+        assert.equal(error.constructor, errorType);
+        if (errorType === SlippageError) assert.match(error.message, /#2006/);
+        return true;
+      });
+      assert.equal(server.submitted.length, 0);
+    });
+  }
+}
