@@ -423,7 +423,9 @@ for (const method of ["prepare", "read"]) {
     ["handled ICE trustline probe", handledProbe.error, handledProbe.events_xdr, SlippageError],
     ["missing diagnostics", handledProbe.error, undefined, SlippageError],
     ["undecodable diagnostics", handledProbe.error, ["invalid"], SlippageError],
-    ["failing output trustline", missingTrustline.sim_error_first_line, missingTrustline.events_xdr, NoTrustlineError],
+    ["failing output trustline", handledProbe.missing_trustline_error, missingTrustline.events_xdr, NoTrustlineError],
+    ["text-only failing output trustline", handledProbe.missing_trustline_error, undefined, NoTrustlineError],
+    ["failing output trustline with unreadable diagnostics", handledProbe.missing_trustline_error, ["invalid"], NoTrustlineError],
   ]) {
     test(`${method} diagnoses the simulation failure: ${label}`, async () => {
       const server = new FakeServer([]);
