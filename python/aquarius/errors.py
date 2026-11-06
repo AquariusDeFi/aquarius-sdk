@@ -125,11 +125,19 @@ def classify_contract_code(code: int, tx_hash: str | None = None) -> AquariusErr
     return AquariusError(f"Contract error #{code}", tx_hash)
 
 
-def classify_contract_error(message: str, tx_hash: str | None = None) -> AquariusError | None:
+def classify_contract_error(
+    message: str, tx_hash: str | None = None, *, events_xdr: list[str] | None = None
+) -> AquariusError | None:
     """Map a simulation/prepare failure string to a typed error.
 
     Contract failures surface as substrings like ``Error(Contract, #2006)``.
     """
+    cause = error_from_diagnostics(events_xdr, tx_hash)
+    if cause is not None:
+        return cause
+    # RPC appends the full event log, including errors caught by try_call.
+    # Without usable diagnostics, classify only the reported failure itself.
+    message = message.split("\n", 1)[0]
     if _TRUSTLINE_MARKER in message:
         return NoTrustlineError(_NO_TRUSTLINE_MESSAGE, tx_hash)
     match = _CONTRACT_ERROR_RE.search(message)
