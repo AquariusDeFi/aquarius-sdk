@@ -1,6 +1,6 @@
 {
   "name": "@aquariusdefi/sdk",
-  "version": "0.7.0-testnet.2",
+  "version": "0.7.0-testnet.3",
   "description": "TypeScript SDK for the Aquarius protocol on Stellar",
   "type": "module",
   "main": "dist/index.js",
