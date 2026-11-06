@@ -420,6 +420,31 @@ const prepared = await order.prepareFill(route.swapChainXdr);
 const result = await prepared.execute();
 ```
 
+For settlement v221's typed `Route` interface, explicitly set
+`limitOrders: { settlement, routeFormat: "typed" }`. The default is `"legacy"`
+for existing deployments. With `"typed"`, a chain XDR is encoded as
+`Route::Chained`; a normalized split plan is encoded as `Route::Split` with
+struct parts and hops:
+
+```ts
+const response = await aqua.api.findPathSplit({
+  token_in_address: order.order.sellToken,
+  token_out_address: order.order.buyToken,
+  amount: order.order.sellAmount.toString(),
+});
+const plan = normalizeSwapSplitPlan(response, order.order.sellToken,
+  order.order.buyToken, order.order.sellAmount.toString());
+if (BigInt(plan.amountOut) < order.order.requiredRouterMin(xlmToken)) {
+  throw new NoRouteError("Current route does not meet the order minimum");
+}
+const prepared = await order.prepareFill(plan);
+```
+
+The SDK revalidates split plans against the signed order's input amount and
+endpoints. Split plans are rejected with the legacy interface. Coordinate the
+format switch with the settlement upgrade; network selection alone does not
+change the SDK's format. Existing orders and maker proofs remain unchanged.
+
 The existing generic path lookup and parser are reused unchanged. Route lookup
 and limit policy are separate primitives. Before returning `prepared`, the SDK
 validates the registry record, detached
