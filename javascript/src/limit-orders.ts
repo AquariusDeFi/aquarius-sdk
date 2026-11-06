@@ -10,6 +10,7 @@ import {
 
 import type { Asset } from "./assets.js";
 import { AquariusError } from "./errors.js";
+import { LIMIT_ORDER_MAX_TTL_LEDGERS } from "./limit-order-types.js";
 
 const ORDER_FIELDS = [
   "buy_token",
@@ -45,15 +46,25 @@ function contractAddress(value: string, name: string): string {
   return value;
 }
 
+/** @internal Apply the same lifetime cap to wallet, legacy and imported orders. */
+export function validateLimitOrderLifetime(validAfterLedger: number, expiresAtLedger: number): void {
+  if (expiresAtLedger - validAfterLedger > LIMIT_ORDER_MAX_TTL_LEDGERS) {
+    throw new AquariusError("Order expiry cannot exceed 6 months (3,110,399 ledgers).");
+  }
+}
+
 export interface LimitOrderConfigInput {
   settlement: string;
   batcher?: string;
+  /** Guard contract used for atomic additive allowance placement. */
+  guard?: string;
   apiUrl?: string;
 }
 
 export class LimitOrderConfig {
   readonly settlement: string;
   readonly batcher?: string;
+  readonly guard?: string;
   readonly apiUrl?: string;
 
   constructor(config: LimitOrderConfigInput) {
@@ -61,6 +72,7 @@ export class LimitOrderConfig {
     this.batcher = config.batcher === undefined
       ? undefined
       : contractAddress(config.batcher, "batcher");
+    this.guard = config.guard === undefined ? undefined : contractAddress(config.guard, "guard");
     if (config.apiUrl !== undefined && config.apiUrl.length === 0) {
       throw new AquariusError("limit-order apiUrl must be non-empty");
     }
@@ -410,6 +422,7 @@ export function buildOnchainPlacementArgs(
   currentAllowances: ReadonlyMap<string, bigint>,
   xlmToken: string,
 ): xdr.ScVal[] {
+  validateLimitOrderLifetime(order.validAfterLedger, order.expiresAtLedger);
   if (!Number.isInteger(order.allowanceExpirationLedger) ||
       order.allowanceExpirationLedger < order.expiresAtLedger ||
       order.allowanceExpirationLedger > 0xffffffff) {
@@ -571,7 +584,7 @@ export function parseLimitOrderRecord(
   );
 }
 
-function limitOrderFromScVal(value: xdr.ScVal): LimitOrder {
+export function limitOrderFromScVal(value: xdr.ScVal): LimitOrder {
   const types = ["scvAddress", "scvU128", "scvU32", "scvAddress", "scvU128", "scvVec", "scvBytes", "scvU128", "scvAddress", "scvU32", "scvU32"];
   if (value.type !== "scvMap" || !value.map || value.map.length !== ORDER_FIELDS.length) {
     throw new AquariusError("limit order is not a canonical OrderV1");
@@ -655,6 +668,7 @@ function validateLimitOrder(order: LimitOrder): void {
   ) {
     throw new AquariusError("limit order has an invalid ledger window");
   }
+  validateLimitOrderLifetime(order.validAfterLedger, order.expiresAtLedger);
 }
 
 export function validateAuthorizationTree(
