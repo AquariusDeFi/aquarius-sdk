@@ -475,7 +475,7 @@ def test_wait_for_next_ledger_rejects_invalid_arguments(kwargs, message):
 
 
 @pytest.mark.parametrize("method", ["prepare", "read"])
-@pytest.mark.parametrize("case", ["handled", "missing", "invalid", "trustline"])
+@pytest.mark.parametrize("case", ["handled", "missing", "invalid", "trustline", "trustline_missing", "trustline_invalid"])
 def test_simulation_error_ignores_handled_trustline_probe(method, case):
     import json
     from pathlib import Path
@@ -490,9 +490,14 @@ def test_simulation_error_ignores_handled_trustline_probe(method, case):
         events = None
     elif case == "invalid":
         events = ["invalid"]
-    elif case == "trustline":
+    elif case.startswith("trustline"):
+        message = fixture["missing_trustline_error"]
         fixture = json.loads((testdata / "diagnostic_events_missing_trustline.json").read_text())
-        message, events = fixture["sim_error_first_line"], fixture["events_xdr"]
+        events = fixture["events_xdr"]
+        if case == "trustline_missing":
+            events = None
+        elif case == "trustline_invalid":
+            events = ["invalid"]
         error_type = NoTrustlineError
     server = FakeServer([])
     server.simulate_transaction = lambda *args, **kwargs: SimpleNamespace(
