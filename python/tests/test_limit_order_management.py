@@ -408,7 +408,7 @@ def test_fill_enforces_exact_maker_auth_and_applies_headroom_before_fee_guard():
         record.prepare_fill(route_xdr())
 
 
-def test_fill_rejects_rpc_auth_and_restore_without_submission():
+def test_fill_rejects_rpc_auth_without_submission():
     from aquarius.authorization import authorized_invocation, source_account_entry
 
     client, record, _, simulation = prepared_client()
@@ -417,11 +417,6 @@ def test_fill_rejects_rpc_auth_and_restore_without_submission():
         record.prepare_fill(route_xdr())
     client.engine.sign_and_submit.assert_not_called()
 
-    simulation.results[0].auth = []
-    simulation.restore_preamble = object()
-    with pytest.raises(AquariusError, match="restoration"):
-        record.prepare_fill(route_xdr())
-    client.engine.sign_and_submit.assert_not_called()
 
 
 def test_execute_uses_validated_confirmed_receipt_instead_of_preview():
@@ -489,3 +484,27 @@ def test_detached_trust_authorization_is_exact_and_keeps_the_order_id(mutation):
     else:
         with pytest.raises(AquariusError, match="invocation tree"):
             parse()
+
+
+@pytest.mark.parametrize("legacy_preamble", [False, True])
+def test_fill_preserves_automatic_restore_list_without_separate_restore(legacy_preamble):
+    client, record, _, simulation = prepared_client(
+        resource_headroom=0.5, instruction_headroom=0.25)
+    data = xdr.SorobanTransactionData.from_xdr(simulation.transaction_data)
+    data.resources.footprint.read_write = [xdr.LedgerKey(
+        xdr.LedgerEntryType.CONTRACT_CODE,
+        contract_code=xdr.LedgerKeyContractCode(xdr.Hash(bytes([7]) * 32)),
+    )]
+    data.ext = xdr.SorobanTransactionDataExt(
+        1, xdr.SorobanResourcesExtV0([xdr.Uint32(0)]))
+    simulation.transaction_data = data.to_xdr()
+    if legacy_preamble:
+        simulation.restore_preamble = object()
+    client.engine._restore = Mock(side_effect=AssertionError("unexpected separate restore"))
+    prepared = record.prepare_fill(route_xdr())
+    assembled = prepared._transaction.transaction
+    assert assembled.soroban_data.ext.to_xdr() == data.ext.to_xdr()
+    assert assembled.soroban_data.resources.footprint.to_xdr() == data.resources.footprint.to_xdr()
+    assert assembled.operations[0].auth[0].to_xdr() == record.authorization.to_xdr()
+    client.engine._restore.assert_not_called()
+    client.engine.sign_and_submit.assert_not_called()

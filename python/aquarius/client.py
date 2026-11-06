@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -786,9 +787,14 @@ class AquariusClient:
         reward_to: str | None = None,
     ) -> PreparedLimitOrderFill:
         """Simulate and assemble a permissionless V1 fill without submitting it."""
-        self._validate_limit_order_context(record)
+        try:
+            self._validate_limit_order_context(record)
+        except AquariusError as exc:
+            exc.diagnostics = {"stage": "validation", "reason": "invalid_context"}
+            raise
         if record.status != "OPEN":
-            raise AquariusError("only an open limit order can be filled")
+            raise AquariusError("only an open limit order can be filled",
+                                diagnostics={"stage": "validation", "reason": "order_not_open"})
         signer = self._require_signer()
         filler = signer_public_key(signer)
         recipient = reward_to or filler
@@ -797,42 +803,68 @@ class AquariusClient:
                 "the SDK requires the execution fee to pay the transaction signer"
             )
         auth = [record.authorization] if record.authorization is not None else []
+        try:
+            parameters = fill_parameters(record, recipient, swap_chain_xdr)
+        except AquariusError as exc:
+            exc.diagnostics = {"stage": "route", "reason": "invalid_route"}
+            raise
         transaction = self.engine.build_transaction(
             filler,
             lambda builder: builder.append_invoke_contract_function_op(
                 contract_id=record.settlement_address,
                 function_name="fill",
-                parameters=fill_parameters(record, recipient, swap_chain_xdr),
+                parameters=parameters,
                 auth=auth,
             ),
         )
         expected_operations = self.engine._operation_xdr(transaction)
         simulation = self.server.simulate_transaction(transaction, auth_mode=AuthMode.ENFORCE)
-        if simulation.restore_preamble is not None:
-            raise AquariusError("limit-order fill requires footprint restoration")
+        context = {"reward_xlm": record.order.executor_reward_xlm}
+        ledger = getattr(simulation, "latest_ledger", None)
+        if type(ledger) is int:
+            context["simulation_ledger"] = ledger
         if simulation.error is not None:
-            raise AquariusError(f"limit-order fill simulation failed: {simulation.error}")
+            code = re.match(r"(?:HostError: )?Error\(Contract, #(\d{1,10})\)", simulation.error)
+            if code and int(code[1]) <= 2**32 - 1:
+                context["contract_code"] = int(code[1])
+            raise AquariusError(f"limit-order fill simulation failed: {simulation.error}",
+                                diagnostics={**context, "stage": "simulation",
+                                             "reason": "simulation_failed"})
         if not isinstance(simulation.results, list) or len(simulation.results) != 1:
             raise AquariusError(
-                "limit-order fill simulation returned an invalid result count"
+                "limit-order fill simulation returned an invalid result count",
+                diagnostics={**context, "stage": "receipt", "reason": "invalid_result_count"},
             )
         try:
             result_value = SCVal.from_xdr(simulation.results[0].xdr)
         except Exception as exc:
             raise AquariusError(
-                "limit-order fill simulation returned an invalid receipt"
+                "limit-order fill simulation returned an invalid receipt",
+                diagnostics={**context, "stage": "receipt", "reason": "invalid_receipt"},
             ) from exc
-        receipt = validate_fill_receipt(record, recipient, result_value)
+        try:
+            receipt = validate_fill_receipt(record, recipient, result_value)
+        except AquariusError as exc:
+            exc.diagnostics = {**context, "stage": "receipt", "reason": "invalid_receipt"}
+            raise
         expected_auth = [entry.to_xdr() for entry in auth]
         rpc_auth = simulation.results[0].auth or []
         if rpc_auth and rpc_auth != expected_auth:
-            raise AquariusError("limit-order simulation changed authorization")
-        prepared = self.engine._assemble(transaction, simulation, expected_operations)
+            raise AquariusError("limit-order simulation changed authorization", diagnostics={
+                **context, "stage": "authorization", "reason": "authorization_changed",
+            })
+        try:
+            prepared = self.engine._assemble(transaction, simulation, expected_operations)
+        except AquariusError as exc:
+            exc.diagnostics = {**context, "stage": "assembly", "reason": "assembly_failed"}
+            raise
         maximum_fee = prepared.transaction.fee
         if maximum_fee >= record.order.executor_reward_xlm:
             raise AquariusError(
                 f"fill maximum fee {maximum_fee} is not below execution fee "
-                f"{record.order.executor_reward_xlm}"
+                f"{record.order.executor_reward_xlm}",
+                diagnostics={**context, "stage": "fee", "reason": "fee_cap",
+                             "maximum_fee": maximum_fee},
             )
         return PreparedLimitOrderFill(
             order=record,
