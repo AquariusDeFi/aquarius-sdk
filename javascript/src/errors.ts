@@ -128,7 +128,16 @@ export function classifyContractCode(code: number, txHash?: string): AquariusErr
  * @internal Map a simulation/prepare failure string to a typed error.
  * Contract failures surface as substrings like `Error(Contract, #2006)`.
  */
-export function classifyContractError(message: string, txHash?: string): AquariusError | null {
+export function classifyContractError(
+  message: string,
+  txHash?: string,
+  events?: (xdr.DiagnosticEvent | string)[],
+): AquariusError | null {
+  const cause = errorFromDiagnostics(events, txHash);
+  if (cause) return cause;
+  // RPC appends the full event log, including errors caught by try_call.
+  // Without usable diagnostics, classify only the reported failure itself.
+  message = message.split(/\r?\n/, 1)[0];
   if (message.includes(TRUSTLINE_MARKER)) {
     return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
   }

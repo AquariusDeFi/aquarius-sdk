@@ -327,7 +327,9 @@ class SubmitEngine:
             simulation = self.server.simulate_transaction(tx, auth_mode=AuthMode.ENFORCE)
 
         if simulation.error is not None:
-            raise classify_contract_error(simulation.error) or AquariusError(simulation.error)
+            raise classify_contract_error(
+                simulation.error, events_xdr=getattr(simulation, "events", None)
+            ) or AquariusError(simulation.error)
         if simulation.restore_preamble is not None:
             raise AquariusError("Ledger entries remain archived after restore")
         if not simulation.results and any(
@@ -400,7 +402,9 @@ class SubmitEngine:
             simulation = self.server.simulate_transaction(tx)
 
         if simulation.error is not None:
-            raise classify_contract_error(simulation.error) or AquariusError(simulation.error)
+            raise classify_contract_error(
+                simulation.error, events_xdr=getattr(simulation, "events", None)
+            ) or AquariusError(simulation.error)
         if not simulation.results:
             raise AquariusError("Simulation returned no result")
         return SCVal.from_xdr(simulation.results[0].xdr)
