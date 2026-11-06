@@ -4,6 +4,7 @@ import { Address, Asset as StellarAsset, Keypair, Operation, Transaction, hash, 
 
 import { ApiClient, FindPathResponse, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
+import type { SwapSplitPlan } from "./split-swap.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { BatchCall, batchArgs, batchOperation, batchResults, isBudgetExceeded } from "./batch.js";
 import { snapTick, tickFromPrice, tickSpacingForFee } from "./concentrated.js";
@@ -1451,7 +1452,7 @@ export class AquariusClient {
 
   private async prepareLimitOrderFill(
     record: LimitOrderRecord,
-    swapChainXdr: string,
+    swapChainXdr: string | SwapSplitPlan,
     rewardTo?: string,
   ): Promise<PreparedLimitOrderFill> {
     this.validateLimitOrderContext(record);
@@ -1469,7 +1470,7 @@ export class AquariusClient {
     const operation = Operation.invokeContractFunction({
       contract: record.settlementAddress,
       function: "fill",
-      args: fillParameters(record, recipient, swapChainXdr),
+      args: fillParameters(record, recipient, swapChainXdr, this.requireLimitOrderConfig().routeFormat),
       auth: record.authorization ? [record.authorization] : [],
     });
     const operationXdr = operation.toXDR();
@@ -1563,7 +1564,7 @@ export class AquariusClient {
     return {
       prepareLimitOrderFill: (
         record: LimitOrderRecord,
-        swapChainXdr: string,
+        swapChainXdr: string | SwapSplitPlan,
         rewardTo?: string,
       ) => this.prepareLimitOrderFill(record, swapChainXdr, rewardTo),
       buildLimitOrderCancel: (record: LimitOrderRecord) =>

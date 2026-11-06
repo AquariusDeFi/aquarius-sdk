@@ -56,6 +56,7 @@ export {
   validateFillReceipt,
   validateOnchainLimitOrderDraft,
   type LimitOrderConfigInput,
+  type SettlementRouteFormat,
   type LimitOrderFillReceipt,
   type LimitOrderFillResult,
   type LimitOrderPage,

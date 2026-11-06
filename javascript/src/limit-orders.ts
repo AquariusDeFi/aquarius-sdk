@@ -10,6 +10,9 @@ import {
 
 import type { Asset } from "./assets.js";
 import { AquariusError } from "./errors.js";
+import { encodeStages, type SwapSplitPlan } from "./split-swap.js";
+
+export type SettlementRouteFormat = "legacy" | "typed";
 
 const ORDER_FIELDS = [
   "buy_token",
@@ -49,12 +52,15 @@ export interface LimitOrderConfigInput {
   settlement: string;
   batcher?: string;
   apiUrl?: string;
+  /** Select typed only for a settlement upgraded to the Route enum (v221). */
+  routeFormat?: SettlementRouteFormat;
 }
 
 export class LimitOrderConfig {
   readonly settlement: string;
   readonly batcher?: string;
   readonly apiUrl?: string;
+  readonly routeFormat: SettlementRouteFormat;
 
   constructor(config: LimitOrderConfigInput) {
     this.settlement = contractAddress(config.settlement, "settlement");
@@ -65,6 +71,10 @@ export class LimitOrderConfig {
       throw new AquariusError("limit-order apiUrl must be non-empty");
     }
     this.apiUrl = config.apiUrl;
+    this.routeFormat = config.routeFormat ?? "legacy";
+    if (this.routeFormat !== "legacy" && this.routeFormat !== "typed") {
+      throw new AquariusError("unknown settlement route format");
+    }
   }
 }
 
@@ -110,7 +120,7 @@ export interface LimitOrderFillResult {
 export interface LimitOrderRecordActions {
   prepareLimitOrderFill(
     record: LimitOrderRecord,
-    swapChainXdr: string,
+    swapChainXdr: string | SwapSplitPlan,
     rewardTo?: string,
   ): Promise<PreparedLimitOrderFill>;
   buildLimitOrderCancel(record: LimitOrderRecord): Promise<string>;
@@ -145,7 +155,7 @@ export class LimitOrderRecord {
     private readonly actions?: LimitOrderRecordActions,
   ) {}
 
-  prepareFill(swapChainXdr: string, rewardTo?: string): Promise<PreparedLimitOrderFill> {
+  prepareFill(swapChainXdr: string | SwapSplitPlan, rewardTo?: string): Promise<PreparedLimitOrderFill> {
     return this.boundActions().prepareLimitOrderFill(this, swapChainXdr, rewardTo);
   }
 
@@ -778,13 +788,44 @@ export function routeScValFromSwapChain(swapChainXdr: string): xdr.ScVal {
 export function fillParameters(
   record: LimitOrderRecord,
   rewardTo: string,
-  swapChainXdr: string,
+  swapChainXdr: string | SwapSplitPlan,
+  routeFormat: SettlementRouteFormat = "legacy",
 ): xdr.ScVal[] {
-  return [
-    record.order.orderScVal,
-    new Address(rewardTo).toScVal(),
-    routeScValFromSwapChain(swapChainXdr),
-  ];
+  if (routeFormat !== "legacy" && routeFormat !== "typed") {
+    throw new AquariusError("unknown settlement route format");
+  }
+  let route: xdr.ScVal;
+  if (typeof swapChainXdr === "string") {
+    route = routeScValFromSwapChain(swapChainXdr);
+    if (routeFormat === "typed") {
+      route = xdr.ScVal.scvVec([nativeToScVal("Chained", { type: "symbol" }), route]);
+    }
+  } else {
+    if (routeFormat !== "typed") {
+      throw new AquariusError("split routes require the typed settlement interface");
+    }
+    const plan = swapChainXdr;
+    if (!plan || plan.amountIn !== String(record.order.sellAmount)) {
+      throw new AquariusError("split plan amount must match the order input");
+    }
+    // Revalidate mutable plans against the signed order before encoding them.
+    encodeStages(plan, record.order.sellToken, record.order.buyToken);
+    route = xdr.ScVal.scvVec([
+      nativeToScVal("Split", { type: "symbol" }),
+      xdr.ScVal.scvVec(plan.stages.map(stage => xdr.ScVal.scvVec(
+        stage.map(part => xdr.ScVal.scvMap([
+          new xdr.ScMapEntry({
+            key: nativeToScVal("hops", { type: "symbol" }),
+            val: routeScValFromSwapChain(part.swapChainXdr),
+          }),
+          new xdr.ScMapEntry({
+            key: nativeToScVal("share_bps", { type: "symbol" }), val: xdr.ScVal.scvU32(part.share),
+          }),
+        ])),
+      ))),
+    ]);
+  }
+  return [record.order.orderScVal, new Address(rewardTo).toScVal(), route];
 }
 
 export function validateFillReceipt(
