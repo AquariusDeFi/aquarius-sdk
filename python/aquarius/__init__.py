@@ -75,7 +75,7 @@ from .swap_resources import (
 
 from .resource_retry import PreparedSwapWithBudget, SwapResourceRetryEvent, prepare_swap_with_resource_retry
 
-__version__ = "0.7.0a2"
+__version__ = "0.7.0a5"
 
 __all__ = [
     "sell_amount_to_raw",

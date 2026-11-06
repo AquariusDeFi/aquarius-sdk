@@ -157,7 +157,7 @@ function typedContractError(code: number, txHash?: string): AquariusError {
 }
 
 /**
- * @internal Map a simulation/prepare failure string to a typed error.
+ * Map a simulation/prepare failure and its terminating diagnostics to a typed error.
  * Contract failures surface as substrings like `Error(Contract, #2006)`.
  */
 export function classifyContractError(

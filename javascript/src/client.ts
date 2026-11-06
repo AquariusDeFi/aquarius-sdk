@@ -1481,7 +1481,7 @@ export class AquariusClient {
       throw new AquariusError("limit-order fill requires footprint restoration");
     }
     if (rpc.Api.isSimulationError(simulation)) {
-      throw classifyContractError(simulation.error) ?? new AquariusError(
+      throw classifyContractError(simulation.error, undefined, simulation.events) ?? new AquariusError(
         `limit-order fill simulation failed: ${simulation.error}`,
       );
     }

@@ -824,8 +824,9 @@ class AquariusClient:
         if simulation.restore_preamble is not None:
             raise AquariusError("limit-order fill requires footprint restoration")
         if simulation.error is not None:
-            raise (classify_contract_error(simulation.error) or
-                   AquariusError(f"limit-order fill simulation failed: {simulation.error}"))
+            raise classify_contract_error(
+                simulation.error, events_xdr=getattr(simulation, "events", None)
+            ) or AquariusError(f"limit-order fill simulation failed: {simulation.error}")
         if not isinstance(simulation.results, list) or len(simulation.results) != 1:
             raise AquariusError(
                 "limit-order fill simulation returned an invalid result count"
