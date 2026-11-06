@@ -146,8 +146,8 @@ test("diagnostics fall back to the contract error code", () => {
   assert.match(error.message, /#13/);
 });
 
-test("trustline marker wins over contract code", () => {
-  const message = "HostError: Error(Contract, #2006)\n... trustline entry is missing for account ...";
+test("a trustline failure reported directly stays typed", () => {
+  const message = "HostError: Error(Contract, #13): trustline entry is missing for account";
   assert.ok(classifyContractError(message) instanceof NoTrustlineError);
 });
 

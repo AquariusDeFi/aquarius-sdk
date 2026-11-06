@@ -329,7 +329,8 @@ export class SubmitEngine {
     }
 
     if (rpc.Api.isSimulationError(simulation)) {
-      throw classifyContractError(simulation.error) ?? new AquariusError(simulation.error);
+      throw classifyContractError(simulation.error, undefined, simulation.events)
+        ?? new AquariusError(simulation.error);
     }
     if (!rpc.Api.isSimulationSuccess(simulation) || !simulation.result) {
       throw new AquariusError("Simulation returned no contract result");
@@ -416,7 +417,8 @@ export class SubmitEngine {
     const simulation = await this.server.simulateTransaction(tx);
 
     if (rpc.Api.isSimulationError(simulation)) {
-      throw classifyContractError(simulation.error) ?? new AquariusError(simulation.error);
+      throw classifyContractError(simulation.error, undefined, simulation.events)
+        ?? new AquariusError(simulation.error);
     }
     const retval = (simulation as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;
     if (!retval) {
