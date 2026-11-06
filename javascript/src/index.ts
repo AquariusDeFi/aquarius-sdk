@@ -26,7 +26,14 @@ export { batchCallScVal, type BatchCall } from "./batch.js";
 export type { Signer } from "./signer.js";
 export { FeeCollector, type ClaimedFees } from "./collector.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
-export type { FindPathRequest, FindPathResponse, ParsedRoute } from "./api.js";
+export type {
+  FindPathRequest,
+  FindPathResponse,
+  FindPathSplitPart,
+  FindPathSplitRequest,
+  FindPathSplitResponse,
+  ParsedRoute,
+} from "./api.js";
 export { NETWORKS, type NetworkConfig } from "./networks.js";
 export {
   LimitOrder,
@@ -97,3 +104,20 @@ export {
   TxTimeoutError,
   UserRejectedError,
 } from "./errors.js";
+
+export {
+  normalizeSwapSplitPlan,
+  sellAmountToRaw,
+  getSwapMinimum,
+  buildSwapSplitOperation,
+  getSwapSplitResult,
+  type SwapSplitPart,
+  type SwapSplitPlan,
+  type BuildSwapSplitOptions,
+} from "./split-swap.js";
+export {
+  loadSwapResourceLimits,
+  assertSwapResources,
+  assertSwapAuthorization,
+  type SwapResourceLimits,
+} from "./swap-resources.js";
