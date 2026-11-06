@@ -135,10 +135,19 @@ export function classifyContractError(
 ): AquariusError | null {
   const cause = errorFromDiagnostics(events, txHash);
   if (cause) return cause;
-  // RPC appends the full event log, including errors caught by try_call.
-  // Without usable diagnostics, classify only the reported failure itself.
-  message = message.split(/\r?\n/, 1)[0];
-  if (message.includes(TRUSTLINE_MARKER)) {
+  // RPC's text log is newest first. Preserve a genuine trustline failure
+  // when XDR events are unavailable, without diagnosing earlier caught probes.
+  const failure = message.split(/\r?\n/, 1)[0];
+  const errorLines: string[] = [];
+  if (message.includes("Event log (newest first):")) {
+    for (const line of message.split(/\r?\n/)) {
+      if (!/^\s*\d+:/.test(line)) continue;
+      if (/topics:\s*\[\s*error\b/.test(line)) errorLines.push(line);
+      else if (errorLines.length) break;
+    }
+  }
+  message = failure;
+  if (failure.includes(TRUSTLINE_MARKER) || errorLines.some(line => line.includes(TRUSTLINE_MARKER))) {
     return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
   }
   const match = message.match(/Error\(Contract, #(\d+)\)/);

@@ -135,10 +135,20 @@ def classify_contract_error(
     cause = error_from_diagnostics(events_xdr, tx_hash)
     if cause is not None:
         return cause
-    # RPC appends the full event log, including errors caught by try_call.
-    # Without usable diagnostics, classify only the reported failure itself.
-    message = message.split("\n", 1)[0]
-    if _TRUSTLINE_MARKER in message:
+    # RPC's text log is newest first. Preserve a genuine trustline failure
+    # when XDR events are unavailable, without diagnosing earlier caught probes.
+    failure = message.split("\n", 1)[0]
+    error_lines: list[str] = []
+    if "Event log (newest first):" in message:
+        for line in message.splitlines():
+            if not re.match(r"\s*\d+:", line):
+                continue
+            if re.search(r"topics:\s*\[\s*error\b", line):
+                error_lines.append(line)
+            elif error_lines:
+                break
+    message = failure
+    if _TRUSTLINE_MARKER in failure or any(_TRUSTLINE_MARKER in line for line in error_lines):
         return NoTrustlineError(_NO_TRUSTLINE_MESSAGE, tx_hash)
     match = _CONTRACT_ERROR_RE.search(message)
     if match:
