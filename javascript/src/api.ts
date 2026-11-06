@@ -23,6 +23,8 @@ export interface FindPathResponse {
 
 /** Exact-input quote for the router's `swap_split`. */
 export interface FindPathSplitRequest {
+  /** Search budget; defaults to 5000. 7000 requires full simulation with a 5000 retry. */
+  resource_budget_bps?: 5000 | 7000;
   token_in_address: string;
   token_out_address: string;
   /** Exact input in base units, as an integer string. */

@@ -64,7 +64,12 @@ export class RestoreRequiredError extends AquariusError {
 }
 
 /** The simulated call exceeded Soroban's resource budget. */
-export class ResourceLimitError extends AquariusError {}
+export class ResourceLimitError extends AquariusError {
+  constructor(message: string, txHash?: string, readonly resource?: string,
+    readonly used?: string, readonly limit?: string) {
+    super(message, txHash);
+  }
+}
 
 // Wallet-rejection messages across signers: Freighter, WalletConnect, Ledger.
 const USER_REJECTED_MESSAGES = [
@@ -152,7 +157,7 @@ function typedContractError(code: number, txHash?: string): AquariusError {
 }
 
 /**
- * @internal Map a simulation/prepare failure string to a typed error.
+ * Map a simulation/prepare failure and its terminating diagnostics to a typed error.
  * Contract failures surface as substrings like `Error(Contract, #2006)`.
  */
 export function classifyContractError(

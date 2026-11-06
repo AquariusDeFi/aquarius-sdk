@@ -446,3 +446,16 @@ for (const split of [false, true]) {
     assert.deepEqual(modes, ["enforce"]);
   });
 }
+
+
+for (const [message, resource] of [
+  ['Error(Budget, ExceededLimit)', true],
+  ['Error(Contract, #2006)', false],
+  ['RPC resource configuration unavailable', false],
+]) test(`fill classifies simulation failure: ${message}`, async () => {
+  const { ResourceLimitError, AquariusError } = await import('../dist/index.js');
+  const { record, simulation } = await preparedClient();
+  simulation.error = message;
+  await assert.rejects(record.prepareFill(routeXdr()), error =>
+    error instanceof AquariusError && (error instanceof ResourceLimitError) === resource);
+});

@@ -31,6 +31,7 @@ from .errors import (
     PausedError,
     SlippageError,
     StaleSimulationError,
+    ResourceLimitError,
     TxTimeoutError,
     UserRejectedError,
 )
@@ -72,7 +73,9 @@ from .swap_resources import (
     assert_swap_authorization,
 )
 
-__version__ = "0.7.0a2"
+from .resource_retry import PreparedSwapWithBudget, SwapResourceRetryEvent, prepare_swap_with_resource_retry
+
+__version__ = "0.7.0a5"
 
 __all__ = [
     "sell_amount_to_raw",
@@ -140,6 +143,10 @@ __all__ = [
     "Receipt",
     "SlippageError",
     "StaleSimulationError",
+    "ResourceLimitError",
+    "PreparedSwapWithBudget",
+    "SwapResourceRetryEvent",
+    "prepare_swap_with_resource_retry",
     "TxTimeoutError",
     "UserRejectedError",
     "XLM",

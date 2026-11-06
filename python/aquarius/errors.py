@@ -60,6 +60,14 @@ class NoTrustlineError(AquariusError):
     """The receiving account holds no trustline for the output asset."""
 
 
+class ResourceLimitError(AquariusError):
+    """Simulation or declared transaction resources exceed a network limit."""
+
+    def __init__(self, message, tx_hash=None, *, resource=None, used=None, limit=None):
+        super().__init__(message, tx_hash)
+        self.resource, self.used, self.limit = resource, used, limit
+
+
 class StaleSimulationError(AquariusError):
     """The ledger footprint changed between simulation and execution.
 
@@ -154,7 +162,7 @@ def classify_contract_error(
     if match:
         return classify_contract_code(int(match.group(1)), tx_hash)
     if "Error(Budget, ExceededLimit)" in message:
-        return AquariusError(
+        return ResourceLimitError(
             "The call exceeded Soroban resource limits — for swaps this usually means too many hops",
             tx_hash,
         )

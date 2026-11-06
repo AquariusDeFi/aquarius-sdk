@@ -508,3 +508,18 @@ def test_typed_fill_preserves_the_maker_proof_and_enforced_simulation(split):
     assert operation.auth[0].to_xdr() == record.authorization.to_xdr()
     assert client.server.simulate_transaction.call_args.kwargs == {"auth_mode": AuthMode.ENFORCE}
     client.engine.sign_and_submit.assert_not_called()
+
+
+@pytest.mark.parametrize("message,resource", [
+    ("Error(Budget, ExceededLimit)", True),
+    ("Error(Contract, #2006)", False),
+    ("RPC resource configuration unavailable", False),
+])
+def test_fill_classifies_only_confirmed_resource_failure_before_signing(message, resource):
+    from aquarius import ResourceLimitError
+    client, record, _, simulation = prepared_client()
+    simulation.error = message
+    with pytest.raises(AquariusError) as caught:
+        record.prepare_fill(route_xdr())
+    assert isinstance(caught.value, ResourceLimitError) is resource
+    client.engine.sign_and_submit.assert_not_called()

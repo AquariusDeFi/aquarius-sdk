@@ -16,7 +16,7 @@ import {
   delegationError,
   undelegateCalls,
 } from "./delegation.js";
-import { AquariusError, SlippageError } from "./errors.js";
+import { AquariusError, SlippageError, classifyContractError } from "./errors.js";
 import { CollectorContext, FeeCollector } from "./collector.js";
 import {
   LimitOrderConfig,
@@ -1481,7 +1481,7 @@ export class AquariusClient {
       throw new AquariusError("limit-order fill requires footprint restoration");
     }
     if (rpc.Api.isSimulationError(simulation)) {
-      throw new AquariusError(
+      throw classifyContractError(simulation.error, undefined, simulation.events) ?? new AquariusError(
         `limit-order fill simulation failed: ${simulation.error}`,
       );
     }
