@@ -22,6 +22,12 @@ export interface NetworkConfig {
   /** The protocol reward token (AQUA) — code and issuer of the classic asset. */
   rewardToken: { code: string; issuer: string };
   limitOrdersApiUrl?: string;
+  /** ICE Locker: locks AQUA (the reward token) until an unlock time. Set on testnet only. */
+  locker?: string;
+  /** upvoteICE delegation proxy. Set on testnet only. */
+  upvoteIceProxy?: string;
+  /** governICE delegation proxy. Set on testnet only. */
+  governIceProxy?: string;
 }
 
 export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
@@ -50,5 +56,8 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     collectorFactory: "CCXU6S2PFFFESV65RHUEVJX6TSSN6BYKOCJ3S3LM5M3IXXIWAL5AV4CO",
     rewardToken: { code: "AQUA", issuer: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER" },
     limitOrdersApiUrl: "https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
+    locker: "CAU5JTZ5D3TUK53WOTT5UO75U6IYAFXSGCEWJJYVIAEJJ4N5AVM72DZV",
+    upvoteIceProxy: "CAACTYVX4DRXV7HDZ4XGIVMBUQV5VVAWEFNL5YBH7QRUAVGIG4SDOB3K",
+    governIceProxy: "CAV4FLWRQ4I4Q2LBY4QIPL6HNJFFNLLQNBYSKA5FAILZYG4K3FDFNN7D",
   },
 };
