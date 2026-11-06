@@ -129,3 +129,7 @@ export {
   assertSwapAuthorization,
   type SwapResourceLimits,
 } from "./swap-resources.js";
+
+export { prepareSwapWithResourceRetry, type SwapResourceRetryEvent } from "./resource-retry.js";
+
+export { classifyContractError } from "./errors.js";
