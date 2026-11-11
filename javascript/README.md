@@ -1,14 +1,21 @@
 # @aquariusdefi/sdk
 
-Installation: `npm install @aquariusdefi/sdk@0.6.0 @stellar/stellar-sdk@^17.4.0`.
+Installation: `npm install @aquariusdefi/sdk@0.6.1 @stellar/stellar-sdk@^17.4.0`.
 
-The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
+The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar.
 
 **Status: 0.6.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
 
 Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.4.0)
 as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
 dependency; no global `Buffer` polyfill is required.
+
+**New in 0.6.1:** prepare and place limit orders through the connected wallet,
+read open orders and completion-sorted history, and cancel through the returned
+order record. The SDK resolves signing capabilities, execution rewards, ledger
+windows and receive trustlines. See [Limit orders](#limit-orders-javascript) for
+the integration flow and the [changelog](CHANGELOG.md#061) for compatibility and
+fixes. The existing programmatic APIs remain available.
 
 ## Swap through a specific pool
 
@@ -302,6 +309,9 @@ ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
 
 ## Limit orders (JavaScript)
 
+The wallet-facing manager below is available from `0.6.1`. Limit-order registry
+and on-chain primitives were already available in `0.6.0`.
+
 Use the same prepare/review/execute pattern as quotes. Configure the deployment
 once; a connected signer supplies the account. A keypair supports detached
 authorization automatically. A wallet adapter can expose `signAuthEntry(xdr)` in
@@ -310,6 +320,9 @@ unsupported; the SDK selects transaction placement. Multisig accounts use
 transaction placement even when their wallet supports detached signing.
 
 ```ts
+import { AquariusClient, Asset, XLM } from "@aquariusdefi/sdk";
+
+const AQUA = Asset.classic("AQUA", aquaIssuer);
 const aqua = new AquariusClient({
   network: "testnet",
   signer,
@@ -334,14 +347,62 @@ const prepared = await aqua.limitOrders.prepare({
 const order = await prepared.place();
 console.log(order.orderId, order.order.sellAmount);
 
+// These are independent actions for the application's order list and cancel UI.
 const open = await aqua.limitOrders.open(); // connected maker by default
 const history = await aqua.limitOrders.history();
 const next = history.nextCursor
   ? await aqua.limitOrders.history(undefined, history.nextCursor)
   : null;
 const sameOrder = await aqua.limitOrders.get(order.orderId);
-await sameOrder.cancel();
+// After the user confirms cancellation:
+// await sameOrder.cancel();
 ```
+
+`signer`, `aquaIssuer` and the deployment addresses above come from the
+application's connected wallet and trusted network configuration.
+
+### Wallet adapter and confirmation UI
+
+Reuse the signer passed to `AquariusClient`. Application callbacks should return
+the signed transaction XDR, or a base64 authorization signature / signed
+authorization-entry XDR, respectively. Unwrap wallet-specific response objects
+inside the adapter and pass the intended account and network to the wallet.
+
+```ts
+import type { Signer } from "@aquariusdefi/sdk";
+
+// Application-provided address and wallet callbacks.
+const signer: Signer = {
+  publicKey: () => connectedAddress,
+  sign: signTransactionWithWallet,
+  ...(signAuthEntryWithWallet
+    ? { signAuthEntry: signAuthEntryWithWallet }
+    : {}),
+};
+```
+
+Set `signAuthEntryWithWallet` to `undefined` when the connected wallet cannot sign
+authorization entries; do not provide a stub that throws. The SDK also checks the
+account's signer weights and thresholds before selecting detached signing. A
+keypair provides detached signing automatically; multisig accounts use
+transaction placement. Propagate wallet rejection so it stops the operation.
+
+Build the confirmation UI from `prepared.summary`, rather than independently
+fetching values that may differ from the reviewed draft:
+
+| Field | Meaning |
+| --- | --- |
+| `sellAmount`, `minBuyAmount` | Reviewed base-unit amounts as `bigint`. |
+| `executorRewardXlm` | Execution reward in stroops, paid when the order fills. |
+| `expiresAtLedger`, `expiresIn` | Exact expiration ledger and approximate duration in seconds. |
+| `signing` | `authorization` or `transaction`, selected before review. |
+| `trustline.required`, `trustline.creation` | Whether a line is missing and whether it is added at `execution` or `placement`; otherwise `null`. |
+
+Transaction placement pays a network fee when submitted, independently of
+whether the order later fills. Detached placement signs an authorization and
+publishes it to the registry without submitting a placement transaction.
+
+### Preparation, placement and retries
 
 `prepare()` fetches the current ledger, settlement reward and account state,
 detects a missing receive trustline and pins the signing path before creating a
@@ -380,6 +441,22 @@ transactionHash, ledger, createdAt }`, `{ status: "pending", transactionHash }`,
 or `{ status: "failed" }`. A pending result remains `PENDING_SIGNATURES` and is
 never reported as an open order. The receipt must refer to the exact built
 transaction. `prepareTransaction` can handle the application's restoration UI.
+`createdAt` is Unix time in seconds, accepted as either a number or a decimal
+string, matching RPC responses. The application must wait for network
+confirmation before returning `status: "confirmed"`.
+
+Handle external-signature results explicitly:
+
+```ts
+const result = await prepared.place({ submitTransaction });
+if (result.status === "PENDING_SIGNATURES") {
+  // Show the application's existing pending-signatures UI.
+  // Keep this prepared object and retry placement after signatures are collected.
+} else {
+  // result is the placed LimitOrderRecord; refresh the application's order list.
+  console.log(result.orderId);
+}
+```
 
 The escape hatches `prepared.buildTransaction()`,
 `prepared.authorizationEntryXdr`, `prepared.authorize(signature)` and
@@ -388,6 +465,39 @@ The escape hatches `prepared.buildTransaction()`,
 can pass an explicit maker to `open(maker)` / `history(maker)` without a signer.
 All registry methods return the same bound `LimitOrderRecord` model; `.raw`
 exposes its registry projection when needed by an existing application.
+
+`open()` follows pagination and returns all open orders. For a bounded page, use
+`list({ maker, status: "OPEN", limit, cursor })`. `history(maker, cursor, limit)`
+defaults to 20 records, ordered by completion date; use the returned `nextCursor`
+for subsequent pages. The SDK does not poll these lists. The application owns
+refresh timing, wallet connection, confirmation dialogs and notifications.
+
+For execution notifications, `getLimitOrderFillOperation(operation, settlement,
+maker)` identifies a matching Horizon fill operation. Pass the corresponding
+successful RPC transaction to `getLimitOrderFillAmounts(transaction, fill)` to
+read actual amounts from settlement events, including contract-only Soroban
+tokens. These helpers return `null` for unrelated records and do not start an
+event stream themselves.
+
+### Upgrading from 0.6.0 or a Git dependency
+
+Existing programmatic methods remain available. Wallet applications can replace
+manual ledger, trustline and signing-mode resolution with `prepare()` and review
+its summary before calling `place()`. The 180-day / 3,110,399-ledger maximum also
+applies to legacy and imported orders; the settlement can enforce a lower limit.
+
+After `0.6.1` is published, replace the temporary Git URL or local tarball with
+the npm version and commit the regenerated application lockfile:
+
+```sh
+yarn add @aquariusdefi/sdk@0.6.1 --exact
+# Or, for npm consumers:
+npm install @aquariusdefi/sdk@0.6.1 --save-exact
+```
+
+The required Node.js version and Stellar SDK peer dependency are unchanged from
+`0.6.0`. This stable patch does not include the features from the separate
+`0.7.0-testnet.*` channel.
 
 ### Testing from GitHub before a release
 

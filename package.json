@@ -1,6 +1,6 @@
 {
   "name": "@aquariusdefi/sdk",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Git installation entry point for the Aquarius JavaScript SDK",
   "type": "module",
@@ -11,7 +11,8 @@
   },
   "files": [
     "javascript/dist",
-    "javascript/README.md"
+    "javascript/README.md",
+    "javascript/CHANGELOG.md"
   ],
   "license": "Apache-2.0",
   "repository": {
