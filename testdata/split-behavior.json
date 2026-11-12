@@ -1,0 +1,2395 @@
+{
+  "amounts": [
+    {
+      "amount": "9007199254740993.0000001",
+      "decimals": 7,
+      "expected": "90071992547409930000001"
+    },
+    {
+      "amount": "1.2300",
+      "decimals": 2,
+      "expected": "123"
+    },
+    {
+      "amount": "0.00000001",
+      "decimals": 7,
+      "reason": "the amount has more decimal places than the token",
+      "error": "swap"
+    },
+    {
+      "amount": "0",
+      "decimals": 7,
+      "reason": "the amount is not an integer from 1 to 2^127 - 1",
+      "error": "swap"
+    },
+    {
+      "amount": "1e2",
+      "decimals": 7,
+      "reason": "the amount is not a decimal number",
+      "error": "swap"
+    },
+    {
+      "amount": "1",
+      "decimals": 39,
+      "reason": "decimals is not an integer from 0 to 38",
+      "error": "swap"
+    },
+    {
+      "amount": "\uff11\uff12",
+      "decimals": 7,
+      "reason": "the amount is not a decimal number",
+      "error": "swap"
+    },
+    {
+      "amount": "170141183460469231731687303715884105727",
+      "decimals": 0,
+      "expected": "170141183460469231731687303715884105727"
+    },
+    {
+      "amount": "170141183460469231731687303715884105728",
+      "decimals": 0,
+      "reason": "the amount is not an integer from 1 to 2^127 - 1",
+      "error": "swap"
+    }
+  ],
+  "minimums": [
+    {
+      "output": "10001",
+      "slippage": "0.005",
+      "expected": "10000"
+    },
+    {
+      "output": "1",
+      "slippage": "10",
+      "expected": "0"
+    },
+    {
+      "output": "58029507394061",
+      "slippage": "0.5",
+      "expected": "57739359857090"
+    },
+    {
+      "output": "100",
+      "slippage": "10.01",
+      "reason": "the slippage is above 10%",
+      "error": "swap"
+    },
+    {
+      "output": "100",
+      "slippage": "1%",
+      "reason": "the slippage is not a decimal percentage",
+      "error": "swap"
+    },
+    {
+      "output": "100",
+      "slippage": "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "the slippage is not a decimal percentage",
+      "error": "swap"
+    },
+    {
+      "output": "0",
+      "slippage": "1",
+      "reason": "the output is not an integer from 1 to 2^127 - 1",
+      "error": "swap"
+    },
+    {
+      "output": "170141183460469231731687303715884105728",
+      "slippage": "1",
+      "reason": "the output is not an integer from 1 to 2^127 - 1",
+      "error": "swap"
+    }
+  ],
+  "quotes": [
+    {
+      "name": "single plan",
+      "base": "single",
+      "expected": {
+        "amountOut": "56813485616194",
+        "shares": [
+          [
+            10000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "parallel plan",
+      "base": "parallel",
+      "expected": {
+        "amountOut": "58858310911438",
+        "shares": [
+          [
+            6000,
+            4000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "diamond plan",
+      "base": "diamond",
+      "expected": {
+        "amountOut": "58029507394061",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            3500,
+            6500
+          ]
+        ]
+      }
+    },
+    {
+      "name": "prefixSuffix plan",
+      "base": "prefixSuffix",
+      "expected": {
+        "amountOut": "56091184078512",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            5000,
+            5000
+          ],
+          [
+            10000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fourHops plan",
+      "base": "fourHops",
+      "expected": {
+        "amountOut": "55329925542005",
+        "shares": [
+          [
+            10000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fourParts plan",
+      "base": "fourParts",
+      "expected": {
+        "amountOut": "58976300763205",
+        "shares": [
+          [
+            4000,
+            2500,
+            2000,
+            1500
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fourStages plan",
+      "base": "fourStages",
+      "expected": {
+        "amountOut": "55329925542005",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            10000
+          ],
+          [
+            10000
+          ],
+          [
+            10000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "display names are optional",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens"
+          ],
+          "delete": true
+        }
+      ],
+      "expected": {
+        "amountOut": "58029507394061",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            3500,
+            6500
+          ]
+        ]
+      }
+    },
+    {
+      "name": "amount_out_min is not used",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out_min"
+          ],
+          "value": "0"
+        }
+      ],
+      "expected": {
+        "amountOut": "58029507394061",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            3500,
+            6500
+          ]
+        ]
+      }
+    },
+    {
+      "name": "shares written as integral floats",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": 10000.0
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "share"
+          ],
+          "value": 3500.0
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "share"
+          ],
+          "value": 6500.0
+        }
+      ],
+      "expected": {
+        "amountOut": "58029507394061",
+        "shares": [
+          [
+            10000
+          ],
+          [
+            3500,
+            6500
+          ]
+        ]
+      }
+    },
+    {
+      "name": "shares in exponent form",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": 6e3
+        },
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "share"
+          ],
+          "value": 4e3
+        }
+      ],
+      "expected": {
+        "amountOut": "58858310911438",
+        "shares": [
+          [
+            6000,
+            4000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "share 1e4",
+      "base": "single",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": 1e4
+        }
+      ],
+      "expected": {
+        "amountOut": "56813485616194",
+        "shares": [
+          [
+            10000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "share beyond float precision",
+      "base": "single",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": 10000.00000000000001
+        }
+      ],
+      "expected": {
+        "amountOut": "56813485616194",
+        "shares": [
+          [
+            10000
+          ]
+        ]
+      }
+    },
+    {
+      "name": "no route",
+      "base": "noRoute",
+      "error": "noRoute"
+    },
+    {
+      "name": "response is not an object",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [],
+          "value": []
+        }
+      ],
+      "reason": "the response is not an object",
+      "error": "quote"
+    },
+    {
+      "name": "success is the string true",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "success"
+          ],
+          "value": "true"
+        }
+      ],
+      "reason": "success is not true",
+      "error": "quote"
+    },
+    {
+      "name": "success is missing",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "success"
+          ],
+          "delete": true
+        }
+      ],
+      "reason": "success is not true",
+      "error": "quote"
+    },
+    {
+      "name": "amount_in differs from the request",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "200000000004"
+        }
+      ],
+      "reason": "amount_in is not the requested amount",
+      "error": "quote"
+    },
+    {
+      "name": "requested amount zero",
+      "base": "diamond",
+      "request": {
+        "amount": "0"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "0"
+        }
+      ],
+      "reason": "amount_in is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "requested amount negative",
+      "base": "diamond",
+      "request": {
+        "amount": "-1"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "-1"
+        }
+      ],
+      "reason": "amount_in is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "requested amount fractional",
+      "base": "diamond",
+      "request": {
+        "amount": "1.5"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "1.5"
+        }
+      ],
+      "reason": "amount_in is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "requested amount in exponent form",
+      "base": "diamond",
+      "request": {
+        "amount": "1e2"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "1e2"
+        }
+      ],
+      "reason": "amount_in is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "requested amount with a leading zero",
+      "base": "diamond",
+      "request": {
+        "amount": "0200000000003"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "0200000000003"
+        }
+      ],
+      "reason": "amount_in is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "requested amount above 2^127 - 1",
+      "base": "diamond",
+      "request": {
+        "amount": "170141183460469231731687303715884105728"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "170141183460469231731687303715884105728"
+        }
+      ],
+      "reason": "amount_in is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "requested amount as a number",
+      "base": "diamond",
+      "request": {
+        "amount": 200000000003
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": 200000000003
+        }
+      ],
+      "reason": "amount_in is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "amount_out with a leading zero",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": "058029507394061"
+        }
+      ],
+      "reason": "amount_out is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "amount_out is a number",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": 58029507394061
+        }
+      ],
+      "reason": "amount_out is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "amount_out differs from the last stage",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": "58029507394062"
+        }
+      ],
+      "reason": "amount_out is not the output of the last stage",
+      "error": "quote"
+    },
+    {
+      "name": "same input and output token",
+      "base": "diamond",
+      "request": {
+        "token_out_address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+      },
+      "reason": "token_in and token_out are the same",
+      "error": "quote"
+    },
+    {
+      "name": "input token is not a contract",
+      "base": "diamond",
+      "request": {
+        "token_in_address": "native"
+      },
+      "reason": "token_in is not a contract",
+      "error": "quote"
+    },
+    {
+      "name": "output token is not a contract",
+      "base": "diamond",
+      "request": {
+        "token_out_address": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+      },
+      "reason": "token_out is not a contract",
+      "error": "quote"
+    },
+    {
+      "name": "first stage does not start at token_in",
+      "base": "diamond",
+      "request": {
+        "token_in_address": "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN"
+      },
+      "reason": "a chain does not start at its stage input",
+      "error": "quote"
+    },
+    {
+      "name": "last stage does not end at token_out",
+      "base": "diamond",
+      "request": {
+        "token_out_address": "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5"
+      },
+      "reason": "the last stage does not end at token_out",
+      "error": "quote"
+    },
+    {
+      "name": "stages are missing",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages"
+          ],
+          "delete": true
+        }
+      ],
+      "reason": "stages are not a list",
+      "error": "quote"
+    },
+    {
+      "name": "stages are not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages"
+          ],
+          "value": {}
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAAA"
+        }
+      ],
+      "reason": "stages are not a list",
+      "error": "quote"
+    },
+    {
+      "name": "no stages",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages"
+          ],
+          "value": []
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAAA"
+        }
+      ],
+      "reason": "the plan has no stages",
+      "error": "quote"
+    },
+    {
+      "name": "five stages",
+      "base": "fiveStages",
+      "reason": "the plan has more than 4 stages",
+      "error": "quote"
+    },
+    {
+      "name": "stage is not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1
+          ],
+          "value": {}
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAAA"
+        }
+      ],
+      "reason": "a stage is not a list",
+      "error": "quote"
+    },
+    {
+      "name": "empty stage",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1
+          ],
+          "value": []
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAAA"
+        }
+      ],
+      "reason": "a stage has no parts",
+      "error": "quote"
+    },
+    {
+      "name": "five parts in a stage",
+      "base": "fiveParts",
+      "reason": "a stage has more than 4 parts",
+      "error": "quote"
+    },
+    {
+      "name": "part is not an object",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0
+          ],
+          "value": "part"
+        }
+      ],
+      "reason": "a part is not an object",
+      "error": "quote"
+    },
+    {
+      "name": "share is a string",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": "10000"
+        }
+      ],
+      "reason": "a share is not an integer from 1 to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "share is a boolean",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": true
+        }
+      ],
+      "reason": "a share is not an integer from 1 to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "share is missing",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "delete": true
+        }
+      ],
+      "reason": "a share is not an integer from 1 to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "share is fractional",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "share"
+          ],
+          "value": 3499.5
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "share"
+          ],
+          "value": 6500.5
+        }
+      ],
+      "reason": "a share is not an integer from 1 to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "share is zero",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "share"
+          ],
+          "value": 0
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "share"
+          ],
+          "value": 10000
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAAAAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAnEA=="
+        }
+      ],
+      "reason": "a share is not an integer from 1 to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "share is negative",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "share"
+          ],
+          "value": -1
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "share"
+          ],
+          "value": 10001
+        }
+      ],
+      "reason": "a share is not an integer from 1 to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "share is above 10000",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": 10001
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcRAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA=="
+        }
+      ],
+      "reason": "a share is not an integer from 1 to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "share is an integral float above 10000",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "share"
+          ],
+          "value": 1e300
+        }
+      ],
+      "reason": "a share is not an integer from 1 to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "shares sum below 10000",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "share"
+          ],
+          "value": 3999
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAHXkotywnA8z+r365/0701QSlWouXn8m0UOoshCtNHOYQAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAAMAABdwAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAPnw=="
+        }
+      ],
+      "reason": "the shares of a stage do not sum to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "shares sum above 10000",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "share"
+          ],
+          "value": 4001
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAHXkotywnA8z+r365/0701QSlWouXn8m0UOoshCtNHOYQAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAAMAABdwAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAPoQ=="
+        }
+      ],
+      "reason": "the shares of a stage do not sum to 10000",
+      "error": "quote"
+    },
+    {
+      "name": "part input differs from the router's allocation",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "amount_in"
+          ],
+          "value": "120000000002"
+        },
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "amount_in"
+          ],
+          "value": "80000000001"
+        }
+      ],
+      "reason": "a part's amount_in is not the router's allocation",
+      "error": "quote"
+    },
+    {
+      "name": "part input rounds down to zero",
+      "base": "parallel",
+      "request": {
+        "amount": "1"
+      },
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "1"
+        },
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "amount_in"
+          ],
+          "value": "0"
+        },
+        {
+          "path": [
+            "stages",
+            0,
+            1,
+            "amount_in"
+          ],
+          "value": "1"
+        }
+      ],
+      "reason": "a part's amount_in is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "part input with a leading zero",
+      "base": "parallel",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "amount_in"
+          ],
+          "value": "0120000000001"
+        }
+      ],
+      "reason": "a part's amount_in is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "part output is zero",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "amount_out"
+          ],
+          "value": "0"
+        },
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": "37912396137806"
+        }
+      ],
+      "reason": "a part's amount_out is not an integer from 1 to 2^127 - 1",
+      "error": "quote"
+    },
+    {
+      "name": "stage output differs from the next stage input",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "amount_out"
+          ],
+          "value": "58650508855"
+        }
+      ],
+      "reason": "a part's amount_in is not the router's allocation",
+      "error": "quote"
+    },
+    {
+      "name": "last stage output differs from amount_out",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "amount_out"
+          ],
+          "value": "37912396137807"
+        }
+      ],
+      "reason": "amount_out is not the output of the last stage",
+      "error": "quote"
+    },
+    {
+      "name": "stage output above u128 feeds the next stage",
+      "base": "fourParts",
+      "request": {
+        "token_out_address": "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5"
+      },
+      "patch": [
+        {
+          "path": [
+            "stages"
+          ],
+          "value": [
+            [
+              {
+                "share": 4000,
+                "amount_in": "80000000001",
+                "amount_out": "170141183460469231731687303715884105727",
+                "swap_chain_xdr": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAHXkotywnA8z+r365/0701QSlWouXn8m0UOoshCtNHOYQAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOA==",
+                "pools": [
+                  "CCQ2DINBUGQ2DINBUGQ2DINBUGQ2DINBUGQ2DINBUGQ2DINBUGQ2CNSG"
+                ],
+                "tokens": [
+                  "native",
+                  "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+                ],
+                "tokens_addresses": [
+                  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                  "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+                ]
+              },
+              {
+                "share": 2500,
+                "amount_in": "50000000000",
+                "amount_out": "170141183460469231731687303715884105727",
+                "swap_chain_xdr": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg=",
+                "pools": [
+                  "CCRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKF52B",
+                  "CCR2HI5DUOR2HI5DUOR2HI5DUOR2HI5DUOR2HI5DUOR2HI5DUOR2GSCD"
+                ],
+                "tokens": [
+                  "native",
+                  "USDC:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+                ],
+                "tokens_addresses": [
+                  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                  "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5",
+                  "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+                ]
+              },
+              {
+                "share": 2000,
+                "amount_in": "40000000000",
+                "amount_out": "170141183460469231731687303715884105727",
+                "swap_chain_xdr": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg=",
+                "pools": [
+                  "CCSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKI5KO",
+                  "CCTKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKMC2L"
+                ],
+                "tokens": [
+                  "native",
+                  "USDT:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+                ],
+                "tokens_addresses": [
+                  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                  "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+                  "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+                ]
+              },
+              {
+                "share": 1500,
+                "amount_in": "30000000002",
+                "amount_out": "170141183460469231731687303715884105727",
+                "swap_chain_xdr": "AAAAEAAAAAEAAAADAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAADQAAACAFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAAQAAAAAQAAAAMAAAAQAAAAAQAAAAIAAAASAAAAATMcdNIoS3H8/jAKEHcGxCY705BVlMwWwQZLQVIt3ZV/AAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAA0AAAAgAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4",
+                "pools": [
+                  "CCSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKI5KO",
+                  "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM",
+                  "CCR2HI5DUOR2HI5DUOR2HI5DUOR2HI5DUOR2HI5DUOR2HI5DUOR2GSCD"
+                ],
+                "tokens": [
+                  "native",
+                  "USDT:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "USDC:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+                ],
+                "tokens_addresses": [
+                  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                  "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+                  "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5",
+                  "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+                ]
+              }
+            ],
+            [
+              {
+                "share": 2500,
+                "amount_in": "170141183460469231731687303715884105727",
+                "amount_out": "1000",
+                "swap_chain_xdr": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2Vfw==",
+                "pools": [
+                  "CCR2HI5DUOR2HI5DUOR2HI5DUOR2HI5DUOR2HI5DUOR2HI5DUOR2GSCD"
+                ],
+                "tokens": [
+                  "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "USDC:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+                ],
+                "tokens_addresses": [
+                  "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE",
+                  "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5"
+                ]
+              },
+              {
+                "share": 2500,
+                "amount_in": "170141183460469231731687303715884105727",
+                "amount_out": "1000",
+                "swap_chain_xdr": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAHXkotywnA8z+r365/0701QSlWouXn8m0UOoshCtNHOYQAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAAAAEgAAAAHXkotywnA8z+r365/0701QSlWouXn8m0UOoshCtNHOYQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdeSi3LCcDzP6vfrn/TvTVBKVai5efybRQ6iyEK00c5hAAAADQAAACACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8=",
+                "pools": [
+                  "CCQ2DINBUGQ2DINBUGQ2DINBUGQ2DINBUGQ2DINBUGQ2DINBUGQ2CNSG",
+                  "CCRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKF52B"
+                ],
+                "tokens": [
+                  "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "native",
+                  "USDC:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+                ],
+                "tokens_addresses": [
+                  "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE",
+                  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                  "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5"
+                ]
+              },
+              {
+                "share": 2500,
+                "amount_in": "170141183460469231731687303715884105727",
+                "amount_out": "1000",
+                "swap_chain_xdr": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAADQAAACAFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8=",
+                "pools": [
+                  "CCTKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKMC2L",
+                  "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM"
+                ],
+                "tokens": [
+                  "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "USDT:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "USDC:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+                ],
+                "tokens_addresses": [
+                  "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE",
+                  "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+                  "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5"
+                ]
+              },
+              {
+                "share": 2500,
+                "amount_in": "170141183460469231731687303715884105727",
+                "amount_out": "1000",
+                "swap_chain_xdr": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAADQAAACAHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8=",
+                "pools": [
+                  "CCTKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKMC2L",
+                  "CCT2PJ5HU6T2PJ5HU6T2PJ5HU6T2PJ5HU6T2PJ5HU6T2PJ5HU6T2PNCJ"
+                ],
+                "tokens": [
+                  "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "USDT:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+                  "USDC:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+                ],
+                "tokens_addresses": [
+                  "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE",
+                  "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+                  "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5"
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": "4000"
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "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"
+        }
+      ],
+      "reason": "a stage's output does not fit in u128",
+      "error": "quote"
+    },
+    {
+      "name": "pools are not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "pools"
+          ],
+          "value": "CCTKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKMC2L"
+        }
+      ],
+      "reason": "pools are not a list",
+      "error": "quote"
+    },
+    {
+      "name": "route without hops",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAAA"
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "pools"
+          ],
+          "value": []
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN"
+          ]
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAAAAAAMAABlk"
+        }
+      ],
+      "reason": "a chain has no hops",
+      "error": "quote"
+    },
+    {
+      "name": "five-hop route",
+      "base": "fiveHops",
+      "reason": "a chain has more than 4 hops",
+      "error": "quote"
+    },
+    {
+      "name": "pool is not a contract",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "pools",
+            0
+          ],
+          "value": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+        }
+      ],
+      "reason": "a pool is not a contract",
+      "error": "quote"
+    },
+    {
+      "name": "pool repeats in the displayed route",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "pools"
+          ],
+          "value": [
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM",
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM"
+          ]
+        }
+      ],
+      "reason": "a chain lists a pool twice",
+      "error": "quote"
+    },
+    {
+      "name": "token path is not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "tokens_addresses"
+          ],
+          "value": "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN"
+        }
+      ],
+      "reason": "tokens_addresses are not a list",
+      "error": "quote"
+    },
+    {
+      "name": "token path is missing a token",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        }
+      ],
+      "reason": "tokens_addresses do not match the pools",
+      "error": "quote"
+    },
+    {
+      "name": "token in the path is not a contract",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens_addresses",
+            1
+          ],
+          "value": "USDC"
+        }
+      ],
+      "reason": "a token address is not a contract",
+      "error": "quote"
+    },
+    {
+      "name": "part does not start at the stage input",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        }
+      ],
+      "reason": "a chain does not start at its stage input",
+      "error": "quote"
+    },
+    {
+      "name": "route XDR is not a string",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": 12
+        }
+      ],
+      "reason": "swap_chain_xdr is not a string",
+      "error": "quote"
+    },
+    {
+      "name": "route XDR is not base64",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "invalid"
+        }
+      ],
+      "reason": "swap_chain_xdr is not base64",
+      "error": "quote"
+    },
+    {
+      "name": "route XDR without padding",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaA"
+        }
+      ],
+      "reason": "swap_chain_xdr is not base64",
+      "error": "quote"
+    },
+    {
+      "name": "route XDR with a stray character",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAA!AAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        }
+      ],
+      "reason": "swap_chain_xdr is not base64",
+      "error": "quote"
+    },
+    {
+      "name": "route XDR is truncated",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAAC"
+        }
+      ],
+      "reason": "swap_chain_xdr does not decode",
+      "error": "quote"
+    },
+    {
+      "name": "route XDR has non-zero padding bits",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            0,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaB=="
+        }
+      ],
+      "reason": "swap_chain_xdr is not canonical",
+      "error": "quote"
+    },
+    {
+      "name": "route XDR is not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAAwAAAAE="
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAAwAAAAEAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA=="
+        }
+      ],
+      "reason": "swap_chain_xdr is not a list of hops",
+      "error": "quote"
+    },
+    {
+      "name": "route has fewer hops than pools",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOA=="
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAAMAAA2sAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAAMAABlk"
+        }
+      ],
+      "reason": "swap_chain_xdr does not have one hop per pool",
+      "error": "quote"
+    },
+    {
+      "name": "hop is not a triple",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYG"
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAgAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAAAMAABlk"
+        }
+      ],
+      "reason": "a hop is not a triple",
+      "error": "quote"
+    },
+    {
+      "name": "hop pool tokens are not a list",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAA0AAAAgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4"
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAAMAABlk"
+        }
+      ],
+      "reason": "a hop's pool tokens are not a list",
+      "error": "quote"
+    },
+    {
+      "name": "pool index is not bytes",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAABgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAAAwAAAAYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAAAwAAGWQ="
+        }
+      ],
+      "reason": "a hop's pool index is not bytes",
+      "error": "quote"
+    },
+    {
+      "name": "pool index is not 32 bytes",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAHwYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOA=="
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAAB8GBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA=="
+        }
+      ],
+      "reason": "a hop's pool index is not 32 bytes",
+      "error": "quote"
+    },
+    {
+      "name": "hop output is not an address",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAAwAAAAE="
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAAAMAAAABAAAAAwAAGWQ="
+        }
+      ],
+      "reason": "a hop token is not an address",
+      "error": "quote"
+    },
+    {
+      "name": "pool token is not a contract",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAADAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAASAAAAAAAAAAAHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwAAAA0AAAAgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4"
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAAEgAAAAAAAAAABwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAAMAABlk"
+        }
+      ],
+      "reason": "a hop token is not a contract",
+      "error": "quote"
+    },
+    {
+      "name": "hop output differs from the token path",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaA=="
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAADAAAZZA=="
+        }
+      ],
+      "reason": "a hop's output is not the next token of the path",
+      "error": "quote"
+    },
+    {
+      "name": "pool tokens repeat",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAADAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAA0AAAAgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAAAwAAGWQ="
+        }
+      ],
+      "reason": "a hop's pool tokens repeat",
+      "error": "quote"
+    },
+    {
+      "name": "stage input is not in the first hop's pool",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA=="
+        }
+      ],
+      "reason": "a hop's pool does not hold its input",
+      "error": "quote"
+    },
+    {
+      "name": "hop output is not in its pool",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA=="
+        }
+      ],
+      "reason": "a hop's pool does not hold its output",
+      "error": "quote"
+    },
+    {
+      "name": "hop output equals its input",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzg="
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "pools"
+          ],
+          "value": [
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM",
+            "CCTKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKMC2L"
+          ]
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA=="
+        }
+      ],
+      "reason": "a hop's input and output are the same token",
+      "error": "quote"
+    },
+    {
+      "name": "pool repeats in the route",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAADAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAADQAAACAFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAAQAAAAAQAAAAMAAAAQAAAAAQAAAAIAAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAA0AAAAgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4"
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "pools"
+          ],
+          "value": [
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM",
+            "CCT2PJ5HU6T2PJ5HU6T2PJ5HU6T2PJ5HU6T2PJ5HU6T2PJ5HU6T2PNCJ",
+            "CCTKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKNJVGU2TKMC2L"
+          ]
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            0,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5",
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAADQAAACAFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAAQAAAAAQAAAAMAAAAQAAAAAQAAAAIAAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAA0AAAAgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAAAwAADawAAAAQAAAAAQAAAAIAAAAQAAAAAQAAAAEAAAAQAAAAAQAAAAMAAAAQAAAAAQAAAAIAAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAA0AAAAgBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAAAwAAGWQ="
+        }
+      ],
+      "reason": "a chain uses a pool twice",
+      "error": "quote"
+    },
+    {
+      "name": "chains of a stage end in different tokens",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2Vfw=="
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "pools"
+          ],
+          "value": [
+            "CCS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LJNFUWS2LSSM"
+          ]
+        },
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "tokens_addresses"
+          ],
+          "value": [
+            "CBL6KD2LFMLAUKFFWNNXWOXFN73GAXLEA4WMJRLQ5L76DMYTM3KWQVJN",
+            "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5"
+          ]
+        },
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAVflD0srFgoopbNbezrlb/ZgXWQHLMTFcOr/4bMTZtVoAAAADQAAACAFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAADAAAZZA=="
+        }
+      ],
+      "reason": "the chains of a stage end in different tokens",
+      "error": "quote"
+    },
+    {
+      "name": "stages_xdr is missing",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "delete": true
+        }
+      ],
+      "reason": "stages_xdr is not the encoding of the stages",
+      "error": "quote"
+    },
+    {
+      "name": "stages_xdr has another share",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrQAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZYw=="
+        }
+      ],
+      "reason": "stages_xdr is not the encoding of the stages",
+      "error": "quote"
+    },
+    {
+      "name": "stages_xdr has another chain",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACD//////////////////////////////////////////wAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA=="
+        }
+      ],
+      "reason": "stages_xdr is not the encoding of the stages",
+      "error": "quote"
+    },
+    {
+      "name": "stages_xdr has the parts in another order",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAHbWFucFs4F4bWHJODfHSWxM1cXv5LyScuAwBSjpRdXOAAAAAMAABlkAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrA=="
+        }
+      ],
+      "reason": "stages_xdr is not the encoding of the stages",
+      "error": "quote"
+    },
+    {
+      "name": "stages_xdr has an extra stage",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAADAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZAAAABAAAAABAAAAAQAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACABAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAADAAAnEA=="
+        }
+      ],
+      "reason": "stages_xdr is not the encoding of the stages",
+      "error": "quote"
+    },
+    {
+      "name": "stages_xdr is not canonical base64",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAANAAAAIAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAAAMAACcQAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAANAAAAIAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFAAAAEgAAAAEzHHTSKEtx/P4wChB3BsQmO9OQVZTMFsEGS0FSLd2VfwAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABMxx00ihLcfz+MAoQdwbEJjvTkFWUzBbBBktBUi3dlX8AAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAANrAAAABAAAAABAAAAAgAAABAAAAABAAAAAQAAABAAAAABAAAAAwAAABAAAAABAAAAAgAAABIAAAABV+UPSysWCiils1t7OuVv9mBdZAcsxMVw6v/hsxNm1WgAAAASAAAAAdtYW5wWzgXhtYck4N8dJbEzVxe/kvJJy4DAFKOlF1c4AAAADQAAACAGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAADAAAZZA==\n"
+        }
+      ],
+      "reason": "stages_xdr is not the encoding of the stages",
+      "error": "quote"
+    }
+  ],
+  "builds": [
+    {
+      "name": "zero minimum",
+      "base": "diamond",
+      "options": {
+        "minimum": "0"
+      }
+    },
+    {
+      "name": "source is a contract",
+      "base": "diamond",
+      "options": {
+        "source": "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD"
+      },
+      "error": "swap",
+      "reason": "source is not an account"
+    },
+    {
+      "name": "source is not an address",
+      "base": "diamond",
+      "options": {
+        "source": "GABC"
+      },
+      "error": "swap",
+      "reason": "source is not an account"
+    },
+    {
+      "name": "router is an account",
+      "base": "diamond",
+      "options": {
+        "router": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+      },
+      "error": "swap",
+      "reason": "router is not a contract"
+    },
+    {
+      "name": "same input and output token",
+      "base": "diamond",
+      "options": {
+        "tokenOut": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+      },
+      "error": "quote",
+      "reason": "token_in and token_out are the same"
+    },
+    {
+      "name": "plan input differs from its stages",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_in"
+          ],
+          "value": "200000000004"
+        }
+      ],
+      "error": "quote",
+      "reason": "a part's amount_in is not the router's allocation"
+    },
+    {
+      "name": "plan share changed",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "share"
+          ],
+          "value": 6499
+        }
+      ],
+      "error": "quote",
+      "reason": "the shares of a stage do not sum to 10000"
+    },
+    {
+      "name": "plan chain changed",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "stages",
+            1,
+            1,
+            "swap_chain_xdr"
+          ],
+          "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAADAAAAEAAAAAEAAAACAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaAAAABIAAAAB21hbnBbOBeG1hyTg3x0lsTNXF7+S8knLgMAUo6UXVzgAAAANAAAAIAYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAAAAEgAAAAFX5Q9LKxYKKKWzW3s65W/2YF1kByzExXDq/+GzE2bVaA=="
+        }
+      ],
+      "error": "quote",
+      "reason": "a hop's output is not the next token of the path"
+    },
+    {
+      "name": "plan output changed",
+      "base": "diamond",
+      "patch": [
+        {
+          "path": [
+            "amount_out"
+          ],
+          "value": "58029507394062"
+        }
+      ],
+      "error": "quote",
+      "reason": "amount_out is not the output of the last stage"
+    },
+    {
+      "name": "minimum is negative",
+      "base": "diamond",
+      "options": {
+        "minimum": "-1"
+      },
+      "error": "swap",
+      "reason": "minimum is not a non-negative integer string"
+    },
+    {
+      "name": "minimum is fractional",
+      "base": "diamond",
+      "options": {
+        "minimum": "1.5"
+      },
+      "error": "swap",
+      "reason": "minimum is not a non-negative integer string"
+    },
+    {
+      "name": "minimum is a number",
+      "base": "diamond",
+      "options": {
+        "minimum": 1
+      },
+      "error": "swap",
+      "reason": "minimum is not a non-negative integer string"
+    },
+    {
+      "name": "minimum is above 2^127 - 1",
+      "base": "diamond",
+      "options": {
+        "minimum": "170141183460469231731687303715884105728"
+      },
+      "error": "swap",
+      "reason": "minimum is above 2^127 - 1"
+    },
+    {
+      "name": "trustline without batch",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "batch": null
+      }
+    },
+    {
+      "name": "batch is not a contract",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "batch": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
+      },
+      "error": "swap",
+      "reason": "batch is not a contract"
+    },
+    {
+      "name": "trustline is empty",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": {}
+      },
+      "error": "swap",
+      "reason": "trustline is not an asset code, issuer and network passphrase"
+    },
+    {
+      "name": "trustline is false",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": false
+      },
+      "error": "swap",
+      "reason": "trustline is not an asset code, issuer and network passphrase"
+    },
+    {
+      "name": "trustline is zero",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": 0
+      },
+      "error": "swap",
+      "reason": "trustline is not an asset code, issuer and network passphrase"
+    },
+    {
+      "name": "trustline is an empty string",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": ""
+      },
+      "error": "swap",
+      "reason": "trustline is not an asset code, issuer and network passphrase"
+    },
+    {
+      "name": "trustline issued by the source",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "source": "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+      },
+      "error": "swap",
+      "reason": "the trustline asset is issued by the source"
+    },
+    {
+      "name": "trustline for another asset",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": {
+          "assetCode": "USDC",
+          "issuer": "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+          "networkPassphrase": "Test SDF Network ; September 2015"
+        }
+      },
+      "error": "swap",
+      "reason": "the trustline asset is not token_out"
+    },
+    {
+      "name": "trustline on another network",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": {
+          "assetCode": "AQUA",
+          "issuer": "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+          "networkPassphrase": "Public Global Stellar Network ; September 2015"
+        }
+      },
+      "error": "swap",
+      "reason": "the trustline asset is not token_out"
+    },
+    {
+      "name": "trustline issuer is not an account",
+      "base": "diamond",
+      "trust": true,
+      "options": {
+        "trustline": {
+          "assetCode": "AQUA",
+          "issuer": "GABC",
+          "networkPassphrase": "Test SDF Network ; September 2015"
+        }
+      },
+      "error": "swap",
+      "reason": "the trustline asset is not token_out"
+    }
+  ],
+  "capabilities": [
+    [
+      "normalizeSwapSplitPlan",
+      "normalize_swap_split_plan"
+    ],
+    [
+      "sellAmountToRaw",
+      "sell_amount_to_raw"
+    ],
+    [
+      "getSwapMinimum",
+      "get_swap_minimum"
+    ],
+    [
+      "buildSwapSplitOperation",
+      "build_swap_split_operation"
+    ],
+    [
+      "getSwapSplitResult",
+      "get_swap_split_result"
+    ],
+    [
+      "loadSwapResourceLimits",
+      "load_swap_resource_limits"
+    ],
+    [
+      "assertSwapResources",
+      "assert_swap_resources"
+    ],
+    [
+      "assertSwapAuthorization",
+      "assert_swap_authorization"
+    ]
+  ]
+}

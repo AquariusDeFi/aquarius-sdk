@@ -21,6 +21,46 @@ export interface FindPathResponse {
   amount_with_fee: number | string;
 }
 
+/** Exact-input quote for the router's `swap_split`. */
+export interface FindPathSplitRequest {
+  token_in_address: string;
+  token_out_address: string;
+  /** Exact input in base units, as an integer string. */
+  amount: string;
+  /** Decimal fraction from 0 to 1 (`"0.005"` = 0.5%); it only sets `amount_out_min`. */
+  slippage?: string;
+}
+
+/** One part of a stage: a chain in the `swap_chained` format and its share. */
+export interface FindPathSplitPart {
+  /** Basis points of the stage input; the shares of a stage sum to 10000. */
+  share: number;
+  /** Estimated input and output of the part, base units as integer strings. */
+  amount_in: string;
+  amount_out: string;
+  swap_chain_xdr: string;
+  /**
+   * Display data: the signed call is built only from the validated token
+   * addresses, pool indexes, shares and amounts.
+   */
+  pools: string[];
+  /** Display data, like `pools`. */
+  tokens: string[];
+  tokens_addresses: string[];
+}
+
+export interface FindPathSplitResponse {
+  success: boolean;
+  /** Base units as integer strings; `"0"` without a route. */
+  amount_in: string;
+  amount_out: string;
+  amount_out_min: string;
+  /** The `stages` argument of `swap_split`, base64 XDR. */
+  stages_xdr: string;
+  /** The stages in order, each a list of its parts in order. */
+  stages: FindPathSplitPart[][];
+}
+
 /** Typed client for the public backend API. */
 export class ApiClient {
   constructor(private readonly baseUrl: string) {}
@@ -37,6 +77,23 @@ export class ApiClient {
       throw new AquariusError(`Find-path request failed: HTTP ${response.status}`);
     }
     return (await response.json()) as FindPathResponse;
+  }
+
+  /**
+   * One plan for the router's `swap_split`, split or not. Validate it with
+   * `normalizeSwapSplitPlan` before building a transaction from it.
+   */
+  async findPathSplit(request: FindPathSplitRequest): Promise<FindPathSplitResponse> {
+    const response = await fetch(`${this.baseUrl}/find-path-split/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new AquariusError(`Find-path-split request failed: HTTP ${response.status}`);
+    }
+    return (await response.json()) as FindPathSplitResponse;
   }
 
   /** Indexed metadata for the given pool addresses (type, fee, token labels). */
@@ -82,9 +139,32 @@ export class ApiClient {
       } catch {
         // The status remains sufficient when the server returns no JSON body.
       }
-      throw new AquariusError(
-        `Limit-order draft request failed: HTTP ${response.status}${detail}`,
-      );
+      throw new AquariusError(`Limit-order draft request failed: HTTP ${response.status}${detail}`);
+    }
+    return (await response.json()) as Record<string, unknown>;
+  }
+
+  async authorizeLimitOrder(
+    baseUrl: string,
+    orderId: string,
+    authorizationXdr: string,
+  ): Promise<Record<string, unknown>> {
+    if (!/^[0-9a-f]{64}$/i.test(orderId)) throw new AquariusError("Invalid limit-order ID");
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/orders/${orderId}/authorize/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ authorization_xdr: authorizationXdr }),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const body = (await response.json()) as { detail?: string };
+        detail = body.detail ? `: ${body.detail}` : "";
+      } catch {
+        /* Status is sufficient for non-JSON errors. */
+      }
+      throw new AquariusError(`Limit-order authorization failed: HTTP ${response.status}${detail}`);
     }
     return (await response.json()) as Record<string, unknown>;
   }
@@ -94,30 +174,21 @@ export class ApiClient {
     params: Record<string, string>,
   ): Promise<Record<string, unknown>> {
     const query = new URLSearchParams(params);
-    const response = await fetch(
-      `${baseUrl.replace(/\/$/, "")}/orders/?${query}`,
-      { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
-    );
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/orders/?${query}`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!response.ok) {
-      throw new AquariusError(
-        `Limit-order list request failed: HTTP ${response.status}`,
-      );
+      throw new AquariusError(`Limit-order list request failed: HTTP ${response.status}`);
     }
     return (await response.json()) as Record<string, unknown>;
   }
 
-  async getLimitOrder(
-    baseUrl: string,
-    orderId: string,
-  ): Promise<Record<string, unknown>> {
-    const response = await fetch(
-      `${baseUrl.replace(/\/$/, "")}/orders/${orderId}/`,
-      { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
-    );
+  async getLimitOrder(baseUrl: string, orderId: string): Promise<Record<string, unknown>> {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/orders/${orderId}/`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!response.ok) {
-      throw new AquariusError(
-        `Limit-order detail request failed: HTTP ${response.status}`,
-      );
+      throw new AquariusError(`Limit-order detail request failed: HTTP ${response.status}`);
     }
     return (await response.json()) as Record<string, unknown>;
   }

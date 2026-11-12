@@ -375,14 +375,11 @@ test("fill enforces fixed auth and checks fees after instruction and resource he
   await assert.rejects(expensive.record.prepareFill(routeXdr()), /below execution fee/);
 });
 
-test("fill rejects injected RPC auth and restoration without submitting", async () => {
+test("fill rejects injected RPC auth without submitting", async () => {
   const { authorizedInvocation, sourceAccountEntry } = await import("../dist/index.js");
   const { record, simulation } = await preparedClient();
   simulation.result.auth = [sourceAccountEntry(authorizedInvocation(draft.settlement_address, "unexpected", []))];
   await assert.rejects(record.prepareFill(routeXdr()), /authorization/);
-  simulation.result.auth = [];
-  simulation.restorePreamble = { transactionData: simulation.transactionData, minResourceFee: "17" };
-  await assert.rejects(record.prepareFill(routeXdr()), /restoration/);
 });
 
 test("execute returns the confirmed receipt and rejects a missing return", async () => {
@@ -426,3 +423,31 @@ test("shared auto-trust and legacy vectors preserve the same order", () => {
     assert.equal(record.orderId, "deb93819e99e5863c9d179da91d395699b01dccf0e88869c0d6353e76c9f1f28");
   }
 });
+
+
+for (const legacyPreamble of [false, true]) {
+  test(`fill preserves automatic restore entries (legacy preamble=${legacyPreamble})`, async () => {
+    const { SorobanDataBuilder, Transaction } = await import("@stellar/stellar-sdk");
+    const { client, record, simulation } = await preparedClient({
+      resourceHeadroom: 0.5, instructionHeadroom: 0.25, detached: true,
+    });
+    const data = simulation.transactionData.build();
+    data.resources.footprint.readWrite = [xdr.LedgerKey.contractCode(
+      new xdr.LedgerKeyContractCode({ hash: Buffer.alloc(32, 7) }),
+    )];
+    data.ext = xdr.SorobanTransactionDataExt.resourceExt(
+      new xdr.SorobanResourcesExtV0({ archivedSorobanEntries: [0] }),
+    );
+    simulation.transactionData = new SorobanDataBuilder(data);
+    if (legacyPreamble) {
+      simulation.restorePreamble = { transactionData: simulation.transactionData, minResourceFee: "17" };
+    }
+    client.engine.restore = async () => { throw new Error("unexpected separate restore"); };
+    const prepared = await record.prepareFill(routeXdr());
+    const tx = new Transaction(prepared.transactionXdr, Networks.TESTNET);
+    const actual = tx.toEnvelope().v1.tx.ext.sorobanData;
+    assert.deepEqual(actual.ext.toXDR(), data.ext.toXDR());
+    assert.deepEqual(actual.resources.footprint.toXDR(), data.resources.footprint.toXDR());
+    assert.deepEqual(tx.operations[0].auth.map(a => a.toXDR()), [record.authorization.toXDR()]);
+  });
+}

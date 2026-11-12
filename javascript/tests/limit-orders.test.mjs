@@ -15,6 +15,7 @@ import {
   AquariusError,
   Asset,
   LimitOrderConfig,
+  LIMIT_ORDER_MAX_TTL_LEDGERS,
   OnchainLimitOrder,
   buildOnchainPlacementArgs,
   validateOnchainLimitOrderDraft,
@@ -150,6 +151,53 @@ test("client checks the approved reward before requesting a draft", async () => 
     sellAmount: 1000n, minBuyAmount: 900n, validAfterLedger: 100, expiresAtLedger: 200,
     allowanceExpirationLedger: 250, expectedExecutorRewardXlm: 5_000_001n,
   }), /executor reward changed/);
+});
+
+test("legacy creation rejects a lifetime over six months before network or signing", async () => {
+  const client = new AquariusClient({
+    network: "testnet",
+    signer: { publicKey: () => draft.maker, sign: () => assert.fail("must not sign") },
+    limitOrders: { settlement: draft.settlement_address, batcher },
+  });
+  client.readContract = async () => assert.fail("must not read contract");
+  client.api.createLimitOrderDraft = async () => assert.fail("must not request draft");
+  const expiresAtLedger = 100 + LIMIT_ORDER_MAX_TTL_LEDGERS + 1;
+  await assert.rejects(client.createOnchainLimitOrder({
+    from: Asset.contract(draft.sell_token), to: Asset.contract(draft.buy_token),
+    sellAmount: 1000n, minBuyAmount: 900n, validAfterLedger: 100, expiresAtLedger,
+    allowanceExpirationLedger: expiresAtLedger, expectedExecutorRewardXlm: 5_000_000n,
+  }), /cannot exceed 6 months/);
+});
+
+test("imported canonical drafts accept the cap and reject one extra ledger", async () => {
+  const { hash, xdr } = await import("@stellar/stellar-sdk");
+  const original = xdr.ScVal.fromXDR(draft.order_xdr, "base64");
+  for (const extra of [0, 1]) {
+    const expiresAtLedger = 100 + LIMIT_ORDER_MAX_TTL_LEDGERS + extra;
+    const canonical = xdr.ScVal.scvMap(original.map.map(entry => new xdr.ScMapEntry({
+      key: entry.key,
+      val: scValToNative(entry.key) === "expires_at_ledger"
+        ? nativeToScVal(expiresAtLedger, { type: "u32" }) : entry.val,
+    })));
+    const payload = { ...draft, expires_at_ledger: expiresAtLedger,
+      order_xdr: canonical.toXDR("base64"),
+      order_id: Buffer.from(hash(canonical.toXDR())).toString("hex"),
+    };
+    const context = {
+      expectedOrder: { sellToken: draft.sell_token, sellAmount: 1000n,
+        buyToken: draft.buy_token, minBuyAmount: 900n, validAfterLedger: 100, expiresAtLedger },
+      allowanceExpirationLedger: expiresAtLedger,
+    };
+    if (extra) assert.throws(() => validate(payload, context), /cannot exceed 6 months/);
+    else assert.equal(validate(payload, context).expiresAtLedger, expiresAtLedger);
+  }
+});
+
+test("manual placement arguments cannot bypass the lifetime cap", () => {
+  const order = validate();
+  order.expiresAtLedger = order.validAfterLedger + LIMIT_ORDER_MAX_TTL_LEDGERS + 1;
+  order.allowanceExpirationLedger = order.expiresAtLedger;
+  assert.throws(() => buildOnchainPlacementArgs(order, new Map(), xlmToken), /cannot exceed 6 months/);
 });
 
 for (const limit of [0n, -1n, true, 1.5, 1n << 127n, 999n]) {

@@ -26,7 +26,14 @@ export { batchCallScVal, type BatchCall } from "./batch.js";
 export type { Signer } from "./signer.js";
 export { FeeCollector, type ClaimedFees } from "./collector.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
-export type { FindPathRequest, FindPathResponse, ParsedRoute } from "./api.js";
+export type {
+  FindPathRequest,
+  FindPathResponse,
+  FindPathSplitPart,
+  FindPathSplitRequest,
+  FindPathSplitResponse,
+  ParsedRoute,
+} from "./api.js";
 export { NETWORKS, type NetworkConfig } from "./networks.js";
 export {
   LimitOrder,
@@ -97,3 +104,46 @@ export {
   TxTimeoutError,
   UserRejectedError,
 } from "./errors.js";
+
+export {
+  normalizeSwapSplitPlan,
+  sellAmountToRaw,
+  getSwapMinimum,
+  buildSwapSplitOperation,
+  getSwapSplitResult,
+  type SwapSplitPart,
+  type SwapSplitPlan,
+  type BuildSwapSplitOptions,
+} from "./split-swap.js";
+export {
+  loadSwapResourceLimits,
+  assertSwapResources,
+  assertSwapAuthorization,
+  type SwapResourceLimits,
+} from "./swap-resources.js";
+export {
+  LimitOrderManager,
+  type LimitOrderContext,
+  type PrepareLimitOrderParams,
+  type LimitOrderSettlementConfig,
+} from "./limit-order-manager.js";
+export * from "./limit-order-types.js";
+export { getAuthEntryPreimage, normalizeSignedAuthEntry } from "./limit-order-auth.js";
+export {
+  validateLimitOrderRecord,
+  validateLimitOrderDraft,
+  assertSignedAuthorizationMatchesDraft,
+} from "./limit-order-validation.js";
+export { getLimitOrderFillOperation, getLimitOrderFillAmounts } from "./limit-order-events.js";
+export {
+  assertLimitOrderTransaction,
+  assertLimitOrderSignatures,
+} from "./limit-order-transaction.js";
+
+export {
+  PreparedLimitOrder,
+  type LimitOrderSummary,
+  type LimitOrderPlaceOptions,
+  type LimitOrderTransactionResult,
+  type PendingLimitOrder,
+} from "./limit-order-prepared.js";

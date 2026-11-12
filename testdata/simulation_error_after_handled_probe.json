@@ -1,0 +1,10 @@
+{
+  "description": "Synthetic simulation failure after a handled missing-trustline probe; events are chronological and the text log is newest first.",
+  "error": "HostError: Error(Contract, #2006)\n\nEvent log (newest first):\n   0: [Diagnostic Event] topics:[error, Error(Contract, #2006)], data:\"deposit failed\"\n   1: [Diagnostic Event] topics:[fn_return, checkpoint_user], data:Void\n   2: [Diagnostic Event] topics:[error, Error(Contract, #13)], data:\"trustline entry is missing for account\"",
+  "events_xdr": [
+    "AAAAAAAAAAAAAAAAAAAAAgAAAAAAAAACAAAADwAAAAVlcnJvcgAAAAAAAAIAAAAAAAAADQAAAA4AAAAmdHJ1c3RsaW5lIGVudHJ5IGlzIG1pc3NpbmcgZm9yIGFjY291bnQAAA==",
+    "AAAAAAAAAAAAAAAAAAAAAgAAAAAAAAACAAAADwAAAAlmbl9yZXR1cm4AAAAAAAAPAAAAD2NoZWNrcG9pbnRfdXNlcgAAAAAB",
+    "AAAAAAAAAAAAAAAAAAAAAgAAAAAAAAACAAAADwAAAAVlcnJvcgAAAAAAAAIAAAAAAAAH1gAAAA4AAAAOZGVwb3NpdCBmYWlsZWQAAA=="
+  ],
+  "missing_trustline_error": "HostError: Error(Contract, #13)\n\nEvent log (newest first):\n   0: [Failed Diagnostic Event (not emitted)] topics:[error, Error(Contract, #13)], data:\"trustline entry is missing for account\""
+}

@@ -13,6 +13,7 @@ from aquarius.api import _parse_retry_after
     ("method", "args", "verb", "message"),
     [
         ("find_path", ({"amount": "1"}, True), "post", "Find-path request failed"),
+        ("find_path_split", ({"amount": "1"},), "post", "Find-path-split request failed"),
         ("pools_by_addresses", (["pool"],), "get", "Pools request failed"),
         ("user_pools", ("account",), "get", "User pools request failed"),
         ("create_limit_order_draft", ("https://registry.invalid", {"proof": "PRIVATE_PROOF"}), "post", "Limit-order draft request failed"),

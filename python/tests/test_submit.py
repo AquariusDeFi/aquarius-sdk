@@ -472,3 +472,40 @@ def test_wait_for_next_ledger_rejects_invalid_arguments(kwargs, message):
     with pytest.raises(AquariusError, match=message):
         client_on(server).wait_for_next_ledger(**kwargs)
     assert server.calls == []
+
+
+@pytest.mark.parametrize("method", ["prepare", "read"])
+@pytest.mark.parametrize("case", ["handled", "missing", "invalid", "trustline", "trustline_missing", "trustline_invalid"])
+def test_simulation_error_ignores_handled_trustline_probe(method, case):
+    import json
+    from pathlib import Path
+    from aquarius import NoTrustlineError
+
+    testdata = Path(__file__).resolve().parents[2] / "testdata"
+    fixture = json.loads((testdata / "simulation_error_after_handled_probe.json").read_text())
+    events = fixture["events_xdr"]
+    message = fixture["error"]
+    error_type = SlippageError
+    if case == "missing":
+        events = None
+    elif case == "invalid":
+        events = ["invalid"]
+    elif case.startswith("trustline"):
+        message = fixture["missing_trustline_error"]
+        fixture = json.loads((testdata / "diagnostic_events_missing_trustline.json").read_text())
+        events = fixture["events_xdr"]
+        if case == "trustline_missing":
+            events = None
+        elif case == "trustline_invalid":
+            events = ["invalid"]
+        error_type = NoTrustlineError
+    server = FakeServer([])
+    server.simulate_transaction = lambda *args, **kwargs: SimpleNamespace(
+        error=message, events=events, restore_preamble=None,
+    )
+    engine = SubmitEngine(server, PASSPHRASE, "100")
+    with pytest.raises(error_type) as caught:
+        getattr(engine, method)(KEYPAIR.public_key, lambda builder: builder.append_manage_data_op("test", "1"))
+    if error_type is SlippageError:
+        assert "#2006" in str(caught.value)
+    assert server.submitted == []

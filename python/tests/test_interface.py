@@ -115,8 +115,8 @@ def test_diagnostics_fall_back_to_contract_code():
     assert "#13" in str(error)
 
 
-def test_trustline_marker_wins_over_contract_code():
-    message = "HostError: Error(Contract, #2006)\n... trustline entry is missing for account ..."
+def test_trustline_failure_reported_directly_stays_typed():
+    message = "HostError: Error(Contract, #13): trustline entry is missing for account"
     assert isinstance(classify_contract_error(message), NoTrustlineError)
 
 

@@ -1,14 +1,24 @@
 # @aquariusdefi/sdk
 
-Installation: `npm install @aquariusdefi/sdk@0.6.0 @stellar/stellar-sdk@^17.4.0`.
+Installation: `npm install @aquariusdefi/sdk@0.7.0 @stellar/stellar-sdk@^17.4.0`.
 
-The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
+The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar.
 
-**Status: 0.6.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
+**Status: 0.7.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
 
 Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.4.0)
 as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
 dependency; no global `Buffer` polyfill is required.
+
+**New in 0.7.0:** prepare and place limit orders through the connected wallet,
+read open orders and completion-sorted history, and cancel through the returned
+order record. The SDK resolves signing capabilities, execution rewards, ledger
+windows and receive trustlines. See [Limit orders](#limit-orders-javascript) for
+the integration flow and the [changelog](CHANGELOG.md#070) for compatibility and
+fixes. Version 0.7.0 also adds staged split swaps, provider split fees and native
+receive trust, and fixes simulation error classification and automatic
+restoration during limit-order fill preparation. The existing programmatic
+APIs remain available.
 
 ## Swap through a specific pool
 
@@ -300,7 +310,234 @@ The client does not see transactions you submit yourself, so
 build (e.g. a withdraw after a deposit into a pool with rewards), pass the
 ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
 
-## Programmatic on-chain limit orders
+## Limit orders (JavaScript)
+
+The wallet-facing manager below is available from `0.7.0`. Limit-order registry
+and on-chain primitives were already available in `0.6.0`.
+
+Use the same prepare/review/execute pattern as quotes. Configure the deployment
+once; a connected signer supplies the account. A keypair supports detached
+authorization automatically. A wallet adapter can expose `signAuthEntry(xdr)` in
+addition to its usual `sign(transactionXdr)` method. Omit that capability when
+unsupported; the SDK selects transaction placement. Multisig accounts use
+transaction placement even when their wallet supports detached signing.
+
+```ts
+import { AquariusClient, Asset, XLM } from "@aquariusdefi/sdk";
+
+const AQUA = Asset.classic("AQUA", aquaIssuer);
+const aqua = new AquariusClient({
+  network: "testnet",
+  signer,
+  limitOrders: {
+    settlement: settlementAddress,
+    batcher: batcherAddress,
+    guard: guardAddress,
+    apiUrl: registryUrl,
+  },
+});
+
+const prepared = await aqua.limitOrders.prepare({
+  from: XLM,
+  to: AQUA, // Asset.classic(code, issuer) for a classic receive asset
+  sellAmount: 10_0000000n,
+  minBuyAmount: 100_0000000n,
+  expiresIn: 24 * 60 * 60, // approximate duration, seconds
+});
+
+// Show prepared.summary to the user before placing.
+// Includes the exact reward, expiration, signing path and trustline timing.
+const order = await prepared.place();
+console.log(order.orderId, order.order.sellAmount);
+
+// These are independent actions for the application's order list and cancel UI.
+const open = await aqua.limitOrders.open(); // connected maker by default
+const history = await aqua.limitOrders.history();
+const next = history.nextCursor
+  ? await aqua.limitOrders.history(undefined, history.nextCursor)
+  : null;
+const sameOrder = await aqua.limitOrders.get(order.orderId);
+// After the user confirms cancellation:
+// await sameOrder.cancel();
+```
+
+`signer`, `aquaIssuer` and the deployment addresses above come from the
+application's connected wallet and trusted network configuration.
+
+### Wallet adapter and confirmation UI
+
+Reuse the signer passed to `AquariusClient`. Application callbacks should return
+the signed transaction XDR, or a base64 authorization signature / signed
+authorization-entry XDR, respectively. Unwrap wallet-specific response objects
+inside the adapter and pass the intended account and network to the wallet.
+
+```ts
+import type { Signer } from "@aquariusdefi/sdk";
+
+// Application-provided address and wallet callbacks.
+const signer: Signer = {
+  publicKey: () => connectedAddress,
+  sign: signTransactionWithWallet,
+  ...(signAuthEntryWithWallet
+    ? { signAuthEntry: signAuthEntryWithWallet }
+    : {}),
+};
+```
+
+Set `signAuthEntryWithWallet` to `undefined` when the connected wallet cannot sign
+authorization entries; do not provide a stub that throws. The SDK also checks the
+account's signer weights and thresholds before selecting detached signing. A
+keypair provides detached signing automatically; multisig accounts use
+transaction placement. Propagate wallet rejection so it stops the operation.
+
+Build the confirmation UI from `prepared.summary`, rather than independently
+fetching values that may differ from the reviewed draft:
+
+| Field | Meaning |
+| --- | --- |
+| `sellAmount`, `minBuyAmount` | Reviewed base-unit amounts as `bigint`. |
+| `executorRewardXlm` | Execution reward in stroops, paid when the order fills. |
+| `expiresAtLedger`, `expiresIn` | Exact expiration ledger and approximate duration in seconds. |
+| `signing` | `authorization` or `transaction`, selected before review. |
+| `trustline.required`, `trustline.creation` | Whether a line is missing and whether it is added at `execution` or `placement`; otherwise `null`. |
+
+Transaction placement pays a network fee when submitted, independently of
+whether the order later fills. Detached placement signs an authorization and
+publishes it to the registry without submitting a placement transaction.
+
+### Preparation, placement and retries
+
+`prepare()` fetches the current ledger, settlement reward and account state,
+detects a missing receive trustline and pins the signing path before creating a
+validated draft. It neither signs nor submits. `place()` rechecks the reviewed
+conditions, signs and publishes/places that exact order. A change requiring new
+consent stops the operation. Wallet rejection never falls back to a paid path.
+
+A missing classic receive trustline is authorized for execution with detached
+signing, or added at placement with transaction signing. Existing trustlines,
+native assets, issuer-owned assets and contract-only Soroban assets do not add a
+line. Assets needing issuer authorization are rejected before signing. Pass
+classic assets as code/issuer so the SDK can derive their network-specific SAC.
+
+Amounts are `bigint` in base units. `expiresIn` is an approximate duration in
+seconds (5 seconds per ledger), bounded by the settlement and the 3,110,399-ledger
+allowance cap. A request for 180 days uses that cap. No caller-supplied ledger,
+trustline flag, placement mode or independently fetched reward is required.
+Durations above `LIMIT_ORDER_MAX_DURATION_SECONDS` (180 days) throw an
+`AquariusError` before any network request or wallet interaction. Legacy and
+imported orders also reject ledger windows exceeding 3,110,399 ledgers; a lower
+settlement limit still applies.
+
+Wallet placement adds the new budget to verified remaining allowances, preserves
+the longer logical expiry, and atomically guards the fee, unused order ID and
+current allowances. Canonical XDR, approved amounts, network, settlement and the
+exact authorization tree are verified before wallet interaction.
+
+Reuse the same prepared object on retry: it retains the signed authorization or
+transaction, coalesces concurrent placement calls and checks transaction
+confirmation before resubmitting. A new `prepare()` is a new order.
+
+For applications with an existing Vault or external-signature flow,
+`prepared.place({ submitTransaction, prepareTransaction? })` accepts transport
+adapters. The submit callback returns either `{ status: "confirmed",
+transactionHash, ledger, createdAt }`, `{ status: "pending", transactionHash }`,
+or `{ status: "failed" }`. A pending result remains `PENDING_SIGNATURES` and is
+never reported as an open order. The receipt must refer to the exact built
+transaction. `prepareTransaction` can handle the application's restoration UI.
+`createdAt` is Unix time in seconds, accepted as either a number or a decimal
+string, matching RPC responses. The application must wait for network
+confirmation before returning `status: "confirmed"`.
+
+Handle external-signature results explicitly:
+
+```ts
+const result = await prepared.place({ submitTransaction });
+if (result.status === "PENDING_SIGNATURES") {
+  // Show the application's existing pending-signatures UI.
+  // Keep this prepared object and retry placement after signatures are collected.
+} else {
+  // result is the placed LimitOrderRecord; refresh the application's order list.
+  console.log(result.orderId);
+}
+```
+
+The escape hatches `prepared.buildTransaction()`,
+`prepared.authorizationEntryXdr`, `prepared.authorize(signature)` and
+`order.buildCancelTransaction()` remain available. Normal callers use
+`prepare()` / `place()` and the returned order object's methods. Read-only clients
+can pass an explicit maker to `open(maker)` / `history(maker)` without a signer.
+All registry methods return the same bound `LimitOrderRecord` model; `.raw`
+exposes its registry projection when needed by an existing application.
+
+`open()` follows pagination and returns all open orders. For a bounded page, use
+`list({ maker, status: "OPEN", limit, cursor })`. `history(maker, cursor, limit)`
+defaults to 20 records, ordered by completion date; use the returned `nextCursor`
+for subsequent pages. The SDK does not poll these lists. The application owns
+refresh timing, wallet connection, confirmation dialogs and notifications.
+
+For execution notifications, `getLimitOrderFillOperation(operation, settlement,
+maker)` identifies a matching Horizon fill operation. Pass the corresponding
+successful RPC transaction to `getLimitOrderFillAmounts(transaction, fill)` to
+read actual amounts from settlement events, including contract-only Soroban
+tokens. These helpers return `null` for unrelated records and do not start an
+event stream themselves.
+
+### Upgrading from 0.6.0 or a Git dependency
+
+Existing programmatic methods remain available. Wallet applications can replace
+manual ledger, trustline and signing-mode resolution with `prepare()` and review
+its summary before calling `place()`. The 180-day / 3,110,399-ledger maximum also
+applies to legacy and imported orders; the settlement can enforce a lower limit.
+
+After `0.7.0` is published, replace the temporary Git URL or local tarball with
+the npm version and commit the regenerated application lockfile:
+
+```sh
+yarn add @aquariusdefi/sdk@0.7.0 --exact
+# Or, for npm consumers:
+npm install @aquariusdefi/sdk@0.7.0 --save-exact
+```
+
+The required Node.js version and Stellar SDK peer dependency are unchanged from
+`0.6.0`. Staged split swaps are explicit helpers and require compatible router
+and collector contracts; ordinary `quote()` / `swap()` behavior is unchanged.
+The ICE Locker/delegation builders, typed settlement routes and adaptive
+resource retry helpers from `0.7.0-testnet.*` are not included. Keep the exact
+prerelease pin if your application uses those APIs. Stable limit-order fills
+retain legacy route encoding.
+
+### Testing from GitHub before a release
+
+The repository root provides a private Git-install manifest for this JavaScript
+package. Its `prepare` script builds the same sources and TypeScript declarations;
+normal npm releases continue to be published from `javascript/`.
+Keep the root manifest's version and dependency ranges in sync with
+`javascript/package.json`; the package consistency test checks this.
+
+```sh
+yarn add '@aquariusdefi/sdk@git+https://github.com/AquariusDeFi/aquarius-sdk.git#<full-commit-sha>'
+```
+
+Use a full commit SHA from the reviewed PR so installations are reproducible.
+Git preparation needs development dependencies and lifecycle scripts enabled.
+Before the consuming application's production release, replace the Git URL with
+the published `@aquariusdefi/sdk` version and regenerate its lockfile.
+
+### Local frontend integration
+
+Run `npm install`, then `npm run pack:local` inside `javascript/`. The command
+prints a tarball filename containing its content hash. It has the same files as
+an npm release, without development dependencies. Install that file from a sibling
+frontend with `yarn add @aquariusdefi/sdk@file:../aquarius-sdk/javascript/<filename>`.
+Repack and install the newly printed filename after SDK changes; unique filenames
+avoid Yarn Classic's stale local-tarball cache. Replace this local dependency with
+the published SDK version before deploying the frontend independently.
+
+## Legacy programmatic on-chain limit orders
+
+The published explicit-ceiling API below is retained for compatibility. New
+wallet integrations should use `limitOrders.prepare()` above. The legacy read
+methods delegate to the same manager and return the same order model.
 
 **Security migration in 0.6.0:** `createOnchainLimitOrder()` and
 `validateOnchainLimitOrderDraft()` now require `expectedExecutorRewardXlm`.
@@ -428,9 +665,11 @@ receipt, maker minimum, exact execution fee, and maximum transaction fee.
 
 Preparation uses enforced authorization, preserves the maker's signed proof,
 and applies the configured CPU and resource fee headroom before checking that
-the maximum transaction fee is below the execution reward. A restore preamble
-aborts fill preparation without signing or submitting. Unsigned placement and
-cancellation builders also never sign or submit a restore transaction.
+the maximum transaction fee is below the execution reward. Successful simulation
+data may include automatic restoration entries and a restore preamble; fill
+preparation retains those entries in the invocation's transaction data without
+building or submitting a separate restore. Unsigned placement and cancellation
+builders also never sign or submit a restore transaction.
 
 The prepared receipt is a simulation preview. Execution returns the validated
 receipt from the confirmed transaction and fails if that receipt is absent or
@@ -441,6 +680,82 @@ be at or below `current_ledger + max_entry_ttl - 1`, including for orders whose
 valid-after ledger is in the future. The allowance horizon must satisfy the
 network's current allowance limit and cover the order. Annual orders are not
 supported by the agreed one-signature flow.
+
+## Split swaps
+
+An exact-input swap that the backend splits across routes runs as one call to
+the router's `swap_split`. `findPathSplit` returns one plan, split or not. The
+SDK checks it, then builds the call with the user's whole authorization:
+`swap_split` with all its arguments and the one input transfer.
+
+```ts
+import {
+  normalizeSwapSplitPlan, getSwapMinimum, buildSwapSplitOperation,
+  loadSwapResourceLimits, assertSwapAuthorization, assertSwapResources,
+  getSwapSplitResult,
+} from "@aquariusdefi/sdk";
+
+const response = await aqua.api.findPathSplit({
+  token_in_address: tokenIn, token_out_address: tokenOut, amount: amountIn,
+});
+const plan = normalizeSwapSplitPlan(response, tokenIn, tokenOut, amountIn);
+const minimum = getSwapMinimum(plan.amountOut, "1"); // percent: "1" = 1%
+const operation = buildSwapSplitOperation({
+  source, router: aqua.network.router, tokenIn, tokenOut, plan, minimum,
+});
+const limits = await loadSwapResourceLimits(server, networkPassphrase);
+// Your code: simulate once with this fixed authorization, reject restore or
+// error results, then assemble with SDK CPU and resource-fee headroom.
+const { transaction, simulation } = await simulate(operation);
+const tx = await aqua.assembleTransaction(transaction, operation, simulation);
+assertSwapAuthorization(tx, source, operation.toXdr("base64"));
+if (simulation.latestLedger < limits.latestLedger) throw new Error("Stale simulation");
+assertSwapResources(tx, limits, {
+  events: simulation.events, retval: simulation.result.retval,
+});
+const output = getSwapSplitResult(simulation.result.retval, false);
+// Show the plan, minimum, output and fee before signing.
+```
+
+`normalizeSwapSplitPlan` throws `NoRouteError` without a route, and an
+"Invalid swap quote" error naming the failed check for a plan that does not
+match the request or the router's execution of it: ask for a new quote, there
+is no fallback. It checks the requested input, stage shares (integers summing
+to 10000), every chain token by token from `tokenIn` through each stage to
+`tokenOut`, each part's input against the router's allocation of its stage
+input, outputs that add up to the next stage's input (within u128) and to
+`amount_out`, and that `stages_xdr` is the encoding of the readable stages the
+builder encodes. A plan has at most 4 stages, 4 parts per stage and 4 hops per
+chain. `pools` and `tokens` are display data from the API: the signed call is
+built only from the validated token addresses, pool indexes, shares and
+amounts.
+
+The minimum comes from your slippage on the quoted `amountOut`, never from the
+API's `amount_out_min`. To authorize the output trustline inside the swap, pass
+`trustline: {assetCode, issuer, networkPassphrase}` and omit `batch`. The builder
+verifies the classic asset is `tokenOut` and puts `trust(source)` under the swap's
+authorization. The updated contract opens a missing line atomically; XLM, WASM
+tokens, issuers, contract recipients and existing lines need no new line.
+A missing line needs the recipient's authorization and available XLM reserve;
+issuer authorization restrictions still apply. Read the scalar result with
+`getSwapSplitResult(retval)` even when a line was created.
+
+For provider fees, pass the same `providerFee: {contractId, feeFraction,
+feeDenominator, recipient?}` to `getSwapMinimum(plan.amountOut, slippage,
+providerFee)` and `buildSwapSplitOperation`. The quoted amount is gross; the
+minimum and returned amount are net. The collector rounds its fee up once on
+the total output. An explicit recipient selects `swap_split_to`. The builder
+can authorize a missing line only when the recipient is `source`; another
+recipient must already have a line or supply its own authorization separately.
+Use the configured collector's actual denominator and fee cap.
+
+This requires the updated router and provider collector implementation. Existing
+collectors are not upgradeable and must be replaced to support split swaps.
+Explicit `batch` remains supported for legacy external `[trust, swap_split]`
+calls; only that mode uses `getSwapSplitResult(retval, true)`.
+The helpers never sign, submit or restore storage. Python has the same helpers
+in snake_case, with shared fixtures in `testdata/split-*.json`.
+Install with `npm install @aquariusdefi/sdk@0.7.0`.
 
 ## What the SDK handles for you
 
