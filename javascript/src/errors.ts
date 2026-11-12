@@ -128,8 +128,26 @@ export function classifyContractCode(code: number, txHash?: string): AquariusErr
  * @internal Map a simulation/prepare failure string to a typed error.
  * Contract failures surface as substrings like `Error(Contract, #2006)`.
  */
-export function classifyContractError(message: string, txHash?: string): AquariusError | null {
-  if (message.includes(TRUSTLINE_MARKER)) {
+export function classifyContractError(
+  message: string,
+  txHash?: string,
+  events?: (xdr.DiagnosticEvent | string)[],
+): AquariusError | null {
+  const cause = errorFromDiagnostics(events, txHash);
+  if (cause) return cause;
+  // RPC's text log is newest first. Preserve a genuine trustline failure
+  // when XDR events are unavailable, without diagnosing earlier caught probes.
+  const failure = message.split(/\r?\n/, 1)[0];
+  const errorLines: string[] = [];
+  if (message.includes("Event log (newest first):")) {
+    for (const line of message.split(/\r?\n/)) {
+      if (!/^\s*\d+:/.test(line)) continue;
+      if (/topics:\s*\[\s*error\b/.test(line)) errorLines.push(line);
+      else if (errorLines.length) break;
+    }
+  }
+  message = failure;
+  if (failure.includes(TRUSTLINE_MARKER) || errorLines.some(line => line.includes(TRUSTLINE_MARKER))) {
     return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
   }
   const match = message.match(/Error\(Contract, #(\d+)\)/);
