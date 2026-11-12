@@ -2,21 +2,31 @@
 
 Official SDKs for building on [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar, in Python and TypeScript.
 
-**Status: 0.6.x.** Swaps (quote → execute in both modes) and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are complete in both languages, each verified end to end with real testnet transactions. Concentrated liquidity position management (range deposits, withdrawals, fee claims, position reads) is available as a **beta** surface: the concentrated contracts are under an ongoing external audit, and router deposits into concentrated pools remain refused — ranges are managed through the pool contract directly. Provider-fee collectors — routing swaps through your own fee-taking contract, deploying one, and claiming what it accumulates — are fully supported.
+**Status: 0.7.0.** Swaps (quote → execute in both modes) and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are complete in both languages, each verified end to end with real testnet transactions. Concentrated liquidity position management (range deposits, withdrawals, fee claims, position reads) is available as a **beta** surface: the concentrated contracts are under an ongoing external audit, and router deposits into concentrated pools remain refused — ranges are managed through the pool contract directly. Provider-fee collectors — routing swaps through your own fee-taking contract, deploying one, and claiming what it accumulates — are fully supported.
 
-Prerelease `0.7.0-alpha.1` (JavaScript) / `0.7.0a1` (Python) adds validated staged split swaps, provider-fee split calls, contract-native receive trustline authorization, and fixed-operation assembly with SDK resource headroom. Install the explicit prerelease version; stable releases remain unchanged. Split swaps require a router implementing `swap_split`; contract-native trust requires the updated router and, for provider fees, a new collector with `swap_split`/`swap_split_to` and automatic trust support. Publishing this SDK does not upgrade deployed contracts.
+Version `0.7.0` adds validated staged split swaps, provider-fee split calls, contract-native receive trustline authorization, and fixed-operation assembly with SDK resource headroom in both languages. Split swaps require a router implementing `swap_split`; contract-native trust requires the updated router and, for provider fees, a new collector with `swap_split`/`swap_split_to` and automatic trust support. Publishing this SDK does not upgrade deployed contracts.
 
 Version `0.6.0` adds canonical limit-order registry reads, on-chain placement/cancellation, unsigned fill preparation, and single-signature receive trustlines for verified classic assets. Trust is automatic for eligible receive tokens; the public opt-in flag has been removed. Missing-line detached fills require a settlement running the automatic-trust contract. Python also exposes typed HTTP status and Retry-After metadata for caller-controlled rate-limit handling. See the language READMEs for trusted deployment configuration and the network-capped lifetime. This release has offline fixture coverage; it does not certify a production limit-order deployment.
 
-JavaScript `0.6.1` adds a wallet-facing API on top of those limit-order primitives:
+JavaScript `0.7.0` adds a wallet-facing API on top of those limit-order primitives:
 `aqua.limitOrders.prepare()` resolves the ledger window, execution reward, signing
 capabilities and receive trustline; `prepared.place()` signs and places the
 reviewed order. The same manager provides open orders, cursor-paginated history
 and bound order records with cancellation methods. It also enforces the
 six-month lifetime and fixes browser signature verification and RPC confirmation
 timestamp handling. See the [JavaScript guide](javascript/README.md#limit-orders-javascript)
-and [0.6.1 release notes](javascript/CHANGELOG.md#061). Python remains at `0.6.0`;
-the new wallet-facing manager is JavaScript-only.
+and [0.7.0 release notes](javascript/CHANGELOG.md#070). Both packages are versioned
+`0.7.0`; the wallet-facing manager is JavaScript-only.
+
+Both packages preserve the actual simulation error after a handled trustline
+probe and retain automatic restoration data during limit-order fill preparation.
+Python also exposes optional safe fill-failure diagnostics.
+
+Stable `0.7.0` includes the features described above. It does not include the
+ICE Locker/delegation builders, typed settlement routes, or adaptive resource
+retry helpers from `0.7.0-testnet.*` / `0.7.0a*`. Consumers using those APIs must
+keep their exact prerelease pin. Stable limit-order fills use the existing
+legacy route encoding; a typed-route settlement requires a compatible client.
 
 ## Layout
 
@@ -115,14 +125,14 @@ There are two channels:
 
 A feature branch does not change the package version. It is merged into `testnet`, where the testnet version is set and tagged, and it reaches `master` through its own pull request. Several features can be on testnet at once without competing prerelease numbers.
 
-Release preparation sets the stable version explicitly. For JavaScript `0.6.1`,
-keep the root Git-install manifest, `javascript/package.json` and the JavaScript
-lockfile in sync. After the release-preparation PR is merged and its checks pass,
-tag the resulting `master` commit as `js-v0.6.1`. The Release JavaScript workflow
-checks the tag against the package version and publishes `javascript/` to npm.
-This JavaScript-only patch does not require a Python release tag. Consumers using
-a temporary Git dependency should switch to `@aquariusdefi/sdk@0.6.1` after
-publication and regenerate their lockfile.
+Release preparation sets the stable version explicitly. For `0.7.0`, keep the
+root Git-install manifest, `javascript/package.json`, the JavaScript lockfile,
+`python/pyproject.toml` and `aquarius.__version__` in sync. After the release PR is
+merged and its checks pass, tag the resulting `master` commit as `js-v0.7.0` and
+`py-v0.7.0`. The release workflows check each tag against its package version and
+publish `javascript/` to npm and `python/` to PyPI. Consumers using a temporary
+Git dependency for these stable APIs should switch to `@aquariusdefi/sdk@0.7.0`
+after publication and regenerate their lockfile.
 
 ## Development
 

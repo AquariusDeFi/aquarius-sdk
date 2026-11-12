@@ -1,21 +1,24 @@
 # @aquariusdefi/sdk
 
-Installation: `npm install @aquariusdefi/sdk@0.6.1 @stellar/stellar-sdk@^17.4.0`.
+Installation: `npm install @aquariusdefi/sdk@0.7.0 @stellar/stellar-sdk@^17.4.0`.
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar.
 
-**Status: 0.6.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
+**Status: 0.7.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
 
 Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.4.0)
 as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
 dependency; no global `Buffer` polyfill is required.
 
-**New in 0.6.1:** prepare and place limit orders through the connected wallet,
+**New in 0.7.0:** prepare and place limit orders through the connected wallet,
 read open orders and completion-sorted history, and cancel through the returned
 order record. The SDK resolves signing capabilities, execution rewards, ledger
 windows and receive trustlines. See [Limit orders](#limit-orders-javascript) for
-the integration flow and the [changelog](CHANGELOG.md#061) for compatibility and
-fixes. The existing programmatic APIs remain available.
+the integration flow and the [changelog](CHANGELOG.md#070) for compatibility and
+fixes. Version 0.7.0 also adds staged split swaps, provider split fees and native
+receive trust, and fixes simulation error classification and automatic
+restoration during limit-order fill preparation. The existing programmatic
+APIs remain available.
 
 ## Swap through a specific pool
 
@@ -309,7 +312,7 @@ ledger the previous transaction applied in: `waitForNextLedger({ ledger })`.
 
 ## Limit orders (JavaScript)
 
-The wallet-facing manager below is available from `0.6.1`. Limit-order registry
+The wallet-facing manager below is available from `0.7.0`. Limit-order registry
 and on-chain primitives were already available in `0.6.0`.
 
 Use the same prepare/review/execute pattern as quotes. Configure the deployment
@@ -486,18 +489,22 @@ manual ledger, trustline and signing-mode resolution with `prepare()` and review
 its summary before calling `place()`. The 180-day / 3,110,399-ledger maximum also
 applies to legacy and imported orders; the settlement can enforce a lower limit.
 
-After `0.6.1` is published, replace the temporary Git URL or local tarball with
+After `0.7.0` is published, replace the temporary Git URL or local tarball with
 the npm version and commit the regenerated application lockfile:
 
 ```sh
-yarn add @aquariusdefi/sdk@0.6.1 --exact
+yarn add @aquariusdefi/sdk@0.7.0 --exact
 # Or, for npm consumers:
-npm install @aquariusdefi/sdk@0.6.1 --save-exact
+npm install @aquariusdefi/sdk@0.7.0 --save-exact
 ```
 
 The required Node.js version and Stellar SDK peer dependency are unchanged from
-`0.6.0`. This stable patch does not include the features from the separate
-`0.7.0-testnet.*` channel.
+`0.6.0`. Staged split swaps are explicit helpers and require compatible router
+and collector contracts; ordinary `quote()` / `swap()` behavior is unchanged.
+The ICE Locker/delegation builders, typed settlement routes and adaptive
+resource retry helpers from `0.7.0-testnet.*` are not included. Keep the exact
+prerelease pin if your application uses those APIs. Stable limit-order fills
+retain legacy route encoding.
 
 ### Testing from GitHub before a release
 
@@ -658,9 +665,11 @@ receipt, maker minimum, exact execution fee, and maximum transaction fee.
 
 Preparation uses enforced authorization, preserves the maker's signed proof,
 and applies the configured CPU and resource fee headroom before checking that
-the maximum transaction fee is below the execution reward. A restore preamble
-aborts fill preparation without signing or submitting. Unsigned placement and
-cancellation builders also never sign or submit a restore transaction.
+the maximum transaction fee is below the execution reward. Successful simulation
+data may include automatic restoration entries and a restore preamble; fill
+preparation retains those entries in the invocation's transaction data without
+building or submitting a separate restore. Unsigned placement and cancellation
+builders also never sign or submit a restore transaction.
 
 The prepared receipt is a simulation preview. Execution returns the validated
 receipt from the confirmed transaction and fails if that receipt is absent or
@@ -672,7 +681,7 @@ valid-after ledger is in the future. The allowance horizon must satisfy the
 network's current allowance limit and cover the order. Annual orders are not
 supported by the agreed one-signature flow.
 
-## Split swaps (next release)
+## Split swaps
 
 An exact-input swap that the backend splits across routes runs as one call to
 the router's `swap_split`. `findPathSplit` returns one plan, split or not. The
@@ -746,7 +755,7 @@ Explicit `batch` remains supported for legacy external `[trust, swap_split]`
 calls; only that mode uses `getSwapSplitResult(retval, true)`.
 The helpers never sign, submit or restore storage. Python has the same helpers
 in snake_case, with shared fixtures in `testdata/split-*.json`.
-Install this prerelease with `npm install @aquariusdefi/sdk@0.7.0-alpha.1`.
+Install with `npm install @aquariusdefi/sdk@0.7.0`.
 
 ## What the SDK handles for you
 

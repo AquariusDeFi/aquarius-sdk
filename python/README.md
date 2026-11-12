@@ -1,6 +1,15 @@
 # aquarius-sdk
 
-Installation: `pip install aquarius-sdk==0.6.0`.
+Installation: `pip install aquarius-sdk==0.7.0`.
+
+Version `0.7.0` adds validated staged split swaps, provider split fees and native
+receive trust, preserves terminating simulation errors after handled trustline
+probes, and retains automatic restoration entries during limit-order fills.
+Split swaps require compatible router and collector contracts. The JavaScript
+wallet-facing manager is not part of the Python API. Typed settlement routes
+and adaptive resource retries from `0.7.0a*` are not included in this stable
+release; keep the exact prerelease pin when using those APIs. Stable fills use
+legacy route encoding.
 
 Public API HTTP failures raise `APIHTTPError`, a subclass of `AquariusError`,
 with `status_code` and `retry_after` in seconds (`None` when unavailable).
@@ -15,7 +24,7 @@ sent to telemetry. This Python-only metadata does not change validation or retri
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.6.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+**Status: 0.7.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
 
 ## Swap through a specific pool
 
@@ -286,9 +295,11 @@ receipt, maker minimum, exact execution fee, and maximum transaction fee.
 
 Preparation uses enforced authorization, preserves the maker's signed proof,
 and applies the configured CPU and resource fee headroom before checking that
-the maximum transaction fee is below the execution reward. A restore preamble
-aborts fill preparation without signing or submitting. Unsigned placement and
-cancellation builders also never sign or submit a restore transaction.
+the maximum transaction fee is below the execution reward. Successful simulation
+data may include automatic restoration entries and a restore preamble; fill
+preparation retains those entries in the invocation's transaction data without
+building or submitting a separate restore. Unsigned placement and cancellation
+builders also never sign or submit a restore transaction.
 
 The prepared receipt is a simulation preview. Execution returns the validated
 receipt from the confirmed transaction and fails if that receipt is absent or
@@ -300,7 +311,7 @@ valid-after ledger is in the future. The allowance horizon must satisfy the
 network's current allowance limit and cover the order. Annual orders are not
 supported by the agreed one-signature flow.
 
-## Split swaps (next release)
+## Split swaps
 
 An exact-input swap that the backend splits across routes runs as one call to
 the router's `swap_split`. `find_path_split` returns one plan, split or not. The
@@ -373,7 +384,7 @@ resource-fee headroom; then check the assembled envelope's resources. It does
 not simulate again, sign, submit or restore storage.
 Explicit `batch` retains legacy external `[trust, swap_split]` behavior; only
 that mode uses `get_swap_split_result(retval, with_trustline=True)`.
-Install this prerelease with `pip install aquarius-sdk==0.7.0a1`.
+Install with `pip install aquarius-sdk==0.7.0`.
 
 ## What the SDK handles for you
 

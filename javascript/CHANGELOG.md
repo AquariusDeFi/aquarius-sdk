@@ -1,9 +1,14 @@
 # JavaScript SDK changelog
 
-## 0.6.1
+## 0.7.0
 
 ### Added
 
+- Validated staged split-swap plans and explicit fixed-authorization builders
+  for `router.swap_split`, including shared stages, provider fees and recipients,
+  optional native receive trust, and network resource checks.
+- `assembleTransaction()` to apply configured CPU and resource-fee headroom to
+  an existing simulation without signing, submitting or simulating again.
 - A wallet-facing `aqua.limitOrders.prepare()` / `prepared.place()` flow over the
   existing limit-order protocol. Preparation resolves the execution reward,
   ledger window, account signing policy and receive trustline before user review.
@@ -37,6 +42,10 @@
 
 ### Fixed
 
+- Classify failed simulations from their terminating diagnostics or error log
+  entries, so a handled missing-trustline probe does not mask the actual error.
+- Preserve automatic restoration data in successful limit-order fill
+  simulations instead of rejecting them because a restore preamble is present.
 - Normalize byte arrays during browser signature verification so transaction
   signing does not fail with `Argument must be a Buffer`.
 - Accept RPC confirmation timestamps supplied as decimal strings, avoiding a
@@ -50,8 +59,15 @@
   and validation improvements. Existing programmatic APIs remain available.
 - Node.js >=22.12 and the `@stellar/stellar-sdk ^17.4.0` peer dependency are
   unchanged. Amounts use `bigint` base units.
-- Python remains on `0.6.0`; the wallet-facing manager is JavaScript-only.
-- The separate `0.7.0-testnet.*` features are not part of this stable patch.
+- Python also releases as `0.7.0`, with matching split-swap, simulation-error and
+  automatic-restoration behavior plus optional safe fill-failure diagnostics.
+  The wallet-facing manager is JavaScript-only.
+- Split swaps require a compatible router; provider splits and native trust
+  require compatible collector contracts. Ordinary swaps remain unchanged.
+- ICE Locker/delegation builders, typed settlement routes and adaptive resource
+  retry helpers from `0.7.0-testnet.*` / `0.7.0a*` are not included. Consumers of
+  those APIs must retain an exact prerelease pin. Stable fills keep legacy route
+  encoding.
 - After publication, applications using a Git URL or local tarball should pin
-  `@aquariusdefi/sdk@0.6.1` and regenerate their dependency lockfile. See the
+  `@aquariusdefi/sdk@0.7.0` and regenerate their dependency lockfile. See the
   [migration guide](README.md#upgrading-from-060-or-a-git-dependency).

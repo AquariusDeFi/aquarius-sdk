@@ -72,7 +72,7 @@ from .swap_resources import (
     assert_swap_authorization,
 )
 
-__version__ = "0.7.0a1"
+__version__ = "0.7.0"
 
 __all__ = [
     "sell_amount_to_raw",
