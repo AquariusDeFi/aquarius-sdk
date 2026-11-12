@@ -1344,9 +1344,6 @@ export class AquariusClient {
     const fixedOperation = xdr.Operation.fromXDR(operationXdr);
     const transaction = await this.engine.buildTransaction(filler, fixedOperation);
     const simulation = await this.server.simulateTransaction(transaction, undefined, "enforce");
-    if (rpc.Api.isSimulationRestore(simulation)) {
-      throw new AquariusError("limit-order fill requires footprint restoration");
-    }
     if (rpc.Api.isSimulationError(simulation)) {
       throw new AquariusError(
         `limit-order fill simulation failed: ${simulation.error}`,

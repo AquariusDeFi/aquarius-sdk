@@ -6,6 +6,13 @@ Public API HTTP failures raise `APIHTTPError`, a subclass of `AquariusError`,
 with `status_code` and `retry_after` in seconds (`None` when unavailable).
 Response bodies, including draft-error details, are omitted; callers control retries.
 
+Limit-order `prepare_fill()` failures expose an optional `AquariusError.diagnostics`
+dictionary with stable `stage` / `reason` values, and numeric `simulation_ledger`,
+`contract_code`, `maximum_fee` or `reward_xlm` when available. Unknown failures
+may have no diagnostics. These fields omit RPC text, authorization and XDR;
+the exception message/cause can still contain sensitive data and must not be
+sent to telemetry. This Python-only metadata does not change validation or retries.
+
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
 **Status: 0.6.x — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
@@ -479,3 +486,8 @@ Questions and integration help: [Discord](https://discord.gg/sgzFscHp4C).
 ## Maintenance
 
 [misty-forest](https://github.com/misty-forest) maintains the Aquarius SDK, including security review, vulnerability remediation, and ongoing development.
+
+Limit-order fills use the automatic restoration entries supplied in simulation
+transaction data (Protocol 23+). Preparation preserves that data and applies the
+normal receipt, authorization and fee checks; it does not submit a separate
+restore transaction.

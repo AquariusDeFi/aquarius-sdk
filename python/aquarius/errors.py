@@ -7,9 +7,12 @@ import re
 class AquariusError(Exception):
     """Base class for every error this SDK raises."""
 
-    def __init__(self, message: str, tx_hash: str | None = None):
+    def __init__(self, message: str, tx_hash: str | None = None, *,
+                 diagnostics: dict | None = None):
         super().__init__(message)
         self.tx_hash = tx_hash
+        # Optional machine-readable context; never include RPC text, proofs or XDR.
+        self.diagnostics = dict(diagnostics or {})
 
 
 class APIHTTPError(AquariusError):
