@@ -56,6 +56,19 @@ class ApiClient:
             raise _http_error("Find-path request failed", response)
         return response.json()
 
+    def find_path_split(self, request: dict) -> dict:
+        """One plan for the router's `swap_split`, split or not.
+
+        `request` holds `token_in_address`, `token_out_address`, `amount` (an
+        integer string of base units) and optional `slippage` (a decimal fraction
+        that only sets `amount_out_min`). Validate the response with
+        `normalize_swap_split_plan` before building a transaction from it.
+        """
+        response = requests.post(f"{self.base_url}/find-path-split/", json=request, timeout=30)
+        if not response.ok:
+            raise _http_error("Find-path-split request failed", response)
+        return response.json()
+
     def pools_by_addresses(self, addresses: list[str]) -> list[dict]:
         """Indexed metadata for the given pool addresses (type, fee, token labels)."""
         response = requests.get(
