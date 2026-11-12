@@ -425,6 +425,11 @@ export class SubmitEngine {
     return retval;
   }
 
+  /** @internal Resubmit an already reviewed signed transaction without changing its hash. */
+  submitSignedTransaction(tx: Transaction): Promise<ConfirmedTx> {
+    return this.submit(tx);
+  }
+
   /**
    * Sign, submit with congestion retries, and wait for confirmation.
    *

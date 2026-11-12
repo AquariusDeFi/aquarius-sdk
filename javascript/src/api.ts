@@ -139,9 +139,32 @@ export class ApiClient {
       } catch {
         // The status remains sufficient when the server returns no JSON body.
       }
-      throw new AquariusError(
-        `Limit-order draft request failed: HTTP ${response.status}${detail}`,
-      );
+      throw new AquariusError(`Limit-order draft request failed: HTTP ${response.status}${detail}`);
+    }
+    return (await response.json()) as Record<string, unknown>;
+  }
+
+  async authorizeLimitOrder(
+    baseUrl: string,
+    orderId: string,
+    authorizationXdr: string,
+  ): Promise<Record<string, unknown>> {
+    if (!/^[0-9a-f]{64}$/i.test(orderId)) throw new AquariusError("Invalid limit-order ID");
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/orders/${orderId}/authorize/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ authorization_xdr: authorizationXdr }),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const body = (await response.json()) as { detail?: string };
+        detail = body.detail ? `: ${body.detail}` : "";
+      } catch {
+        /* Status is sufficient for non-JSON errors. */
+      }
+      throw new AquariusError(`Limit-order authorization failed: HTTP ${response.status}${detail}`);
     }
     return (await response.json()) as Record<string, unknown>;
   }
@@ -151,30 +174,21 @@ export class ApiClient {
     params: Record<string, string>,
   ): Promise<Record<string, unknown>> {
     const query = new URLSearchParams(params);
-    const response = await fetch(
-      `${baseUrl.replace(/\/$/, "")}/orders/?${query}`,
-      { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
-    );
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/orders/?${query}`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!response.ok) {
-      throw new AquariusError(
-        `Limit-order list request failed: HTTP ${response.status}`,
-      );
+      throw new AquariusError(`Limit-order list request failed: HTTP ${response.status}`);
     }
     return (await response.json()) as Record<string, unknown>;
   }
 
-  async getLimitOrder(
-    baseUrl: string,
-    orderId: string,
-  ): Promise<Record<string, unknown>> {
-    const response = await fetch(
-      `${baseUrl.replace(/\/$/, "")}/orders/${orderId}/`,
-      { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
-    );
+  async getLimitOrder(baseUrl: string, orderId: string): Promise<Record<string, unknown>> {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/orders/${orderId}/`, {
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!response.ok) {
-      throw new AquariusError(
-        `Limit-order detail request failed: HTTP ${response.status}`,
-      );
+      throw new AquariusError(`Limit-order detail request failed: HTTP ${response.status}`);
     }
     return (await response.json()) as Record<string, unknown>;
   }

@@ -1,12 +1,22 @@
 # Aquarius SDK
 
-Official SDKs for building on [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar, in Python and TypeScript.
+Official SDKs for building on [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar, in Python and TypeScript.
 
 **Status: 0.6.x.** Swaps (quote → execute in both modes) and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are complete in both languages, each verified end to end with real testnet transactions. Concentrated liquidity position management (range deposits, withdrawals, fee claims, position reads) is available as a **beta** surface: the concentrated contracts are under an ongoing external audit, and router deposits into concentrated pools remain refused — ranges are managed through the pool contract directly. Provider-fee collectors — routing swaps through your own fee-taking contract, deploying one, and claiming what it accumulates — are fully supported.
 
 Prerelease `0.7.0-alpha.1` (JavaScript) / `0.7.0a1` (Python) adds validated staged split swaps, provider-fee split calls, contract-native receive trustline authorization, and fixed-operation assembly with SDK resource headroom. Install the explicit prerelease version; stable releases remain unchanged. Split swaps require a router implementing `swap_split`; contract-native trust requires the updated router and, for provider fees, a new collector with `swap_split`/`swap_split_to` and automatic trust support. Publishing this SDK does not upgrade deployed contracts.
 
 Version `0.6.0` adds canonical limit-order registry reads, on-chain placement/cancellation, unsigned fill preparation, and single-signature receive trustlines for verified classic assets. Trust is automatic for eligible receive tokens; the public opt-in flag has been removed. Missing-line detached fills require a settlement running the automatic-trust contract. Python also exposes typed HTTP status and Retry-After metadata for caller-controlled rate-limit handling. See the language READMEs for trusted deployment configuration and the network-capped lifetime. This release has offline fixture coverage; it does not certify a production limit-order deployment.
+
+JavaScript `0.6.1` adds a wallet-facing API on top of those limit-order primitives:
+`aqua.limitOrders.prepare()` resolves the ledger window, execution reward, signing
+capabilities and receive trustline; `prepared.place()` signs and places the
+reviewed order. The same manager provides open orders, cursor-paginated history
+and bound order records with cancellation methods. It also enforces the
+six-month lifetime and fixes browser signature verification and RPC confirmation
+timestamp handling. See the [JavaScript guide](javascript/README.md#limit-orders-javascript)
+and [0.6.1 release notes](javascript/CHANGELOG.md#061). Python remains at `0.6.0`;
+the new wallet-facing manager is JavaScript-only.
 
 ## Layout
 
@@ -87,12 +97,12 @@ simulations, reads and writes do not poll.
 3. **Escape hatches at every layer.** `Quote.buildTransaction()` returns unsigned XDR; `client.contract.call()` invokes the router raw; `client.api` is the typed REST client. The SDK wraps, it never traps.
 4. **Protocol details are the SDK's problem.** `swaps_chain` encoding, token-vector sorting, pool hashes, transaction meta v3/v4, u128 conversion — none of these exist in the public surface.
 5. **Typed errors that encode what we know.** Guard failures raise `SlippageError` ("re-quote and retry"), kill switches raise `PausedError` ("not your bug"), missing routes raise `NoRouteError`.
-6. **Language parity is a feature.** Same names, same semantics in both packages, enforced by shared golden fixtures in `testdata/`. Feature releases move in lockstep minor versions (`py-v0.4.x` and `js-v0.4.x` have the same surface).
+6. **Language parity is a feature.** Shared protocol APIs use matching names and semantics in both packages, enforced by golden fixtures in `testdata/`. Protocol feature releases move in lockstep minor versions; language-specific integration helpers are documented separately.
 7. **Authorization is fixed before submission.** Every contract write supplies client-built authorization and simulates in enforcement mode. Simulation supplies resources and fees, never the authorization to sign. Raw calls default to root-only source-account authorization; calls needing nested authorization must supply their complete tree (see the language READMEs). Read and quote simulations may still record authorization, which is never reused for submission.
 
 ## Scope of v1
 
-Swaps (both modes), provider-fee collectors and separate output recipients, pool discovery, deposit/withdraw/claim, positions overview, trustline and friendbot helpers. Explicitly out: wallet and key management, price oracles, governance/ICE, SDEX rewards, historical data.
+Swaps (both modes), limit-order placement, cancellation and registry history, provider-fee collectors and separate output recipients, pool discovery, deposit/withdraw/claim, positions overview, trustline and friendbot helpers. Explicitly out: wallet and key management, price oracles, governance/ICE, SDEX rewards, general historical analytics.
 
 ## Releases
 
@@ -104,6 +114,15 @@ There are two channels:
 - **Testnet**: `js-vX.Y.Z-testnet.N` / `py-vX.Y.ZaN`, tagged on the `testnet` branch. Use it to try a new feature on Stellar testnet before the stable `X.Y.Z`. npm publishes it under the `testnet` dist-tag, and pip installs a pre-release only when it is pinned, so it never reaches someone installing the stable version. Pin the exact version: `npm install @aquariusdefi/sdk@X.Y.Z-testnet.N`, `pip install aquarius-sdk==X.Y.ZaN`.
 
 A feature branch does not change the package version. It is merged into `testnet`, where the testnet version is set and tagged, and it reaches `master` through its own pull request. Several features can be on testnet at once without competing prerelease numbers.
+
+Release preparation sets the stable version explicitly. For JavaScript `0.6.1`,
+keep the root Git-install manifest, `javascript/package.json` and the JavaScript
+lockfile in sync. After the release-preparation PR is merged and its checks pass,
+tag the resulting `master` commit as `js-v0.6.1`. The Release JavaScript workflow
+checks the tag against the package version and publishes `javascript/` to npm.
+This JavaScript-only patch does not require a Python release tag. Consumers using
+a temporary Git dependency should switch to `@aquariusdefi/sdk@0.6.1` after
+publication and regenerate their lockfile.
 
 ## Development
 

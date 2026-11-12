@@ -7,10 +7,11 @@ import { UserRejectedError, isUserRejection } from "./errors.js";
  * A stellar-sdk Keypair satisfies this structurally; wallet adapters provide
  * the XDR-signing form. Raw secret strings are never accepted.
  */
-export type Signer = { publicKey(): string } & (
-  | { secret(): string }
-  | { sign(txXdr: string): Promise<string> | string }
-);
+export type Signer = {
+  publicKey(): string;
+  /** Optional detached Soroban authorization support. Omit for transaction-only wallets. */
+  signAuthEntry?(entryXdr: string): Promise<string> | string;
+} & ({ secret(): string } | { sign(txXdr: string): Promise<string> | string });
 
 /** @internal */
 export async function signTransaction(

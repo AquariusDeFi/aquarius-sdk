@@ -1,9 +1,24 @@
 {
   "name": "@aquariusdefi/sdk",
-  "version": "0.7.0-alpha.1",
-  "description": "TypeScript SDK for the Aquarius protocol on Stellar",
+  "version": "0.6.1",
+  "private": true,
+  "description": "Git installation entry point for the Aquarius JavaScript SDK",
   "type": "module",
+  "main": "javascript/dist/index.js",
+  "types": "javascript/dist/index.d.ts",
+  "scripts": {
+    "prepare": "tsc --project javascript/tsconfig.json"
+  },
+  "files": [
+    "javascript/dist",
+    "javascript/README.md",
+    "javascript/CHANGELOG.md"
+  ],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AquariusDeFi/aquarius-sdk.git"
+  },
   "engines": {
     "node": ">=22.12.0"
   },
@@ -13,14 +28,9 @@
   "dependencies": {
     "buffer": "^6.0.3"
   },
-  "private": true,
-  "main": "javascript/dist/index.js",
-  "types": "javascript/dist/index.d.ts",
-  "files": [
-    "javascript/dist",
-    "javascript/README.md"
-  ],
-  "scripts": {
-    "prepare": "npm --prefix javascript ci --include=dev && npm --prefix javascript run build"
+  "devDependencies": {
+    "@stellar/stellar-sdk": "^17.4.0",
+    "@types/node": "^26.1.1",
+    "typescript": "^5.5.0"
   }
 }
