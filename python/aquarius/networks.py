@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from stellar_sdk import Network
+from stellar_sdk import Asset, Network
+
+from .ice import IceContracts
 
 
 @dataclass(frozen=True)
@@ -20,6 +22,7 @@ class NetworkConfig:
     # may leave it None — pass factory= explicitly to deploy_fee_collector then.
     collector_factory: str | None = None
     limit_orders_api_url: str | None = None
+    ice_contracts: IceContracts | None = None
 
 
 NETWORKS: dict[str, NetworkConfig] = {
@@ -44,5 +47,12 @@ NETWORKS: dict[str, NetworkConfig] = {
         read_source="GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
         collector_factory="CCXU6S2PFFFESV65RHUEVJX6TSSN6BYKOCJ3S3LM5M3IXXIWAL5AV4CO",
         limit_orders_api_url="https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
+        ice_contracts=IceContracts(
+            locker="CAU5JTZ5D3TUK53WOTT5UO75U6IYAFXSGCEWJJYVIAEJJ4N5AVM72DZV",
+            aqua_token=Asset("AQUA", "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER").contract_id(Network.TESTNET_NETWORK_PASSPHRASE),
+            ice="CASSMR4PXHFA6JLEUCULKLOY4BXGPMTGEYSLLDGF6EQCZOGVNRLF5YTY",
+            upvote="CAACTYVX4DRXV7HDZ4XGIVMBUQV5VVAWEFNL5YBH7QRUAVGIG4SDOB3K",
+            govern="CAV4FLWRQ4I4Q2LBY4QIPL6HNJFFNLLQNBYSKA5FAILZYG4K3FDFNN7D",
+        ),
     ),
 }

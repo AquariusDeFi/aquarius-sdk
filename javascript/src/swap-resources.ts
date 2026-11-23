@@ -1,3 +1,4 @@
+import { ResourceLimitError } from "./errors.js";
 import { rpc, Transaction, xdr } from "@stellar/stellar-sdk";
 
 export type SwapResourceLimits = {
@@ -181,7 +182,7 @@ export const assertSwapResources = (
   }
   for (const [name, used, max] of checks) {
     if (BigInt(used) > BigInt(max)) {
-      throw new Error(`Swap exceeds the network limit for ${name}.`);
+      throw new ResourceLimitError(`Swap exceeds the network limit for ${name}.`, undefined, name, String(used), String(max));
     }
   }
 };

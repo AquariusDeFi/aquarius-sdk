@@ -11,6 +11,8 @@ from typing import TypedDict
 
 from stellar_sdk import MuxedAccount, SorobanServer, TransactionEnvelope, xdr
 
+from .errors import ResourceLimitError
+
 
 @dataclass
 class SwapResourceLimits:
@@ -162,7 +164,8 @@ def assert_swap_resources(
         checks.append(("footprint entries", len(keys), limits.footprint_entries))
     for name, used, maximum in checks:
         if used > maximum:
-            raise ValueError(f"Swap exceeds the network limit for {name}.")
+            raise ResourceLimitError(f"Swap exceeds the network limit for {name}.",
+                                     resource=name, used=str(used), limit=str(maximum))
 
 
 def assert_swap_authorization(

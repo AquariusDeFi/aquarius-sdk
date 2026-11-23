@@ -64,3 +64,13 @@ def test_shared_contract_trust_operation(name):
         trustline=trustline(FIXTURE["trustline"]),
     )
     assert op.to_xdr_object().to_xdr() == entry["contractTrustOperationXdr"]
+
+
+@pytest.mark.parametrize("recipient", [None, FIXTURE["router"]])
+def test_collector_builds_the_same_split_operation(recipient):
+    collector = AquariusClient(network="testnet").fee_collector(FIXTURE["batch"])
+    op = collector.build_swap_split_operation(**options(), fee_fraction=100, recipient=recipient)
+    expected = build_swap_split_operation(
+        **options(), provider_fee=collector.fee_config(100, recipient=recipient)
+    )
+    assert op.to_xdr_object() == expected.to_xdr_object()

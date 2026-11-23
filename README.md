@@ -22,11 +22,11 @@ Both packages preserve the actual simulation error after a handled trustline
 probe and retain automatic restoration data during limit-order fill preparation.
 Python also exposes optional safe fill-failure diagnostics.
 
-Stable `0.7.0` includes the features described above. It does not include the
-ICE Locker/delegation builders, typed settlement routes, or adaptive resource
-retry helpers from `0.7.0-testnet.*` / `0.7.0a*`. Consumers using those APIs must
-keep their exact prerelease pin. Stable limit-order fills use the existing
-legacy route encoding; a typed-route settlement requires a compatible client.
+The development version adds ICE lock and delegation builders, contract balance
+reads, typed settlement routes, and adaptive split-swap preparation in both
+languages. The default settlement route remains legacy. Select typed routes for
+a settlement that implements them. See the [JavaScript API](javascript/README.md)
+and [Python API](python/README.md) for usage and network configuration.
 
 ## Layout
 

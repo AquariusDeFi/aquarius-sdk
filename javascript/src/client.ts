@@ -4,10 +4,19 @@ import { Address, Asset as StellarAsset, Keypair, Operation, Transaction, hash, 
 
 import { ApiClient, FindPathResponse, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
 import { Asset } from "./assets.js";
+import type { SwapSplitPlan } from "./split-swap.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { BatchCall, batchArgs, batchOperation, batchResults, isBudgetExceeded } from "./batch.js";
 import { snapTick, tickFromPrice, tickSpacingForFee } from "./concentrated.js";
-import { AquariusError, SlippageError } from "./errors.js";
+import {
+  DelegateParams,
+  IceProxy,
+  UndelegateParams,
+  delegateCalls,
+  delegationError,
+  undelegateCalls,
+} from "./delegation.js";
+import { AquariusError, SlippageError, classifyContractError } from "./errors.js";
 import { CollectorContext, FeeCollector } from "./collector.js";
 import {
   LimitOrderConfig,
@@ -30,6 +39,7 @@ import {
 import { assertLimitOrderSignatures, assertLimitOrderTransaction } from "./limit-order-transaction.js";
 import type { LimitOrderTransactionResult } from "./limit-order-prepared.js";
 import { LimitOrderManager, type LimitOrderAccount } from "./limit-order-manager.js";
+import { CreateLockParams, createLockError, createLockPlan, positionIdArg, withdrawCalls } from "./locker.js";
 import { NETWORKS, NetworkConfig } from "./networks.js";
 import {
   DepositAmounts,
@@ -56,7 +66,12 @@ export interface AquariusConfig {
    * for instance, is the network's preset with another router (and usually
    * another `apiUrl`). Unspecified addresses keep the preset's values.
    */
-  contracts?: Partial<Pick<NetworkConfig, "router" | "batch" | "collectorFactory">>;
+  contracts?: Partial<
+    Pick<
+      NetworkConfig,
+      "router" | "batch" | "collectorFactory" | "locker" | "iceProxy" | "upvoteIceProxy" | "governIceProxy"
+    >
+  >;
   /** Inclusion fee bid in stroops. Default 100000 (0.01 XLM). */
   baseFee?: string;
   /**
@@ -300,6 +315,10 @@ export class AquariusClient {
       router: config.contracts?.router ?? preset.router,
       batch: config.contracts?.batch ?? preset.batch,
       collectorFactory: config.contracts?.collectorFactory ?? preset.collectorFactory,
+      locker: config.contracts?.locker ?? preset.locker,
+      iceProxy: config.contracts?.iceProxy ?? preset.iceProxy,
+      upvoteIceProxy: config.contracts?.upvoteIceProxy ?? preset.upvoteIceProxy,
+      governIceProxy: config.contracts?.governIceProxy ?? preset.governIceProxy,
     };
     this.api = new ApiClient(this.network.apiUrl);
     this.server = new rpc.Server(this.network.rpcUrl);
@@ -1026,6 +1045,152 @@ export class AquariusClient {
     },
   };
 
+  // -- ICE Locker and delegation ---------------------------------------------------------
+
+  /**
+   * ICE Locker writes, prepared but not signed: each returns the simulated,
+   * unsigned envelope XDR. The signer's account is the owner and the source.
+   */
+  readonly locker = {
+    /**
+     * Lock `amount` AQUA until `unlockTime`. Authorizes `create_lock` and,
+     * beneath it, the AQUA transfer from the owner to the Locker. A missing
+     * AQUA trustline or a balance below `amount` fails with a message saying so.
+     */
+    buildCreateLock: (params: CreateLockParams): Promise<string> =>
+      this.buildIceLock("create_lock", params),
+
+    buildActiveLock: (amount: bigint, noticeSeconds: number | bigint): Promise<string> =>
+      this.buildIceLock("create_shelf", { amount, unlockTime: noticeSeconds }),
+
+    buildStartUnlock: (positionId: number): Promise<string> =>
+      this.buildUnlockChange("commit_shelf", positionId),
+
+    buildStopUnlock: (positionId: number): Promise<string> =>
+      this.buildUnlockChange("rearm_shelf", positionId),
+
+    /**
+     * Withdraw unlocked positions. One position calls the Locker directly;
+     * several are withdrawn in one transaction through the batch contract.
+     */
+    buildWithdraw: async (positionIds: readonly number[]): Promise<string> => {
+      const locker = this.lockerContract();
+      return this.buildCalls(withdrawCalls(locker, this.requireSigner().publicKey(), positionIds));
+    },
+  };
+
+  /**
+   * ICE delegation writes on the upvoteICE and governICE proxies, prepared
+   * but not signed: each returns the simulated, unsigned envelope XDR. The
+   * signer's account is the owner and the source. Changing both proxies is
+   * one transaction through the batch contract. The proxy enforces the rules
+   * that depend on its state, such as the number of delegates and the 100%
+   * total; its errors state what they mean.
+   */
+  readonly delegation = {
+    /** Current (delegate address, fraction, mature credit) tuples from the proxy. */
+    list: async (owner: string, proxy: IceProxy): Promise<[string, number, bigint][]> => {
+      const contract = proxy === "upvote" ? this.network.upvoteIceProxy :
+        proxy === "govern" ? this.network.governIceProxy : undefined;
+      if (!contract) throw new AquariusError("No configured delegation proxy for this read");
+      const result = await this.readContract(contract, "delegations", [new Address(owner).toScVal()]);
+      return scValToNative(result) as [string, number, bigint][];
+    },
+
+    /** Set the share of the owner's voting power delegated to `delegate`, per proxy. */
+    buildDelegate: async (params: DelegateParams): Promise<string> => {
+      const contracts = this.delegationProxies();
+      const calls = delegateCalls(contracts, this.requireSigner().publicKey(), params);
+      try {
+        return await this.buildCalls(calls);
+      } catch (error) {
+        throw delegationError(error);
+      }
+    },
+
+    /** Remove the delegation to `delegate` on the given proxies. */
+    buildUndelegate: async (params: UndelegateParams): Promise<string> => {
+      const contracts = this.delegationProxies();
+      const calls = undelegateCalls(contracts, this.requireSigner().publicKey(), params);
+      try {
+        return await this.buildCalls(calls);
+      } catch (error) {
+        throw delegationError(error);
+      }
+    },
+  };
+
+  /** Read contract balances in raw token units, without a signer. */
+  readonly ice = {
+    balance: async (
+      owner: string, proxy: "ice" | IceProxy, part: "total" | "retained" | "incoming" = "total",
+    ): Promise<bigint> => {
+      const contracts = {
+        ice: this.network.iceProxy, upvote: this.network.upvoteIceProxy, govern: this.network.governIceProxy,
+      };
+      const contract = contracts[proxy];
+      if (!contract) throw new AquariusError(`Missing ICE proxy for ${proxy}`);
+      const method = { total: "balance", retained: "get_retained_balance", incoming: "get_incoming_balance" }[part];
+      if (!method) throw new AquariusError("Unknown ICE balance component");
+      const result = await this.readContract(contract, method, [new Address(owner).toScVal()]);
+      if (result.type !== "scvI128") throw new AquariusError("Invalid ICE balance response");
+      return scValToNative(result) as bigint;
+    },
+  };
+
+  private async buildIceLock(method: "create_lock" | "create_shelf", params: CreateLockParams): Promise<string> {
+    const locker = this.lockerContract();
+    const owner = this.requireSigner().publicKey();
+    const { code, issuer } = this.network.rewardToken;
+    const token = Asset.classic(code, issuer).contractId(this.network.passphrase);
+    const { args, auth } = createLockPlan(locker, token, owner, params, method);
+    try {
+      return await this.buildContract(locker, method, args, [sourceAccountEntry(auth)]);
+    } catch (error) {
+      throw createLockError(error);
+    }
+  }
+
+  private async buildUnlockChange(method: "commit_shelf" | "rearm_shelf", positionId: number): Promise<string> {
+    const args = [new Address(this.requireSigner().publicKey()).toScVal(), positionIdArg(positionId)];
+    return this.buildCalls([{ contractId: this.lockerContract(), fn: method, args }]);
+  }
+
+  private lockerContract(): string {
+    if (!this.network.locker) {
+      throw new AquariusError("No ICE Locker known for this network — pass contracts.locker");
+    }
+    return this.network.locker;
+  }
+
+  private delegationProxies(): Record<IceProxy, string> {
+    const { upvoteIceProxy, governIceProxy } = this.network;
+    if (!upvoteIceProxy || !governIceProxy) {
+      throw new AquariusError(
+        "No ICE delegation proxies known for this network — pass contracts.upvoteIceProxy and contracts.governIceProxy",
+      );
+    }
+    return { upvote: upvoteIceProxy, govern: governIceProxy };
+  }
+
+  /**
+   * One call authorized on its own, directly; several through the batch
+   * contract, each call authorized beneath `batch`.
+   */
+  private buildCalls(calls: BatchCall[]): Promise<string> {
+    if (calls.length === 1) {
+      const [{ contractId, fn, args }] = calls;
+      return this.buildContract(contractId, fn, args, [
+        sourceAccountEntry(authorizedInvocation(contractId, fn, args)),
+      ]);
+    }
+    return this.buildBatch(
+      calls,
+      calls.map(call => authorizedInvocation(call.contractId, call.fn, call.args)),
+      false,
+    );
+  }
+
   // -- batch reads ------------------------------------------------------------------------
 
   readonly batch = {
@@ -1319,7 +1484,7 @@ export class AquariusClient {
 
   private async prepareLimitOrderFill(
     record: LimitOrderRecord,
-    swapChainXdr: string,
+    swapChainXdr: string | SwapSplitPlan,
     rewardTo?: string,
   ): Promise<PreparedLimitOrderFill> {
     this.validateLimitOrderContext(record);
@@ -1337,7 +1502,7 @@ export class AquariusClient {
     const operation = Operation.invokeContractFunction({
       contract: record.settlementAddress,
       function: "fill",
-      args: fillParameters(record, recipient, swapChainXdr),
+      args: fillParameters(record, recipient, swapChainXdr, this.requireLimitOrderConfig().routeFormat),
       auth: record.authorization ? [record.authorization] : [],
     });
     const operationXdr = operation.toXDR();
@@ -1345,7 +1510,7 @@ export class AquariusClient {
     const transaction = await this.engine.buildTransaction(filler, fixedOperation);
     const simulation = await this.server.simulateTransaction(transaction, undefined, "enforce");
     if (rpc.Api.isSimulationError(simulation)) {
-      throw new AquariusError(
+      throw classifyContractError(simulation.error, undefined, simulation.events) ?? new AquariusError(
         `limit-order fill simulation failed: ${simulation.error}`,
       );
     }
@@ -1483,7 +1648,7 @@ export class AquariusClient {
     return {
       prepareLimitOrderFill: (
         record: LimitOrderRecord,
-        swapChainXdr: string,
+        swapChainXdr: string | SwapSplitPlan,
         rewardTo?: string,
       ) => this.prepareLimitOrderFill(record, swapChainXdr, rewardTo),
       buildLimitOrderCancel: (record: LimitOrderRecord) =>

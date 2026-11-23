@@ -13,6 +13,7 @@ import { Address, nativeToScVal, scValToNative, xdr } from "@stellar/stellar-sdk
 import { Asset } from "./assets.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import type { ProviderFeeConfig } from "./client.js";
+import { buildSwapSplitOperation, type BuildSwapSplitOptions } from "./split-swap.js";
 import { AquariusError } from "./errors.js";
 import { ConfirmedTx } from "./submit.js";
 
@@ -101,6 +102,21 @@ export class FeeCollector {
       feeDenominator: options?.denominator ?? 10_000,
       recipient: options?.recipient,
     };
+  }
+
+  /** Build a smart-routed exact-input swap. The minimum applies after the provider fee. */
+  buildSwapSplitOperation(
+    options: Omit<BuildSwapSplitOptions, "providerFee"> & {
+      feeFraction: number;
+      denominator?: number;
+      recipient?: string;
+    },
+  ): xdr.Operation {
+    const { feeFraction, denominator, recipient, ...swap } = options;
+    return buildSwapSplitOperation({
+      ...swap,
+      providerFee: this.feeConfig(feeFraction, { denominator, recipient }),
+    });
   }
 
   // -- writes (the signer must be the collector's operator) ---------------------
