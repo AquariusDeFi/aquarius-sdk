@@ -1,12 +1,12 @@
 # aquarius-sdk
 
-Installation: `pip install aquarius-sdk==0.7.0`.
+Install after the 0.8.0 release: `pip install aquarius-sdk==0.8.0`.
 
 Version `0.7.0` adds validated staged split swaps, provider split fees and native
 receive trust, preserves terminating simulation errors after handled trustline
 probes, and retains automatic restoration entries during limit-order fills.
 Split swaps require compatible router and collector contracts. The JavaScript
-wallet-facing manager is not part of the Python API. The development version adds typed settlement routes,
+wallet-facing manager is not part of the Python API. Version `0.8.0` adds typed settlement routes,
 adaptive preparation, collector-bound split swaps and ICE contract calls. Select
 `route_format="typed"` only for a compatible settlement. Legacy is the default.
 
@@ -23,7 +23,7 @@ sent to telemetry. This Python-only metadata does not change validation or retri
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.7.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+**Status: 0.8.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
 
 ## Swap through a specific pool
 

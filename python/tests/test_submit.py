@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from stellar_sdk import Account, Keypair, Network, SorobanDataBuilder, SorobanServer, scval, xdr
+from stellar_sdk.exceptions import ConnectionError as RpcConnectionError
 from stellar_sdk.soroban_rpc import AuthMode, GetTransactionStatus, SendTransactionStatus
 from stellar_sdk.xdr import (
     Int64,
@@ -73,6 +74,8 @@ class FakeServer:
         latest = self.latest_ledgers[0]
         if len(self.latest_ledgers) > 1:
             self.latest_ledgers.pop(0)
+        if isinstance(latest, Exception):
+            raise latest
         return SimpleNamespace(latest_ledger=latest)
 
     def simulate_transaction(self, tx, *, auth_mode=None):
@@ -446,6 +449,21 @@ def test_wait_for_next_ledger_waits_past_an_explicit_ledger(clock):
     server.calls.clear()
     assert client.wait_for_next_ledger(CONFIRMED_LEDGER + 1) == CONFIRMED_LEDGER + 2
     assert server.calls == ["get_health"] * 3
+
+
+def test_wait_for_next_ledger_recovers_before_and_after_the_first_ledger(clock):
+    lost = RpcConnectionError("connection reset")
+    server = FakeServer([], [lost, CONFIRMED_LEDGER, lost, CONFIRMED_LEDGER + 1])
+    assert client_on(server).wait_for_next_ledger() == CONFIRMED_LEDGER + 1
+    assert server.calls == ["get_health"] * 4
+
+
+def test_wait_for_next_ledger_bounds_transport_retries(clock):
+    lost = RpcConnectionError("connection reset")
+    with pytest.raises(AquariusError) as exc:
+        client_on(FakeServer([], [lost])).wait_for_next_ledger(timeout=2)
+    assert exc.value.__cause__ is lost
+    assert clock.sleeps == [1, 1]
 
 
 def test_wait_for_next_ledger_raises_when_the_ledger_does_not_advance_in_time(clock):

@@ -14,6 +14,7 @@ from stellar_sdk import (
     TransactionBuilder,
     TransactionEnvelope,
 )
+from stellar_sdk.exceptions import BaseHorizonError, ConnectionError as RpcConnectionError
 from stellar_sdk.soroban_rpc import AuthMode, GetTransactionStatus, SendTransactionStatus
 from stellar_sdk.xdr import (
     ConfigSettingID,
@@ -281,18 +282,30 @@ class SubmitEngine:
             raise AquariusError("timeout must be a positive finite number")
 
         deadline = time.monotonic() + timeout
-        latest = self.server.get_health().latest_ledger
-        if ledger is None:
-            ledger = self._last_tx_ledger if self._last_tx_ledger is not None else latest
-        while latest <= ledger:
+        target = self._last_tx_ledger if ledger is None else ledger
+        last_error = None
+        while True:
+            try:
+                latest = self.server.get_health().latest_ledger
+            except RpcConnectionError as error:
+                last_error = error
+            except BaseHorizonError as error:
+                if error.status not in (408, 429) and not 500 <= error.status < 600:
+                    raise
+                last_error = error
+            else:
+                last_error = None
+                if target is None:
+                    target = latest
+                if latest > target:
+                    return latest
+
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise AquariusError(
-                    f"The RPC did not advance past ledger {ledger} within {timeout:g} s"
-                )
+                message = ("The RPC did not return a baseline ledger" if target is None
+                           else f"The RPC did not advance past ledger {target}")
+                raise AquariusError(f"{message} within {timeout:g} s") from last_error
             time.sleep(min(_NEXT_LEDGER_POLL_INTERVAL_S, remaining))
-            latest = self.server.get_health().latest_ledger
-        return latest
 
     def prepare(
         self,

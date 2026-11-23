@@ -1,10 +1,11 @@
 # JavaScript SDK changelog
 
-## Unreleased
+## 0.8.0
 
 - Prepare typed chained and split limit-order fills and retry unsigned swap preparation with a smaller resource budget.
 - Build provider-fee split swaps directly from a fee collector, including payouts to a separate recipient.
 - Build ICE locks, withdrawals and delegations, and read proxy balances and delegated shares.
+- Retry transient RPC health failures while waiting for the next ledger.
 
 ## 0.7.0
 
