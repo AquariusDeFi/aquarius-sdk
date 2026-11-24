@@ -787,7 +787,9 @@ Compute the net minimum with the same collector fee configuration. Omit
 
 ## ICE Locker
 
-For browser wallet flows, the Locker is deployed on testnet
+Use the Mainnet voting proxies as the source of active delegations once Aquarius announces activation.
+
+The Mainnet and Testnet presets include the Locker
 (`aqua.network.locker`; pass `contracts.locker` for another deployment). Both
 builders return the simulated, unsigned envelope XDR; the signer's account is
 the owner and the transaction source.
@@ -812,7 +814,7 @@ at most three years ahead) and rejects other times during simulation.
 ## ICE delegation
 
 An owner delegates a share of their
-upvoteICE and governICE voting power through two proxies, deployed on testnet
+upvoteICE and governICE voting power through two proxies in the Mainnet and Testnet presets
 (`aqua.network.upvoteIceProxy`, `aqua.network.governIceProxy`; pass `contracts`
 overrides for another deployment). A fraction is in parts of
 `DELEGATION_FRACTION_DENOMINATOR` (`10_000_000` = 100%). Both builders return

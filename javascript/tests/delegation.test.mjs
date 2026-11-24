@@ -108,23 +108,12 @@ function parse(envelope) {
 
 // --- network config -------------------------------------------------------------
 
-test("testnet knows both proxies; mainnet has none and contracts overrides apply", async () => {
+test("Mainnet and Testnet expose their ICE presets and accept contract overrides", async () => {
   assert.equal(NETWORKS.testnet.upvoteIceProxy, UPVOTE);
   assert.equal(NETWORKS.testnet.governIceProxy, GOVERN);
-  assert.equal(NETWORKS.mainnet.upvoteIceProxy, undefined);
-  assert.equal(NETWORKS.mainnet.governIceProxy, undefined);
+  assert.equal(NETWORKS.mainnet.upvoteIceProxy, "CCRSZNKO4F3H45B6NPZE2ILXTUP3UAM7PSCNAKLAJO63OYGE2U557UCU");
+  assert.equal(NETWORKS.mainnet.governIceProxy, "CDSOORDHX7T4O7MN2OYUFH2ISZC2QJF7WM3KPG7VYVXUD4A5V2STV6ST");
   assert.equal(DELEGATION_FRACTION_DENOMINATOR, 10_000_000);
-
-  const signer = { publicKey: () => OWNER, sign: () => "" };
-  const mainnet = new AquariusClient({ network: "mainnet", signer });
-  await assert.rejects(
-    mainnet.delegation.buildDelegate({ delegate: D1, fractions: { upvote: 1 } }),
-    /contracts\.upvoteIceProxy/,
-  );
-  await assert.rejects(
-    mainnet.delegation.buildUndelegate({ delegate: D1, proxies: ["govern"] }),
-    /contracts\.governIceProxy/,
-  );
 
   const other = "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD";
   const { client } = fakeClient({ config: { contracts: { governIceProxy: other } } });

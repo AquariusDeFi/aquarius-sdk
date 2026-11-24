@@ -110,18 +110,10 @@ function parse(envelope) {
 
 // --- network config -------------------------------------------------------------
 
-test("testnet knows the Locker; mainnet has none and contracts.locker overrides", async () => {
+test("Mainnet and Testnet expose their ICE presets and accept contract overrides", async () => {
   assert.equal(NETWORKS.testnet.locker, LOCKER);
   assert.equal(NETWORKS.testnet.batch, BATCH);
-  assert.equal(NETWORKS.mainnet.locker, undefined);
-
-  const signer = { publicKey: () => OWNER, sign: () => "" };
-  const mainnet = new AquariusClient({ network: "mainnet", signer });
-  await assert.rejects(
-    mainnet.locker.buildCreateLock({ amount: AMOUNT, unlockTime: UNLOCK }),
-    error => error instanceof AquariusError && /contracts\.locker/.test(error.message),
-  );
-  await assert.rejects(mainnet.locker.buildWithdraw([1]), /contracts\.locker/);
+  assert.equal(NETWORKS.mainnet.locker, "CCF3BZBCEMCOXJITDPF73QAUFYMXD5DSGWIUFZW4U7Q3DLKD3K3CLZ7N");
 
   const other = "CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ";
   const { client, seen } = fakeClient([success()], { contracts: { locker: other } });
@@ -440,5 +432,5 @@ test("proxy reads preserve i128 voting power and u64 delegation credit", async (
     [client.network.governIceProxy, "get_incoming_balance", OWNER],
     [client.network.upvoteIceProxy, "delegations", OWNER],
   ]);
-  await assert.rejects(new AquariusClient({ network: "mainnet" }).ice.balance(OWNER, "ice"), /Missing ICE proxy/);
+  assert.equal(NETWORKS.mainnet.iceProxy, "CCVNQAKX6JTJVQKOMSEYPW5RAZRWDKSFWEAWCCV5IFPOUQ4VVL2GPDZS");
 });

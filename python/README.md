@@ -419,9 +419,11 @@ with a smaller route budget and the original minimum payout.
 
 ## ICE contracts
 
-The Testnet preset includes the Locker and the three balance proxies. For another
+The Mainnet and Testnet presets include the Locker and all three balance proxies. For another
 deployment pass `ice_contracts=IceContracts(locker=..., aqua_token=..., ice=..., upvote=..., govern=...)`
-when creating the client. Mainnet requires explicit addresses.
+when creating the client.
+
+Use the Mainnet voting proxies as the source of active delegations once Aquarius announces activation.
 
 - `aqua.ice.build_create_lock(amount, unlock_time)` creates a dated lock.
   `build_active_lock(amount, notice_seconds)`, `build_start_unlock(position_id)` and

@@ -5,9 +5,20 @@ from stellar_sdk import Keypair, TransactionEnvelope, scval
 from stellar_sdk.soroban_rpc import AuthMode
 
 from aquarius import AquariusClient, AquariusError
+from aquarius.ice import IceClient
 from test_submit import KEYPAIR, PASSPHRASE, PreparingServer
 
 DELEGATE = Keypair.random().public_key
+
+
+def test_mainnet_ice_preset():
+    contracts = AquariusClient(network="mainnet").network.ice_contracts
+    assert (contracts.locker, contracts.ice, contracts.upvote, contracts.govern) == (
+        "CCF3BZBCEMCOXJITDPF73QAUFYMXD5DSGWIUFZW4U7Q3DLKD3K3CLZ7N",
+        "CCVNQAKX6JTJVQKOMSEYPW5RAZRWDKSFWEAWCCV5IFPOUQ4VVL2GPDZS",
+        "CCRSZNKO4F3H45B6NPZE2ILXTUP3UAM7PSCNAKLAJO63OYGE2U557UCU",
+        "CDSOORDHX7T4O7MN2OYUFH2ISZC2QJF7WM3KPG7VYVXUD4A5V2STV6ST",
+    )
 
 
 @pytest.mark.parametrize("build, proxy, method, args, transfer", [
@@ -61,6 +72,6 @@ def test_ice_reads_preserve_precision_without_authorizing_a_restore():
     ])])
     assert client.ice.delegations(owner, "upvote") == [(DELEGATE, 2500000, power)]
     with pytest.raises(AquariusError, match="No ICE contracts"):
-        AquariusClient().ice.balance(owner, "ice")
+        IceClient(client, None).balance(owner, "ice")
     with pytest.raises(AquariusError, match="fraction"):
         client.ice.build_delegate("upvote", DELEGATE, None)
