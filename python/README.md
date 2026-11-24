@@ -1,15 +1,14 @@
 # aquarius-sdk
 
-Installation: `pip install aquarius-sdk==0.7.0`.
+Install after the 0.8.0 release: `pip install aquarius-sdk==0.8.0`.
 
 Version `0.7.0` adds validated staged split swaps, provider split fees and native
 receive trust, preserves terminating simulation errors after handled trustline
 probes, and retains automatic restoration entries during limit-order fills.
 Split swaps require compatible router and collector contracts. The JavaScript
-wallet-facing manager is not part of the Python API. Typed settlement routes
-and adaptive resource retries from `0.7.0a*` are not included in this stable
-release; keep the exact prerelease pin when using those APIs. Stable fills use
-legacy route encoding.
+wallet-facing manager is not part of the Python API. Version `0.8.0` adds typed settlement routes,
+adaptive preparation, collector-bound split swaps and ICE contract calls. Select
+`route_format="typed"` only for a compatible settlement. Legacy is the default.
 
 Public API HTTP failures raise `APIHTTPError`, a subclass of `AquariusError`,
 with `status_code` and `retry_after` in seconds (`None` when unavailable).
@@ -24,7 +23,7 @@ sent to telemetry. This Python-only metadata does not change validation or retri
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.7.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+**Status: 0.8.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
 
 ## Swap through a specific pool
 
@@ -287,6 +286,32 @@ prepared = order.prepare_fill(route.swap_chain_xdr)
 result = prepared.execute()
 ```
 
+For settlement v221's typed `Route` interface, explicitly set
+`LimitOrderConfig(settlement=..., route_format="typed")`. The default is
+`"legacy"` for existing deployments. With `"typed"`, a chain XDR is encoded as
+`Route::Chained`; a normalized split plan is encoded as `Route::Split` with
+struct parts and hops:
+
+```python
+response = aqua.api.find_path_split({
+    "token_in_address": order.order.sell_token,
+    "token_out_address": order.order.buy_token,
+    "amount": str(order.order.sell_amount),
+})
+plan = normalize_swap_split_plan(
+    response, order.order.sell_token, order.order.buy_token,
+    str(order.order.sell_amount),
+)
+if int(plan.amount_out) < order.order.required_router_min(xlm_token):
+    raise NoRouteError("Current route does not meet the order minimum")
+prepared = order.prepare_fill(plan)
+```
+
+The SDK revalidates split plans against the signed order's input amount and
+endpoints. Split plans are rejected with the legacy interface. Coordinate the
+format switch with the settlement upgrade; network selection alone does not
+change the SDK's format. Existing orders and maker proofs remain unchanged.
+
 The existing generic path lookup and parser are reused unchanged. Route lookup
 and limit policy are separate primitives. Before returning `prepared`, the SDK
 validates the registry record, detached
@@ -384,7 +409,35 @@ resource-fee headroom; then check the assembled envelope's resources. It does
 not simulate again, sign, submit or restore storage.
 Explicit `batch` retains legacy external `[trust, swap_split]` behavior; only
 that mode uses `get_swap_split_result(retval, with_trustline=True)`.
-Install with `pip install aquarius-sdk==0.7.0`.
+Use `aqua.fee_collector(address).build_swap_split_operation(...)` for a collector-bound
+operation. Supply the same source, router, token pair, plan and net minimum as
+the standalone builder, plus `fee_fraction`, optional `denominator` and optional
+`recipient`. Both builders return an unsigned operation.
+
+Use `prepare_swap_with_resource_retry` for a single retry of unsigned preparation
+with a smaller route budget and the original minimum payout.
+
+## ICE contracts
+
+The Mainnet and Testnet presets include the Locker and all three balance proxies. For another
+deployment pass `ice_contracts=IceContracts(locker=..., aqua_token=..., ice=..., upvote=..., govern=...)`
+when creating the client.
+
+Use the Mainnet voting proxies as the source of active delegations once Aquarius announces activation.
+
+- `aqua.ice.build_create_lock(amount, unlock_time)` creates a dated lock.
+  `build_active_lock(amount, notice_seconds)`, `build_start_unlock(position_id)` and
+  `build_stop_unlock(position_id)` manage active locks and their countdown.
+  `build_withdraw(position_id)` withdraws a matured direct position.
+- `aqua.ice.build_delegate(proxy, delegate, fraction)` sets the total share on
+  `upvote` or `govern`. A fraction of 2,500,000 is 25%. Use
+  `build_undelegate(proxy, delegate)` to remove that share.
+- `aqua.ice.balance(owner, proxy, part)` reads `ice`, `upvote` or `govern`.
+  Choose `total` (default), `retained` or `incoming`. `aqua.ice.delegations(owner, proxy)`
+  returns the address, fraction and mature credit of each delegate.
+
+Amounts use raw token units. Builders return unsigned transaction XDR for the
+signer's account. Reads require only an owner address.
 
 ## What the SDK handles for you
 

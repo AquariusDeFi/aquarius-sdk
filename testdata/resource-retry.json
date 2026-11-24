@@ -1,0 +1,9 @@
+[
+  {"name":"first preparation succeeds","failures":[],"plans":["parallel"],"prepared":1,"queries":0,"budget":7000},
+  {"name":"resource failure retries once at fifty","failures":["resource"],"plans":["parallel","single"],"prepared":2,"queries":1,"budget":5000},
+  {"name":"second resource failure stops","failures":["resource","resource"],"plans":["parallel","single"],"prepared":2,"queries":1,"error":"resource"},
+  {"name":"other errors do not retry","failures":["other"],"plans":["parallel"],"prepared":1,"queries":0,"error":"other"},
+  {"name":"submitted errors do not retry","failures":["submitted"],"plans":["parallel"],"prepared":1,"queries":0,"error":"submitted"},
+  {"name":"same executable route is not simulated twice","failures":["resource"],"plans":["parallel","parallel"],"prepared":1,"queries":1,"error":"resource"},
+  {"name":"fallback cannot lower the original minimum","failures":["resource"],"plans":["parallel","single"],"minimum":"9999999999999999","prepared":1,"queries":1,"error":"slippage"}
+]

@@ -332,12 +332,12 @@ test("record cancellation uses the canonical order body", async () => {
   assert.equal(Buffer.from(invocation.args[0].toXDR()).toString("base64"), Buffer.from(record.order.orderScVal.toXDR()).toString("base64"));
 });
 
-async function preparedClient({ resourceFee = 17, resourceHeadroom = 0, instructionHeadroom = 0, detached = false } = {}) {
+async function preparedClient({ resourceFee = 17, resourceHeadroom = 0, instructionHeadroom = 0, detached = false, routeFormat = "legacy" } = {}) {
   const { Account, SorobanDataBuilder } = await import("@stellar/stellar-sdk");
   const filler = Keypair.random();
   const client = new AquariusClient({
     network: "testnet", signer: filler,
-    limitOrders: { settlement: draft.settlement_address }, baseFee: "100",
+    limitOrders: { settlement: draft.settlement_address, routeFormat }, baseFee: "100",
     resourceFeeHeadroom: resourceHeadroom, instructionHeadroom,
   });
   const { Asset } = await import("../dist/index.js");
@@ -451,3 +451,35 @@ for (const legacyPreamble of [false, true]) {
     assert.deepEqual(tx.operations[0].auth.map(a => a.toXDR()), [record.authorization.toXDR()]);
   });
 }
+
+for (const split of [false, true]) {
+  test(`typed ${split ? "split" : "chained"} fill preserves maker proof and enforced simulation`, async () => {
+    const { Transaction } = await import("@stellar/stellar-sdk");
+    const { record, modes } = await preparedClient({ routeFormat: "typed", detached: true });
+    const route = split ? {
+      amountIn: "1000", amountOut: "950", stages: [[{
+        share: 10000, amountIn: "1000", amountOut: "950", swapChainXdr: routeXdr(),
+        pools: [draft.settlement_address], tokensAddresses: [draft.sell_token, draft.buy_token], tokens: [],
+      }]],
+    } : routeXdr();
+    const prepared = await record.prepareFill(route);
+    const tx = new Transaction(prepared.transactionXdr, Networks.TESTNET);
+    const operation = tx.operations[0];
+    assert.equal(scValToNative(operation.func.invokeContract.args[2])[0], split ? "Split" : "Chained");
+    assert.deepEqual(operation.auth[0].toXDR(), record.authorization.toXDR());
+    assert.deepEqual(modes, ["enforce"]);
+  });
+}
+
+
+for (const [message, resource] of [
+  ['Error(Budget, ExceededLimit)', true],
+  ['Error(Contract, #2006)', false],
+  ['RPC resource configuration unavailable', false],
+]) test(`fill classifies simulation failure: ${message}`, async () => {
+  const { ResourceLimitError, AquariusError } = await import('../dist/index.js');
+  const { record, simulation } = await preparedClient();
+  simulation.error = message;
+  await assert.rejects(record.prepareFill(routeXdr()), error =>
+    error instanceof AquariusError && (error instanceof ResourceLimitError) === resource);
+});

@@ -16,6 +16,7 @@ from stellar_sdk.xdr import SCVal
 from .assets import Asset
 from .authorization import authorized_invocation, source_account_entry
 from .errors import AquariusError
+from .split_swap import SwapSplitPlan, build_swap_split_operation
 
 
 @dataclass
@@ -83,6 +84,19 @@ class FeeCollector:
             fee_fraction=fee_fraction,
             fee_denominator=denominator,
             recipient=recipient,
+        )
+
+    def build_swap_split_operation(
+        self, *, source: str, router: str, token_in: str, token_out: str,
+        plan: SwapSplitPlan, minimum: str, fee_fraction: int,
+        denominator: int = 10_000, recipient: str | None = None,
+        batch: str | None = None, trustline: dict | None = None,
+    ):
+        """Build a smart-routed exact-input swap with a net minimum payout."""
+        return build_swap_split_operation(
+            source=source, router=router, token_in=token_in, token_out=token_out,
+            plan=plan, minimum=minimum, batch=batch, trustline=trustline,
+            provider_fee=self.fee_config(fee_fraction, recipient=recipient, denominator=denominator),
         )
 
     # -- writes (the signer must be the collector's operator) ---------------------

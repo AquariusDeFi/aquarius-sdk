@@ -25,6 +25,13 @@ export {
 export { batchCallScVal, type BatchCall } from "./batch.js";
 export type { Signer } from "./signer.js";
 export { FeeCollector, type ClaimedFees } from "./collector.js";
+export type { CreateLockParams } from "./locker.js";
+export {
+  DELEGATION_FRACTION_DENOMINATOR,
+  type DelegateParams,
+  type IceProxy,
+  type UndelegateParams,
+} from "./delegation.js";
 export { ApiClient, parseFindPathResponse } from "./api.js";
 export type {
   FindPathRequest,
@@ -49,6 +56,7 @@ export {
   validateFillReceipt,
   validateOnchainLimitOrderDraft,
   type LimitOrderConfigInput,
+  type SettlementRouteFormat,
   type LimitOrderFillReceipt,
   type LimitOrderFillResult,
   type LimitOrderPage,
@@ -147,3 +155,7 @@ export {
   type LimitOrderTransactionResult,
   type PendingLimitOrder,
 } from "./limit-order-prepared.js";
+
+export { prepareSwapWithResourceRetry, type SwapResourceRetryEvent } from "./resource-retry.js";
+
+export { classifyContractError } from "./errors.js";

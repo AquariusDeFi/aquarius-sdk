@@ -157,3 +157,13 @@ for (const [name, p] of Object.entries(fixture.plans).filter(
     assert.equal(op.toXdr("base64"), p.contractTrustOperationXdr);
   });
 }
+
+test("collector builds the same authorization for both split entry points", () => {
+  const client = new AquariusClient({ network: "testnet" });
+  const collector = client.feeCollector(providerFee.contractId);
+  for (const recipient of [undefined, fixture.router]) {
+    const actual = collector.buildSwapSplitOperation({ ...options, feeFraction: 100, recipient });
+    const expected = buildSwapSplitOperation({ ...options, providerFee: collector.feeConfig(100, { recipient }) });
+    assert.deepEqual(actual.toXDR(), expected.toXDR());
+  }
+});

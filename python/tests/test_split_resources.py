@@ -1,3 +1,4 @@
+from aquarius import ResourceLimitError
 import json
 from pathlib import Path
 from dataclasses import replace
@@ -65,7 +66,7 @@ def test_shared_resource_boundaries(case):
     if case["ok"]:
         assert_swap_resources(transaction(), current, invocation())
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(ResourceLimitError):
             assert_swap_resources(transaction(), current, invocation())
 
 
@@ -125,7 +126,10 @@ def test_shared_archived_footprint(case):
     if case["ok"]:
         assert_swap_resources(tx, current, invocation())
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError if case["name"] in (
+            "duplicate archived index", "out of range archived index",
+            "pre23 rejects archived extension",
+        ) else ResourceLimitError):
             assert_swap_resources(tx, current, invocation())
 
 

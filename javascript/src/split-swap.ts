@@ -223,7 +223,8 @@ const decodeChain = (
 // stage in `tokenOut`. Every part's input must be the router's allocation of
 // the stage input, and the parts' outputs make the next stage's input, which
 // the router adds up in a u128.
-const encodeStages = (
+/** @internal Shared route validation and native router encoding. */
+export const encodeStages = (
   plan: SwapSplitPlan,
   tokenIn: string,
   tokenOut: string,

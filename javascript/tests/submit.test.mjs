@@ -64,6 +64,7 @@ class FakeServer {
     this.calls.push("getHealth");
     const latestLedger = this.latestLedgers[0];
     if (this.latestLedgers.length > 1) this.latestLedgers.shift();
+    if (latestLedger instanceof Error) throw latestLedger;
     return { latestLedger };
   }
 
@@ -377,6 +378,32 @@ test("waitForNextLedger waits past an explicit ledger", async () => {
   await write(client.engine);
   assert.equal(await client.waitForNextLedger({ ledger: CONFIRMED_LEDGER + 1 }), CONFIRMED_LEDGER + 2);
   assert.deepEqual(server.calls, ["getHealth", "getHealth", "getHealth"]);
+});
+
+test("waitForNextLedger recovers from a lost RPC response before and after the first ledger", async () => {
+  const lost = Object.assign(new Error("fetch failed"), { isAxiosError: true });
+  const server = new FakeServer([], [lost, CONFIRMED_LEDGER, lost, CONFIRMED_LEDGER + 1]);
+  assert.equal(await clientOn(server).waitForNextLedger(), CONFIRMED_LEDGER + 1);
+  assert.deepEqual(server.calls, Array(4).fill("getHealth"));
+});
+
+test("waitForNextLedger preserves permanent RPC errors and bounds transport retries", async () => {
+  const denied = Object.assign(new Error("unauthorized"), {
+    isAxiosError: true, response: { status: 401 },
+  });
+  await assert.rejects(clientOn(new FakeServer([], [denied])).waitForNextLedger(), e => e === denied);
+
+  const lost = Object.assign(new Error("fetch failed"), { isAxiosError: true });
+  const server = new FakeServer([], [lost]);
+  await assert.rejects(clientOn(server).waitForNextLedger({ timeoutMs: 20 }),
+    e => e instanceof AquariusError && e.cause === lost);
+});
+
+test("waitForNextLedger expires while a health request is still pending", { timeout: 1_000 }, async () => {
+  const server = new FakeServer([]);
+  server.getHealth = () => new Promise(() => {});
+  await assert.rejects(clientOn(server).waitForNextLedger({ timeoutMs: 20 }),
+    e => e instanceof AquariusError && e.message.includes("baseline ledger"));
 });
 
 test("waitForNextLedger rejects when the ledger does not advance in time", async () => {

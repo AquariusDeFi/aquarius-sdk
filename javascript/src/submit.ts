@@ -34,6 +34,15 @@ const NEXT_LEDGER_POLL_INTERVAL_MS = 1_000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+function isTransientHealthError(error: unknown): boolean {
+  if (!(error instanceof Error) || !("isAxiosError" in error) || error.isAxiosError !== true) {
+    return false;
+  }
+  if ("code" in error && error.code === "ERR_CANCELED") return false;
+  const status = (error as { response?: { status: number } }).response?.status;
+  return status === undefined || status === 408 || status === 429 || (status >= 500 && status < 600);
+}
+
 /**
  * Fraction of the simulated Soroban resource fee added on top of it. The
  * declared resource fee is a cap: the network charges the non-refundable part
@@ -280,19 +289,41 @@ export class SubmitEngine {
       throw new AquariusError("timeoutMs must be a positive finite number");
     }
     const deadline = Date.now() + timeoutMs;
-    let latest = (await this.server.getHealth()).latestLedger;
-    const target = ledger ?? this.lastTxLedger ?? latest;
-    while (latest <= target) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        throw new AquariusError(
-          `The RPC did not advance past ledger ${target} within ${timeoutMs / 1_000} s`,
-        );
+    let target = ledger ?? this.lastTxLedger;
+    let lastError: unknown;
+    const timeoutError = () => {
+      const message = target === undefined
+        ? "The RPC did not return a baseline ledger"
+        : `The RPC did not advance past ledger ${target}`;
+      const error = new AquariusError(`${message} within ${timeoutMs / 1_000} s`);
+      error.cause = lastError;
+      return error;
+    };
+    while (Date.now() < deadline) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const health = await Promise.race([
+          this.server.getHealth(),
+          new Promise<never>((_, reject) => {
+            const remaining = deadline - Date.now();
+            // Node clamps delays above a signed 32-bit integer to one millisecond.
+            if (remaining <= 2_147_483_647) {
+              timer = setTimeout(() => reject(timeoutError()), remaining);
+            }
+          }),
+        ]);
+        lastError = undefined;
+        target ??= health.latestLedger;
+        if (health.latestLedger > target) return health.latestLedger;
+      } catch (error) {
+        if (!isTransientHealthError(error)) throw error;
+        lastError = error;
+      } finally {
+        clearTimeout(timer);
       }
-      await sleep(Math.min(SubmitEngine._nextLedgerPollIntervalMs, remaining));
-      latest = (await this.server.getHealth()).latestLedger;
+      await sleep(Math.min(SubmitEngine._nextLedgerPollIntervalMs, deadline - Date.now()));
     }
-    return latest;
+    throw timeoutError();
   }
 
   /**

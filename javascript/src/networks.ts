@@ -22,6 +22,14 @@ export interface NetworkConfig {
   /** The protocol reward token (AQUA) — code and issuer of the classic asset. */
   rewardToken: { code: string; issuer: string };
   limitOrdersApiUrl?: string;
+  /** ICE Locker: locks AQUA (the reward token) until an unlock time. */
+  locker?: string;
+  /** ICE balance proxy. */
+  iceProxy?: string;
+  /** upvoteICE delegation proxy. */
+  upvoteIceProxy?: string;
+  /** governICE delegation proxy. */
+  governIceProxy?: string;
 }
 
 export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
@@ -38,6 +46,10 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     collectorFactory: "CA4Q2T6FRAFYJYSMDJV7F6B7RL5PS6QS2UOZHBMCT2KSMGQRAAKP2MKO",
     rewardToken: { code: "AQUA", issuer: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA" },
     limitOrdersApiUrl: "https://amm-api.aqua.network/api/external/v1/limit-orders",
+    locker: "CCF3BZBCEMCOXJITDPF73QAUFYMXD5DSGWIUFZW4U7Q3DLKD3K3CLZ7N",
+    iceProxy: "CCVNQAKX6JTJVQKOMSEYPW5RAZRWDKSFWEAWCCV5IFPOUQ4VVL2GPDZS",
+    upvoteIceProxy: "CCRSZNKO4F3H45B6NPZE2ILXTUP3UAM7PSCNAKLAJO63OYGE2U557UCU",
+    governIceProxy: "CDSOORDHX7T4O7MN2OYUFH2ISZC2QJF7WM3KPG7VYVXUD4A5V2STV6ST",
   },
   testnet: {
     router: "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
@@ -50,5 +62,9 @@ export const NETWORKS: Record<"mainnet" | "testnet", NetworkConfig> = {
     collectorFactory: "CCXU6S2PFFFESV65RHUEVJX6TSSN6BYKOCJ3S3LM5M3IXXIWAL5AV4CO",
     rewardToken: { code: "AQUA", issuer: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER" },
     limitOrdersApiUrl: "https://amm-api-testnet.aqua.network/api/external/v1/limit-orders",
+    locker: "CAU5JTZ5D3TUK53WOTT5UO75U6IYAFXSGCEWJJYVIAEJJ4N5AVM72DZV",
+    iceProxy: "CASSMR4PXHFA6JLEUCULKLOY4BXGPMTGEYSLLDGF6EQCZOGVNRLF5YTY",
+    upvoteIceProxy: "CAACTYVX4DRXV7HDZ4XGIVMBUQV5VVAWEFNL5YBH7QRUAVGIG4SDOB3K",
+    governIceProxy: "CAV4FLWRQ4I4Q2LBY4QIPL6HNJFFNLLQNBYSKA5FAILZYG4K3FDFNN7D",
   },
 };

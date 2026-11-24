@@ -1,10 +1,10 @@
 # @aquariusdefi/sdk
 
-Installation: `npm install @aquariusdefi/sdk@0.7.0 @stellar/stellar-sdk@^17.4.0`.
+Install after the 0.8.0 release: `npm install @aquariusdefi/sdk@0.8.0 @stellar/stellar-sdk@^17.4.0`.
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar.
 
-**Status: 0.7.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
+**Status: 0.8.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
 
 Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.4.0)
 as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
@@ -489,22 +489,22 @@ manual ledger, trustline and signing-mode resolution with `prepare()` and review
 its summary before calling `place()`. The 180-day / 3,110,399-ledger maximum also
 applies to legacy and imported orders; the settlement can enforce a lower limit.
 
-After `0.7.0` is published, replace the temporary Git URL or local tarball with
+After `0.8.0` is published, replace the temporary Git URL or local tarball with
 the npm version and commit the regenerated application lockfile:
 
 ```sh
-yarn add @aquariusdefi/sdk@0.7.0 --exact
+yarn add @aquariusdefi/sdk@0.8.0 --exact
 # Or, for npm consumers:
-npm install @aquariusdefi/sdk@0.7.0 --save-exact
+npm install @aquariusdefi/sdk@0.8.0 --save-exact
 ```
 
 The required Node.js version and Stellar SDK peer dependency are unchanged from
 `0.6.0`. Staged split swaps are explicit helpers and require compatible router
 and collector contracts; ordinary `quote()` / `swap()` behavior is unchanged.
-The ICE Locker/delegation builders, typed settlement routes and adaptive
-resource retry helpers from `0.7.0-testnet.*` are not included. Keep the exact
-prerelease pin if your application uses those APIs. Stable limit-order fills
-retain legacy route encoding.
+Version `0.8.0` adds typed settlement routes and adaptive preparation.
+Select `routeFormat: "typed"` for a compatible settlement. Use
+`prepareSwapWithResourceRetry` to retry unsigned preparation once with a
+smaller route budget and the original minimum payout.
 
 ### Testing from GitHub before a release
 
@@ -657,6 +657,31 @@ const prepared = await order.prepareFill(route.swapChainXdr);
 const result = await prepared.execute();
 ```
 
+For settlement v221's typed `Route` interface, explicitly set
+`limitOrders: { settlement, routeFormat: "typed" }`. The default is `"legacy"`
+for existing deployments. With `"typed"`, a chain XDR is encoded as
+`Route::Chained`; a normalized split plan is encoded as `Route::Split` with
+struct parts and hops:
+
+```ts
+const response = await aqua.api.findPathSplit({
+  token_in_address: order.order.sellToken,
+  token_out_address: order.order.buyToken,
+  amount: order.order.sellAmount.toString(),
+});
+const plan = normalizeSwapSplitPlan(response, order.order.sellToken,
+  order.order.buyToken, order.order.sellAmount.toString());
+if (BigInt(plan.amountOut) < order.order.requiredRouterMin(xlmToken)) {
+  throw new NoRouteError("Current route does not meet the order minimum");
+}
+const prepared = await order.prepareFill(plan);
+```
+
+The SDK revalidates split plans against the signed order's input amount and
+endpoints. Split plans are rejected with the legacy interface. Coordinate the
+format switch with the settlement upgrade; network selection alone does not
+change the SDK's format. Existing orders and maker proofs remain unchanged.
+
 The existing generic path lookup and parser are reused unchanged. Route lookup
 and limit policy are separate primitives. Before returning `prepared`, the SDK
 validates the registry record, detached
@@ -755,7 +780,80 @@ Explicit `batch` remains supported for legacy external `[trust, swap_split]`
 calls; only that mode uses `getSwapSplitResult(retval, true)`.
 The helpers never sign, submit or restore storage. Python has the same helpers
 in snake_case, with shared fixtures in `testdata/split-*.json`.
-Install with `npm install @aquariusdefi/sdk@0.7.0`.
+For a collector-bound operation, use
+`aqua.feeCollector(address).buildSwapSplitOperation({ source, router, tokenIn, tokenOut, plan, minimum, feeFraction, denominator, recipient })`.
+Compute the net minimum with the same collector fee configuration. Omit
+`recipient` for payment to the source account.
+
+## ICE Locker
+
+Use the Mainnet voting proxies as the source of active delegations once Aquarius announces activation.
+
+The Mainnet and Testnet presets include the Locker
+(`aqua.network.locker`; pass `contracts.locker` for another deployment). Both
+builders return the simulated, unsigned envelope XDR; the signer's account is
+the owner and the transaction source.
+
+```ts
+// Lock 100 AQUA until a Monday 00:00 UTC (unix seconds)
+const lockXdr = await aqua.locker.buildCreateLock({
+  amount: 100_0000000n,
+  unlockTime: 1_799_020_800n,
+});
+
+// Withdraw unlocked positions; several are withdrawn in one transaction
+const withdrawXdr = await aqua.locker.buildWithdraw([4, 7, 9]);
+```
+
+`buildCreateLock` authorizes `create_lock` and, beneath it, the AQUA transfer
+from the owner to the Locker. `buildWithdraw` authorizes each `withdraw`; one
+position calls the Locker directly, several go through the batch contract. The
+Locker sets the unlock-time rules (a Monday 00:00 UTC, more than 24 hours and
+at most three years ahead) and rejects other times during simulation.
+
+## ICE delegation
+
+An owner delegates a share of their
+upvoteICE and governICE voting power through two proxies in the Mainnet and Testnet presets
+(`aqua.network.upvoteIceProxy`, `aqua.network.governIceProxy`; pass `contracts`
+overrides for another deployment). A fraction is in parts of
+`DELEGATION_FRACTION_DENOMINATOR` (`10_000_000` = 100%). Both builders return
+the simulated, unsigned envelope XDR.
+
+```ts
+// 25% of upvoteICE and 10% of governICE to one account, in one transaction
+const delegateXdr = await aqua.delegation.buildDelegate({
+  delegate: "GDELEGATE...",
+  fractions: { upvote: 2_500_000, govern: 1_000_000 },
+});
+
+// Remove that delegation from both proxies
+const undelegateXdr = await aqua.delegation.buildUndelegate({
+  delegate: "GDELEGATE...",
+  proxies: ["upvote", "govern"],
+});
+```
+
+`buildDelegate` sets the delegate's share on each proxy named in `fractions`,
+replacing any previous share. The delegate must be an account other than the
+owner, and each fraction an integer from 1 to 10_000_000. The proxy enforces
+the rules that depend on its state, such as the number of delegates and the
+100% total, and the builders report its errors with what they mean. Each proxy
+call authorizes itself alone; changing both proxies is one batch transaction.
+
+Like every other `build*` method, the Locker and delegation builders throw
+`RestoreRequiredError` when a separate restore is required.
+
+Active locks use `locker.buildActiveLock(amount, noticeSeconds)`. Use
+`buildStartUnlock(positionId)` to start the countdown and
+`buildStopUnlock(positionId)` to return to the active state under the contract's
+remaining-notice rules. These builders also return unsigned transaction XDR.
+
+Read a proxy with `aqua.ice.balance(owner, proxy, part)`. Select `ice`, `upvote`
+or `govern` and a component of `total` (default), `retained` or `incoming`.
+Results are raw-unit `bigint` values. `aqua.delegation.list(owner, proxy)`
+returns delegate address, fraction and mature credit tuples for a voting proxy.
+Use `contracts.iceProxy` for the ICE balance contract on a custom deployment.
 
 ## What the SDK handles for you
 

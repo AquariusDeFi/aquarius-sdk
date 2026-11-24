@@ -16,7 +16,8 @@ from .api import ApiClient, ParsedRoute, parse_find_path_response
 from .authorization import authorized_invocation, source_account_entry
 from .assets import Asset
 from .collector import FeeCollector
-from .errors import AquariusError, SlippageError
+from .ice import IceClient, IceContracts
+from .errors import AquariusError, SlippageError, classify_contract_error
 from .limit_orders import (
     _validate_executor_reward,
     LimitOrderConfig,
@@ -34,6 +35,7 @@ from .limit_orders import (
 from .pool import Pool, Position, parse_pools_map, sort_token_ids
 from .networks import NETWORKS, NetworkConfig
 from .signer import signer_public_key
+from .split_swap import SwapSplitPlan
 from .submit import SubmitEngine
 
 _FRIENDBOT_URL = "https://friendbot.stellar.org"
@@ -122,6 +124,7 @@ class AquariusClient:
         resource_fee_headroom: float | None = None,
         instruction_headroom: float | None = None,
         limit_orders: LimitOrderConfig | None = None,
+        ice_contracts: IceContracts | None = None,
     ):
         """timeout: transaction time bound in seconds, or "infinite".
 
@@ -155,6 +158,7 @@ class AquariusClient:
             read_source=preset.read_source,
             collector_factory=preset.collector_factory,
             limit_orders_api_url=preset.limit_orders_api_url,
+            ice_contracts=ice_contracts or preset.ice_contracts,
         )
         if timeout is None:
             resolved_timeout = 300 if isinstance(getattr(signer, "secret", None), str) else None
@@ -173,6 +177,7 @@ class AquariusClient:
             instruction_headroom=instruction_headroom,
         )
         self.signer = signer
+        self.ice = IceClient(self, self.network.ice_contracts)
         self.limit_order_config = limit_orders
 
     # -- reads (no signer required) -------------------------------------------
@@ -791,7 +796,7 @@ class AquariusClient:
     def _prepare_limit_order_fill(
         self,
         record: LimitOrderRecord,
-        swap_chain_xdr: str,
+        swap_chain_xdr: str | SwapSplitPlan,
         *,
         reward_to: str | None = None,
     ) -> PreparedLimitOrderFill:
@@ -813,7 +818,10 @@ class AquariusClient:
             )
         auth = [record.authorization] if record.authorization is not None else []
         try:
-            parameters = fill_parameters(record, recipient, swap_chain_xdr)
+            parameters = fill_parameters(
+                record, recipient, swap_chain_xdr,
+                route_format=self._require_limit_order_config().route_format,
+            )
         except AquariusError as exc:
             exc.diagnostics = {"stage": "route", "reason": "invalid_route"}
             raise
@@ -836,9 +844,11 @@ class AquariusClient:
             code = re.match(r"(?:HostError: )?Error\(Contract, #(\d{1,10})\)", simulation.error)
             if code and int(code[1]) <= 2**32 - 1:
                 context["contract_code"] = int(code[1])
-            raise AquariusError(f"limit-order fill simulation failed: {simulation.error}",
-                                diagnostics={**context, "stage": "simulation",
-                                             "reason": "simulation_failed"})
+            error = classify_contract_error(
+                simulation.error, events_xdr=getattr(simulation, "events", None)
+            ) or AquariusError(f"limit-order fill simulation failed: {simulation.error}")
+            error.diagnostics.update(context, stage="simulation", reason="simulation_failed")
+            raise error
         if not isinstance(simulation.results, list) or len(simulation.results) != 1:
             raise AquariusError(
                 "limit-order fill simulation returned an invalid result count",
