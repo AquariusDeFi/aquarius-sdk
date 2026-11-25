@@ -1,5 +1,10 @@
 # JavaScript SDK changelog
 
+## 0.8.1
+
+- Use smart routing for exact-input `swap()` calls without a provider fee. The SDK validates the plan, applies slippage to the total output and reports the amount received.
+- Fall back to a chained quote if the split endpoint returns HTTP 404 or 405.
+
 ## 0.8.0
 
 - Prepare typed chained and split limit-order fills and retry unsigned swap preparation with a smaller resource budget.

@@ -179,7 +179,7 @@ for (const [label, events, errorType, attempts] of [
     const quote = t.mock.method(client, "quote", async () => ({
       execute: () => engine.poll("failed-hash"),
     }));
-    await assert.rejects(client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 2 }), error => {
+    await assert.rejects(client.swap({ from: XLM, to: XLM, amountOut: 1n, retries: 2 }), error => {
       assert.equal(error.constructor, errorType);
       assert.equal(error.txHash, "failed-hash");
       if (errorType === AquariusError) assert.match(error.message, /without recognized diagnostics/);

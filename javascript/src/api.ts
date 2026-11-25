@@ -63,6 +63,9 @@ export interface FindPathSplitResponse {
   stages: FindPathSplitPart[][];
 }
 
+/** @internal The configured backend does not expose the split endpoint. */
+export class SplitEndpointUnavailableError extends AquariusError {}
+
 /** Typed client for the public backend API. */
 export class ApiClient {
   constructor(private readonly baseUrl: string) {}
@@ -93,7 +96,9 @@ export class ApiClient {
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!response.ok) {
-      throw new AquariusError(`Find-path-split request failed: HTTP ${response.status}`);
+      const message = `Find-path-split request failed: HTTP ${response.status}`;
+      if (response.status === 404 || response.status === 405) throw new SplitEndpointUnavailableError(message);
+      throw new AquariusError(message);
     }
     return (await response.json()) as FindPathSplitResponse;
   }

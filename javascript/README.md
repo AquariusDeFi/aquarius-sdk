@@ -1,10 +1,10 @@
 # @aquariusdefi/sdk
 
-Install after the 0.8.0 release: `npm install @aquariusdefi/sdk@0.8.0 @stellar/stellar-sdk@^17.4.0`.
+Install version 0.8.1: `npm install @aquariusdefi/sdk@0.8.1 @stellar/stellar-sdk@^17.4.0`.
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar.
 
-**Status: 0.8.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
+**Status: 0.8.1 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
 
 Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.4.0)
 as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
@@ -489,18 +489,18 @@ manual ledger, trustline and signing-mode resolution with `prepare()` and review
 its summary before calling `place()`. The 180-day / 3,110,399-ledger maximum also
 applies to legacy and imported orders; the settlement can enforce a lower limit.
 
-After `0.8.0` is published, replace the temporary Git URL or local tarball with
+To use the stable release, replace the temporary Git URL or local tarball with
 the npm version and commit the regenerated application lockfile:
 
 ```sh
-yarn add @aquariusdefi/sdk@0.8.0 --exact
+yarn add @aquariusdefi/sdk@0.8.1 --exact
 # Or, for npm consumers:
-npm install @aquariusdefi/sdk@0.8.0 --save-exact
+npm install @aquariusdefi/sdk@0.8.1 --save-exact
 ```
 
 The required Node.js version and Stellar SDK peer dependency are unchanged from
-`0.6.0`. Staged split swaps are explicit helpers and require compatible router
-and collector contracts; ordinary `quote()` / `swap()` behavior is unchanged.
+`0.6.0`. Version `0.7.0` introduced the explicit split helpers for compatible router
+and collector contracts.
 Version `0.8.0` adds typed settlement routes and adaptive preparation.
 Select `routeFormat: "typed"` for a compatible settlement. Use
 `prepareSwapWithResourceRetry` to retry unsigned preparation once with a
@@ -707,6 +707,18 @@ network's current allowance limit and cover the order. Annual orders are not
 supported by the agreed one-signature flow.
 
 ## Split swaps
+
+`aqua.swap({ from: XLM, to: AQUA, amountIn })` requests the best exact-input plan found by the backend.
+It can use one route or divide the input across pools in one transaction. The
+SDK computes the minimum total output from your slippage and returns the actual
+output from the confirmed swap. The configured router must support `swap_split`
+when its API serves split plans. An older API that returns HTTP 404 or 405 for
+the split endpoint uses the chained route. Other quote errors propagate.
+
+Exact-output swaps use strict receive. Swaps with `providerFee` use the chained
+collector interface for compatibility with existing collectors. For an explicit
+linear route to inspect before execution, use `quote()`. To inspect a split
+plan or build a split operation for a compatible collector, use the helpers below.
 
 An exact-input swap that the backend splits across routes runs as one call to
 the router's `swap_split`. `findPathSplit` returns one plan, split or not. The

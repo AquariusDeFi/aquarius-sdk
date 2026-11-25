@@ -204,11 +204,11 @@ def test_swap_retries_requote_on_slippage(monkeypatch):
             return "receipt"
 
     client.quote = lambda *a, **k: (attempts.append(1), FakeQuote(len(attempts)))[1]
-    assert client.swap(XLM, AQUA, retries=2, amount_in=1) == "receipt"
+    assert client.swap(XLM, AQUA, retries=2, amount_out=1) == "receipt"
     assert len(attempts) == 3
     attempts.clear()
     with pytest.raises(SlippageError):
-        client.swap(XLM, AQUA, retries=1, amount_in=1)
+        client.swap(XLM, AQUA, retries=1, amount_out=1)
     assert len(attempts) == 2
 
 
@@ -227,7 +227,7 @@ def test_swap_backs_off_between_requote_attempts(monkeypatch):
     monkeypatch.setattr("aquarius.client.time.sleep", lambda seconds: sleeps.append(seconds))
 
     with pytest.raises(SlippageError):
-        client.swap(XLM, AQUA, amount_in=1, retries=3)
+        client.swap(XLM, AQUA, amount_out=1, retries=3)
 
     assert len(quotes) == 4  # initial attempt + 3 retries, each freshly quoted
     # First retry is immediate (0 -> no sleep call), later ones escalate;

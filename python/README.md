@@ -1,6 +1,6 @@
 # aquarius-sdk
 
-Install after the 0.8.0 release: `pip install aquarius-sdk==0.8.0`.
+Install version 0.8.1: `pip install aquarius-sdk==0.8.1`.
 
 Version `0.7.0` adds validated staged split swaps, provider split fees and native
 receive trust, preserves terminating simulation errors after handled trustline
@@ -23,7 +23,7 @@ sent to telemetry. This Python-only metadata does not change validation or retri
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.8.0 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+**Status: 0.8.1 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
 
 ## Swap through a specific pool
 
@@ -337,6 +337,18 @@ network's current allowance limit and cover the order. Annual orders are not
 supported by the agreed one-signature flow.
 
 ## Split swaps
+
+`aqua.swap(XLM, AQUA, amount_in=amount_in)` requests the best exact-input plan found by the backend.
+It can use one route or divide the input across pools in one transaction. The
+SDK computes the minimum total output from your slippage and returns the actual
+output from the confirmed swap. The configured router must support `swap_split`
+when its API serves split plans. An older API that returns HTTP 404 or 405 for
+the split endpoint uses the chained route. Other quote errors propagate.
+
+Exact-output swaps use strict receive. Swaps with `provider_fee` use the chained
+collector interface for compatibility with existing collectors. For an explicit
+linear route to inspect before execution, use `quote()`. To inspect a split
+plan or build a split operation for a compatible collector, use the helpers below.
 
 An exact-input swap that the backend splits across routes runs as one call to
 the router's `swap_split`. `find_path_split` returns one plan, split or not. The
