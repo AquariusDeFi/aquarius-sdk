@@ -197,11 +197,11 @@ test("swap retries re-quote on slippage", async () => {
       return "receipt";
     },
   });
-  assert.equal(await client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 2 }), "receipt");
+  assert.equal(await client.swap({ from: XLM, to: XLM, amountOut: 1n, retries: 2 }), "receipt");
   assert.equal(attempts, 3);
   attempts = 0;
   await assert.rejects(
-    client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 1 }),
+    client.swap({ from: XLM, to: XLM, amountOut: 1n, retries: 1 }),
     SlippageErrorDirect,
   );
   assert.equal(attempts, 2);
@@ -230,7 +230,7 @@ test("swap backs off between re-quote attempts, first retry immediate", async ()
   };
   try {
     await assert.rejects(
-      client.swap({ from: XLM, to: XLM, amountIn: 1n, retries: 2 }),
+      client.swap({ from: XLM, to: XLM, amountOut: 1n, retries: 2 }),
       SlippageErrorDirect,
     );
   } finally {

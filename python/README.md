@@ -338,6 +338,18 @@ supported by the agreed one-signature flow.
 
 ## Split swaps
 
+`aqua.swap(XLM, AQUA, amount_in=amount_in)` requests the best exact-input plan found by the backend.
+It can use one route or divide the input across pools in one transaction. The
+SDK computes the minimum total output from your slippage and returns the actual
+output from the confirmed swap. The configured router must support `swap_split`
+when its API serves split plans. An older API that returns HTTP 404 or 405 for
+the split endpoint uses the chained route. Other quote errors propagate.
+
+Exact-output swaps use strict receive. Swaps with `provider_fee` use the chained
+collector interface for compatibility with existing collectors. For an explicit
+linear route to inspect before execution, use `quote()`. To inspect a split
+plan or build a split operation for a compatible collector, use the helpers below.
+
 An exact-input swap that the backend splits across routes runs as one call to
 the router's `swap_split`. `find_path_split` returns one plan, split or not. The
 SDK checks it, then builds the call with the user's whole authorization:

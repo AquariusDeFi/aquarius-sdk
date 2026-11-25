@@ -2,9 +2,9 @@ import { Buffer } from "buffer";
 
 import { Address, Asset as StellarAsset, Keypair, Operation, Transaction, hash, nativeToScVal, scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 
-import { ApiClient, FindPathResponse, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute } from "./api.js";
+import { ApiClient, FindPathResponse, HTTP_TIMEOUT_MS, parseFindPathResponse, ParsedRoute, SplitEndpointUnavailableError } from "./api.js";
 import { Asset } from "./assets.js";
-import type { SwapSplitPlan } from "./split-swap.js";
+import { buildSwapSplitOperation, getSwapSplitResult, normalizeSwapSplitPlan, type SwapSplitPlan } from "./split-swap.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
 import { BatchCall, batchArgs, batchOperation, batchResults, isBudgetExceeded } from "./batch.js";
 import { snapTick, tickFromPrice, tickSpacingForFee } from "./concentrated.js";
@@ -128,6 +128,14 @@ export type QuoteParams = {
   /** Route and execute the swap through a provider-fee collector. */
   providerFee?: ProviderFeeConfig;
 } & ({ amountIn: bigint; amountOut?: never } | { amountOut: bigint; amountIn?: never });
+
+function swapSlippageBps(value?: number): number {
+  const slippage = value ?? 0.01;
+  if (!Number.isFinite(slippage) || slippage < 0 || slippage >= 1) {
+    throw new AquariusError("slippage must be a finite fraction in [0, 1)");
+  }
+  return Math.round(slippage * 10_000);
+}
 
 export interface SwapOptions {
   /**
@@ -408,11 +416,7 @@ export class AquariusClient {
       throw new AquariusError("Pass exactly one of amountIn / amountOut");
     }
     if (params.providerFee) validateProviderFee(params.providerFee);
-    const slippage = params.slippage ?? 0.01;
-    if (!Number.isFinite(slippage) || slippage < 0 || slippage >= 1) {
-      throw new AquariusError("slippage must be a finite fraction in [0, 1)");
-    }
-    const slippageBps = Math.round(slippage * 10_000);
+    const slippageBps = swapSlippageBps(params.slippage);
     const exactInput = params.amountIn !== undefined;
     const tokenIn = params.from.contractId(this.network.passphrase);
     const requestedAmount = exactInput ? params.amountIn! : params.amountOut!;
@@ -440,7 +444,7 @@ export class AquariusClient {
   // -- writes ------------------------------------------------------------------
 
   /**
-   * quote() + execute() in one call, for bots.
+   * Execute a swap. Exact-input swaps without a provider fee use smart routing.
    *
    * retries: how many times to re-quote and retry after a SlippageError.
    * Each attempt starts from a fresh quote; the first retry is immediate and
@@ -452,6 +456,9 @@ export class AquariusClient {
     if (retries < 0) throw new AquariusError("retries must be >= 0");
     for (let attempt = 0; ; attempt++) {
       try {
+        if (quoteParams.amountIn !== undefined && quoteParams.amountOut === undefined && !quoteParams.providerFee) {
+          return await this.sell(quoteParams);
+        }
         return await (await this.quote(quoteParams as QuoteParams)).execute();
       } catch (error) {
         if (!(error instanceof SlippageError) || attempt >= retries) throw error;
@@ -459,6 +466,36 @@ export class AquariusClient {
         const delay = delays[Math.min(attempt, delays.length - 1)];
         if (delay) await sleep(delay);
       }
+    }
+  }
+
+  private async sell(params: Extract<QuoteParams, { amountIn: bigint }>): Promise<Receipt> {
+    const bps = swapSlippageBps(params.slippage);
+    const tokenIn = params.from.contractId(this.network.passphrase);
+    const tokenOut = params.to.contractId(this.network.passphrase);
+    const amount = params.amountIn.toString();
+    let response;
+    try {
+      response = await this.api.findPathSplit({ token_in_address: tokenIn, token_out_address: tokenOut, amount });
+    } catch (error) {
+      if (!(error instanceof SplitEndpointUnavailableError)) throw error;
+      return (await this.quote(params)).execute();
+    }
+    const plan = normalizeSwapSplitPlan(response, tokenIn, tokenOut, amount);
+    const minimum = (BigInt(plan.amountOut) * BigInt(10_000 - bps) / 10_000n).toString();
+    const signer = this.requireSigner();
+    const source = signer.publicKey();
+    const operation = buildSwapSplitOperation({ source, router: this.network.router, tokenIn, tokenOut, plan, minimum });
+    try {
+      const tx = await this.engine.prepare(source, () => operation, signer);
+      const result = await this.engine.signAndSubmit(tx, signer);
+      if (result.returnValue?.type !== "scvU128") {
+        throw new AquariusError("Unexpected swap return value", result.txHash);
+      }
+      return { txHash: result.txHash, amountIn: params.amountIn, amountOut: getSwapSplitResult(result.returnValue, false) };
+    } catch (error) {
+      if (error instanceof SlippageError) error.attachRequote(() => this.quote(params));
+      throw error;
     }
   }
 

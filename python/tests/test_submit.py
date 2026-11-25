@@ -166,7 +166,7 @@ def test_swap_retries_failed_transactions_only_for_diagnosed_slippage(
 
     monkeypatch.setattr(client, "quote", quote)
     with pytest.raises(error_type) as caught:
-        client.swap(XLM, XLM, amount_in=1, retries=2)
+        client.swap(XLM, XLM, amount_out=1, retries=2)
     assert type(caught.value) is error_type
     assert caught.value.tx_hash == "failed-hash"
     assert len(quotes) == attempts

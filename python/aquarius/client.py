@@ -9,7 +9,7 @@ import requests
 from stellar_sdk import Address, Network, SorobanServer, scval
 from stellar_sdk.client.requests_client import RequestsClient
 from stellar_sdk.exceptions import AccountNotFoundException
-from stellar_sdk.xdr import SCVal, SorobanAuthorizationEntry
+from stellar_sdk.xdr import SCVal, SCValType, SorobanAuthorizationEntry
 from stellar_sdk.soroban_rpc import AuthMode
 
 from .api import ApiClient, ParsedRoute, parse_find_path_response
@@ -17,7 +17,7 @@ from .authorization import authorized_invocation, source_account_entry
 from .assets import Asset
 from .collector import FeeCollector
 from .ice import IceClient, IceContracts
-from .errors import AquariusError, SlippageError, classify_contract_error
+from .errors import APIHTTPError, AquariusError, SlippageError, classify_contract_error
 from .limit_orders import (
     _validate_executor_reward,
     LimitOrderConfig,
@@ -35,7 +35,7 @@ from .limit_orders import (
 from .pool import Pool, Position, parse_pools_map, sort_token_ids
 from .networks import NETWORKS, NetworkConfig
 from .signer import signer_public_key
-from .split_swap import SwapSplitPlan
+from .split_swap import SwapSplitPlan, build_swap_split_operation, get_swap_split_result, normalize_swap_split_plan
 from .submit import SubmitEngine
 
 _FRIENDBOT_URL = "https://friendbot.stellar.org"
@@ -316,8 +316,11 @@ class AquariusClient:
 
     # -- writes ------------------------------------------------------------------
 
-    def swap(self, from_: Asset, to: Asset, *, retries: int = 0, **kwargs) -> Receipt:
-        """quote() + execute() in one call, for bots.
+    def swap(
+        self, from_: Asset, to: Asset, *, retries: int = 0, amount_in: int | None = None,
+        amount_out: int | None = None, slippage: float = 0.01, provider_fee: ProviderFeeConfig | None = None,
+    ) -> Receipt:
+        """Execute a swap. Exact-input swaps without a provider fee use smart routing.
 
         retries: how many times to re-quote and retry after a SlippageError.
         Each attempt starts from a fresh quote; the first retry is immediate
@@ -328,7 +331,11 @@ class AquariusClient:
             raise AquariusError("retries must be >= 0")
         for attempt in range(retries + 1):
             try:
-                return self.quote(from_, to, **kwargs).execute()
+                if amount_in is not None and amount_out is None and provider_fee is None:
+                    return self._sell(from_, to, amount_in, slippage)
+                return self.quote(
+                    from_, to, amount_in=amount_in, amount_out=amount_out, slippage=slippage, provider_fee=provider_fee,
+                ).execute()
             except SlippageError:
                 if attempt == retries:
                     raise
@@ -337,6 +344,40 @@ class AquariusClient:
                 if delay:
                     time.sleep(delay)
         raise AquariusError("unreachable: the retry loop always returns or raises")
+
+    def _sell(
+        self, from_: Asset, to: Asset, amount_in: int, slippage: float,
+    ) -> Receipt:
+        if not 0 <= slippage < 1:
+            raise AquariusError("slippage must be a finite fraction in [0, 1)")
+        token_in = from_.contract_id(self.network.passphrase)
+        token_out = to.contract_id(self.network.passphrase)
+        amount = str(amount_in)
+        try:
+            response = self.api.find_path_split({
+                "token_in_address": token_in, "token_out_address": token_out, "amount": amount,
+            })
+        except APIHTTPError as error:
+            if error.status_code not in (404, 405):
+                raise
+            return self.quote(from_, to, amount_in=amount_in, slippage=slippage).execute()
+        plan = normalize_swap_split_plan(response, token_in, token_out, amount)
+        minimum = int(plan.amount_out) * (10_000 - round(slippage * 10_000)) // 10_000
+        signer = self._require_signer()
+        source = signer_public_key(signer)
+        operation = build_swap_split_operation(
+            source=source, router=self.network.router, token_in=token_in, token_out=token_out,
+            plan=plan, minimum=str(minimum),
+        )
+        try:
+            tx = self.engine.prepare(source, lambda builder: builder.append_operation(operation), signer)
+            result = self.engine.sign_and_submit(tx, signer)
+            if result.return_value is None or result.return_value.type != SCValType.SCV_U128:
+                raise AquariusError("Unexpected swap return value", tx_hash=result.tx_hash)
+            return Receipt(result.tx_hash, amount_in, get_swap_split_result(result.return_value))
+        except SlippageError as error:
+            error.attach_requote(lambda: self.quote(from_, to, amount_in=amount_in, slippage=slippage))
+            raise
 
     # -- provider-fee collectors ---------------------------------------------------
 
