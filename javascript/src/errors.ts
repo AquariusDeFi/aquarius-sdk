@@ -110,7 +110,9 @@ const CONTRACT_MESSAGES: Record<number, string> = {
 
 // The token contract reports a missing trustline in its diagnostic output.
 // Checked before contract codes: the same situation surfaces under different
-// codes depending on where in the chain the payout fails.
+// codes depending on where in the chain the payout fails. A swap contract
+// that opens the receive trustline itself fails instead on the asset's
+// `trust` call, when the recipient has not authorized opening the line.
 const TRUSTLINE_MARKER = "trustline entry is missing";
 
 const NO_TRUSTLINE_MESSAGE =
@@ -195,6 +197,15 @@ export function classifyContractError(
   return null;
 }
 
+/** The host's report of a `trust` call that failed with an Auth error. */
+function isUnauthorizedTrust(event: xdr.DiagnosticEvent): boolean {
+  if (!topicsOf(event).some(t => t.type === "scvError" && t.error.type === "sceAuth")) return false;
+  const data = event.event.body.v0.data;
+  const [message, fn] = data.type === "scvVec" ? data.vec ?? [] : [];
+  return message?.type === "scvString" && message.str.toString() === "contract call failed"
+    && fn?.type === "scvSymbol" && fn.sym.toString() === "trust";
+}
+
 /**
  * @internal Typed error from a failed transaction's diagnostic events, if
  * determinable. The trustline marker is checked on the raw event bytes;
@@ -240,7 +251,7 @@ export function errorFromDiagnostics(
   let code: number | null = null;
   let storage = false;
   for (const { bytes, event } of cascade) {
-    if (bytes.includes(TRUSTLINE_MARKER)) {
+    if (bytes.includes(TRUSTLINE_MARKER) || isUnauthorizedTrust(event)) {
       return new NoTrustlineError(NO_TRUSTLINE_MESSAGE, txHash);
     }
     for (const topic of topicsOf(event)) {

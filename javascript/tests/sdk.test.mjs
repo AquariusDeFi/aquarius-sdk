@@ -157,6 +157,34 @@ test("a trustline failure reported directly stays typed", () => {
   assert.ok(classifyContractError(message) instanceof NoTrustlineError);
 });
 
+const unauthorizedTrust = JSON.parse(
+  readFileSync(
+    new URL("../../testdata/diagnostic_events_unauthorized_trust.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+test("diagnostics detect a receive trustline the swap contract could not open", async () => {
+  const { xdr } = await import("@stellar/stellar-sdk");
+  const events = unauthorizedTrust.events_xdr;
+  for (const error of [
+    errorFromDiagnostics(events, "hash"),
+    errorFromDiagnostics(events.map(raw => xdr.DiagnosticEvent.fromXdr(raw, "base64"))),
+    classifyContractError(unauthorizedTrust.sim_error_first_line, undefined, events),
+  ]) {
+    assert.ok(error instanceof NoTrustlineError);
+    assert.match(error.message, /output recipient/);
+  }
+});
+
+test("an Auth failure outside a trust call stays unclassified", () => {
+  const withoutTrustFailure = unauthorizedTrust.events_xdr.filter(
+    e => !Buffer.from(e, "base64").includes("contract call failed"),
+  );
+  assert.equal(errorFromDiagnostics(withoutTrustFailure), null);
+  assert.equal(classifyContractError(unauthorizedTrust.sim_error_first_line, undefined, withoutTrustFailure), null);
+});
+
 test("timeout resolution follows the signer type", async () => {
   const { Keypair } = await import("@stellar/stellar-sdk");
   assert.equal(
