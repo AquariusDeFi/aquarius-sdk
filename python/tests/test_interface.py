@@ -294,7 +294,8 @@ def test_swap_operation_carries_bounded_client_built_authorization():
         Address.from_xdr_sc_address(root.function.contract_fn.contract_address).address
         == client.network.router
     )
-    [transfer] = root.sub_invocations
+    [trust, transfer] = root.sub_invocations  # trust opens a missing AQUA trustline
+    assert trust.function.contract_fn.function_name.sc_symbol == b"trust"
     t = transfer.function.contract_fn
     assert t.function_name.sc_symbol == b"transfer"
     assert Address.from_xdr_sc_address(t.contract_address).address == token_in
@@ -304,6 +305,6 @@ def test_swap_operation_carries_bounded_client_built_authorization():
     [entry] = op.auth
     root = entry.root_invocation
     assert root.function.contract_fn.function_name.sc_symbol == b"swap_chained_strict_receive"
-    [transfer] = root.sub_invocations
+    [trust, transfer] = root.sub_invocations
     # max-in: the contract pulls at most the guard and refunds the difference
     assert scval.from_int128(transfer.function.contract_fn.args[2]) == quote.guard

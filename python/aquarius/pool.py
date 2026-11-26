@@ -267,6 +267,7 @@ class Pool:
             _token_in=token_in,
             _token_out=token_out,
             _slippage=slippage,
+            _to=to,
         )
 
     def swap(self, from_, to, *, retries: int = 0, **kwargs):
@@ -595,6 +596,7 @@ class PoolQuote:
     _token_in: str = field(repr=False)
     _token_out: str = field(repr=False)
     _slippage: float = field(repr=False)
+    _to: Asset | str = field(repr=False)  # the output as the caller named it
 
     def execute(self):
         """Build, sign, submit, confirm, and parse the pinned-pool swap."""
@@ -615,9 +617,15 @@ class PoolQuote:
         # user.require_auth() and then pulls transfer(user -> pool) itself.
         # The auth tree mirrors that exactly:
         #   router.swap -> pool.swap -> token.transfer(user, pool, amount)
+        # Before calling the pool, the router opens a missing receive
+        # trustline with the output asset's trust(user).
+        trust = (
+            [authorized_invocation(self._token_out, "trust", [scval.to_address(user)])]
+            if client._authorizes_receive_trustline(self._to, user) else []
+        )
         entry = source_account_entry(authorized_invocation(
             client.network.router, "swap", args,
-            [authorized_invocation(
+            [*trust, authorized_invocation(
                 pool.address, "swap",
                 [
                     scval.to_address(user),
@@ -639,7 +647,7 @@ class PoolQuote:
             confirmed = client._submit_router("swap", args, auth=[entry])
         except SlippageError as error:
             error.attach_requote(lambda: pool.quote(
-                self._token_in, self._token_out,
+                self._token_in, self._to,
                 amount_in=self.amount_in, slippage=self._slippage,
             ))
             raise
