@@ -1,10 +1,10 @@
 # @aquariusdefi/sdk
 
-Install version 0.8.1: `npm install @aquariusdefi/sdk@0.8.1 @stellar/stellar-sdk@^17.4.0`.
+Install version 0.8.2: `npm install @aquariusdefi/sdk@0.8.2 @stellar/stellar-sdk@^17.4.0`.
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar.
 
-**Status: 0.8.1 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
+**Status: 0.8.2 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
 
 Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.4.0)
 as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
@@ -105,7 +105,7 @@ const quote = await aqua.quote({
 const receipt = await quote.execute();
 ```
 
-Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amountOut` instead of `amountIn` for an exact-output provider swap.
+Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amountOut` instead of `amountIn` for an exact-output provider swap. A `recipient` other than the signer must already hold the trustline for a classic output; otherwise the swap fails with `NoTrustlineError`.
 
 ## Liquidity
 
@@ -237,17 +237,13 @@ keeps a minimum of at least one base unit.
 
 ### Swapping into an asset you don't hold yet
 
-```ts
-await quote.execute({ addTrustline: true });          // trustline + swap, one signature
-await quote.buildTransaction({ addTrustline: true });
-```
-
-Classic assets only, and only when the issuer does not require
-authorization. The router or provider fee collector opens the trustline inside
-the swap, using the signer's authorization. A different recipient needs its
-own authorization to open a trustline. If your provider fee collector predates
-receive-trustline support, use a compatible collector or open the line
-separately before swapping.
+Swaps authorize the receive trustline. A swap that pays the signer a classic
+asset the account does not hold opens the trustline in the same transaction,
+under the same signature, when the issuer does not require authorization. A
+different recipient needs its own authorization to open a trustline. If your
+provider fee collector predates receive-trustline support, use a compatible
+collector or open the line separately before swapping. The `addTrustline`
+option no longer affects swaps.
 
 ### Batch reads
 
@@ -283,7 +279,7 @@ await pool.buildClaimIncentives();
 await pool.buildScheduleIncentive({ token, tps, startAt, durationSeconds });
 await aqua.buildClaim(items);
 await aqua.pools.buildCreate(params);          // -> { xdr, pool }
-await quote.buildTransaction({ addTrustline: true });
+await quote.buildTransaction();
 ```
 
 When a separate restore is required, a build throws `RestoreRequiredError`
@@ -496,9 +492,9 @@ To use the stable release, replace the temporary Git URL or local tarball with
 the npm version and commit the regenerated application lockfile:
 
 ```sh
-yarn add @aquariusdefi/sdk@0.8.1 --exact
+yarn add @aquariusdefi/sdk@0.8.2 --exact
 # Or, for npm consumers:
-npm install @aquariusdefi/sdk@0.8.1 --save-exact
+npm install @aquariusdefi/sdk@0.8.2 --save-exact
 ```
 
 The required Node.js version and Stellar SDK peer dependency are unchanged from

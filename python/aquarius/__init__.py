@@ -76,7 +76,7 @@ from .swap_resources import (
 from .ice import IceContracts
 from .resource_retry import PreparedSwapWithBudget, SwapResourceRetryEvent, prepare_swap_with_resource_retry
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 
 __all__ = [
     "IceContracts",

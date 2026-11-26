@@ -1,6 +1,6 @@
 # aquarius-sdk
 
-Install version 0.8.1: `pip install aquarius-sdk==0.8.1`.
+Install version 0.8.2: `pip install aquarius-sdk==0.8.2`.
 
 Version `0.7.0` adds validated staged split swaps, provider split fees and native
 receive trust, preserves terminating simulation errors after handled trustline
@@ -23,7 +23,7 @@ sent to telemetry. This Python-only metadata does not change validation or retri
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.8.1 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+**Status: 0.8.2 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
 
 ## Swap through a specific pool
 
@@ -90,6 +90,10 @@ receipt = quote.execute()
 quote = aqua.quote(XLM, AQUA, amount_out=500_0000000)
 ```
 
+Swaps authorize the receive trustline. A swap that pays the signer a classic
+asset the account does not hold opens the trustline in the same transaction,
+under the same signature, when the issuer does not require authorization.
+
 ## Provider fees
 
 Pass the collector configuration with the quote. The SDK keeps the fee math exact, routes through the collector, and sends output to `recipient` without requiring that address to sign:
@@ -114,7 +118,7 @@ quote = aqua.quote(
 receipt = quote.execute()
 ```
 
-Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amount_out` instead of `amount_in` for an exact-output provider swap.
+Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amount_out` instead of `amount_in` for an exact-output provider swap. A `recipient` other than the signer must already hold the trustline for a classic output; otherwise the swap fails with `NoTrustlineError`.
 
 ## Liquidity
 
