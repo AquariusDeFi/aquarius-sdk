@@ -398,8 +398,8 @@ amounts.
 
 The minimum comes from your slippage on the quoted `amount_out`, never from the
 API's `amount_out_min`. To authorize the output trustline inside the swap, pass
-`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}` and
-omit `batch`. The builder verifies the asset is `token_out` and nests `trust`
+`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}`.
+The builder verifies the asset is `token_out` and nests `trust`
 under the swap authorization. The updated contract opens missing lines atomically;
 XLM, WASM tokens, issuers, contract recipients and existing lines need no new line.
 A missing line requires the recipient's authorization and XLM reserve; issuer
@@ -419,8 +419,8 @@ Use `aqua.assemble_transaction(transaction, operation, simulation)` after your
 successful simulation to preserve the fixed operation and apply SDK CPU and
 resource-fee headroom; then check the assembled envelope's resources. It does
 not simulate again, sign, submit or restore storage.
-Explicit `batch` retains legacy external `[trust, swap_split]` behavior; only
-that mode uses `get_swap_split_result(retval, with_trustline=True)`.
+Remove the old `batch` argument when migrating. Use
+`get_swap_split_result(retval, with_trustline=True)` only for historical batched results.
 Use `aqua.fee_collector(address).build_swap_split_operation(...)` for a collector-bound
 operation. Supply the same source, router, token pair, plan and net minimum as
 the standalone builder, plus `fee_fraction`, optional `denominator` and optional

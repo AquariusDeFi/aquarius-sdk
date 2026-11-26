@@ -155,7 +155,7 @@ def test_shared_quotes(case):
 def test_shared_builds(case):
     response = base(case["base"])["response"]
     trust = (
-        {"batch": FIXTURE["batch"], "trustline": FIXTURE["trustline"]}
+        {"trustline": FIXTURE["trustline"]}
         if case.get("trust")
         else {}
     )
@@ -188,7 +188,7 @@ def encoded(values):
     return [value.to_xdr() for value in values]
 
 
-def assert_swap_split(call, root, response, minimum):
+def assert_swap_split(call, root, response, minimum, *, with_trustline=False):
     """The swap_split call and the user's whole authorization of it: the call with
     the same arguments and the one input transfer."""
     contract, name, args = call
@@ -204,8 +204,8 @@ def assert_swap_split(call, root, response, minimum):
     signed_contract, signed_name, signed_args = contract_call(root.function.contract_fn)
     assert (signed_contract, signed_name) == (contract, name)
     assert encoded(signed_args) == encoded(args)
-    assert len(root.sub_invocations) == 1
-    transfer = root.sub_invocations[0]
+    assert len(root.sub_invocations) == (2 if with_trustline else 1)
+    transfer = root.sub_invocations[-1]
     moved_contract, moved_name, moved_args = contract_call(
         transfer.function.contract_fn
     )
@@ -253,57 +253,30 @@ def test_shared_swap_split_operation_and_authorization(name):
 
 
 @pytest.mark.parametrize("name", GOLDEN)
-def test_shared_trust_and_swap_split_batch(name):
+def test_shared_swap_split_with_receive_trust(name):
     entry = FIXTURE["plans"][name]
     response = entry["response"]
     minimum = response["amount_out_min"]
     operation = build_swap_split_operation(
-        **build_options(
-            normalize(response),
-            minimum,
-            {"batch": FIXTURE["batch"], "trustline": FIXTURE["trustline"]},
-        )
+        **build_options(normalize(response), minimum, {"trustline": FIXTURE["trustline"]})
     ).to_xdr_object()
     assert operation.to_xdr() == entry["trustOperationXdr"]
     invoke = operation.body.invoke_host_function_op
-    contract, name, args = contract_call(invoke.host_function.invoke_contract)
-    assert (contract, name) == (FIXTURE["batch"], "batch")
-    authorizers, calls, return_results = args
-    assert [address(value) for value in authorizers.vec.sc_vec] == [FIXTURE["source"]]
-    assert return_results.b is True
-    assert len(calls.vec.sc_vec) == 2
-    trust, swap = (value.vec.sc_vec for value in calls.vec.sc_vec)
-    assert [
-        address(trust[0]),
-        trust[1].sym.sc_symbol.decode(),
-        [address(v) for v in trust[2].vec.sc_vec],
-    ] == [
-        REQUEST["token_out_address"],
-        "trust",
-        [FIXTURE["source"]],
-    ]
     assert len(invoke.auth) == 1
     root = invoke.auth[0].root_invocation
-    signed_contract, signed_name, signed_args = contract_call(root.function.contract_fn)
-    assert (signed_contract, signed_name) == (FIXTURE["batch"], "batch")
-    assert encoded(signed_args) == encoded(args)
-    assert len(root.sub_invocations) == 2
-    trust_auth, swap_auth = root.sub_invocations
-    trusted_contract, trusted_name, trusted_args = contract_call(
-        trust_auth.function.contract_fn
-    )
-    assert [trusted_contract, trusted_name, [address(v) for v in trusted_args]] == [
-        REQUEST["token_out_address"],
-        "trust",
-        [FIXTURE["source"]],
-    ]
-    assert trust_auth.sub_invocations == []
     assert_swap_split(
-        (address(swap[0]), swap[1].sym.sc_symbol.decode(), swap[2].vec.sc_vec),
-        swap_auth,
+        contract_call(invoke.host_function.invoke_contract),
+        root,
         response,
         minimum,
+        with_trustline=True,
     )
+    trust = root.sub_invocations[0]
+    contract, function, args = contract_call(trust.function.contract_fn)
+    assert (contract, function, [address(v) for v in args]) == (
+        REQUEST["token_out_address"], "trust", [FIXTURE["source"]]
+    )
+    assert trust.sub_invocations == []
 
 
 def test_over_long_route_xdr_is_rejected_before_decoding():

@@ -139,9 +139,9 @@ function swapSlippageBps(value?: number): number {
 
 export interface SwapOptions {
   /**
-   * Add the trustline for the output asset in the same transaction, through
-   * the batch contract — one signature, one fee. Only for classic assets the
-   * signer does not hold yet and whose issuer does not require authorization.
+   * Authorize the swap contract to open the signer's output trustline in
+   * the same transaction. Only for classic assets whose issuer does not
+   * require authorization.
    */
   addTrustline?: boolean;
 }
@@ -492,7 +492,7 @@ export class AquariusClient {
       if (result.returnValue?.type !== "scvU128") {
         throw new AquariusError("Unexpected swap return value", result.txHash);
       }
-      return { txHash: result.txHash, amountIn: params.amountIn, amountOut: getSwapSplitResult(result.returnValue, false) };
+      return { txHash: result.txHash, amountIn: params.amountIn, amountOut: getSwapSplitResult(result.returnValue) };
     } catch (error) {
       if (error instanceof SlippageError) error.attachRequote(() => this.quote(params));
       throw error;
@@ -1460,27 +1460,13 @@ export class AquariusClient {
     tokenIn: string,
     originalParams: QuoteParams,
   ): Quote {
-    const buildOperation = (options?: SwapOptions) => {
-      if (!options?.addTrustline) {
-        return this.buildSwapOperation(parsed, exactInput, tokenIn, originalParams.providerFee);
-      }
-      // trust + swap atomically: the batch authorizes both, the swap keeps
-      // its own bounded transfer underneath.
-      const plan = this.swapPlan(parsed, exactInput, tokenIn, originalParams.providerFee);
-      const user = this.requireSigner().publicKey();
-      const trustline = this.trustlineCall(originalParams.to, user);
-      return batchOperation(
-        this.network.batch,
-        user,
-        [trustline, { contractId: plan.contractId, fn: plan.fn, args: plan.args }],
-        [authorizedInvocation(trustline.contractId, trustline.fn, trustline.args), plan.root],
-        true,
-      );
-    };
-    const swapReturn = (retval: xdr.ScVal | undefined, options?: SwapOptions): bigint => {
-      const value = options?.addTrustline ? batchResults(retval, 2)[1] : retval!;
-      return BigInt(scValToNative(value) as bigint);
-    };
+    const buildOperation = (options?: SwapOptions) => this.buildSwapOperation(
+      parsed,
+      exactInput,
+      tokenIn,
+      originalParams.providerFee,
+      options?.addTrustline ? originalParams.to : undefined,
+    );
 
     const quote: Quote = {
       amountIn: parsed.amountIn,
@@ -1504,7 +1490,10 @@ export class AquariusClient {
             signer,
           );
           const result = await this.engine.signAndSubmit(tx, signer);
-          const returned = swapReturn(result.returnValue, options);
+          if (result.returnValue?.type !== "scvU128") {
+            throw new AquariusError("Unexpected swap return value", result.txHash);
+          }
+          const returned = scValToNative(result.returnValue) as bigint;
           return exactInput
             ? { txHash: result.txHash, amountIn: parsed.amountIn, amountOut: returned }
             : { txHash: result.txHash, amountIn: returned, amountOut: parsed.amountOut };
@@ -1802,12 +1791,13 @@ export class AquariusClient {
    * strict-receive the authorized transfer is maxIn — the contract pulls the
    * maximum and refunds the difference.
    */
-  private swapPlan(
+  private buildSwapOperation(
     parsed: ParsedRoute,
     exactInput: boolean,
     tokenIn: string,
     providerFee?: ProviderFeeConfig,
-  ): { contractId: string; fn: string; args: xdr.ScVal[]; root: xdr.SorobanAuthorizedInvocation } {
+    receiveTrustline?: Asset,
+  ): xdr.Operation {
     const signer = this.requireSigner();
     const user = signer.publicKey();
     const contractId = providerFee?.contractId ?? this.network.router;
@@ -1839,42 +1829,29 @@ export class AquariusClient {
       nativeToScVal(transferAmount, { type: "i128" }),
     ]);
 
-    return {
-      contractId,
-      fn,
-      args,
-      root: authorizedInvocation(contractId, fn, args, [transferInvocation]),
-    };
-  }
-
-  private buildSwapOperation(
-    parsed: ParsedRoute,
-    exactInput: boolean,
-    tokenIn: string,
-    providerFee?: ProviderFeeConfig,
-  ): xdr.Operation {
-    const plan = this.swapPlan(parsed, exactInput, tokenIn, providerFee);
+    const subInvocations = [transferInvocation];
+    if (receiveTrustline) {
+      if (providerFee?.recipient !== undefined && providerFee.recipient !== user) {
+        throw new AquariusError("Opening another recipient's trustline requires its authorization");
+      }
+      if (receiveTrustline.isNative || receiveTrustline.code === undefined || receiveTrustline.issuer === undefined) {
+        throw new AquariusError("Automatic trustlines are only available for classic assets");
+      }
+      if (receiveTrustline.issuer === user) {
+        throw new AquariusError("An issuer needs no trustline for its own asset");
+      }
+      subInvocations.unshift(authorizedInvocation(
+        receiveTrustline.contractId(this.network.passphrase),
+        "trust",
+        [new Address(user).toScVal()],
+      ));
+    }
     return Operation.invokeContractFunction({
-      contract: plan.contractId,
-      function: plan.fn,
-      args: plan.args,
-      auth: [sourceAccountEntry(plan.root)],
+      contract: contractId,
+      function: fn,
+      args,
+      auth: [sourceAccountEntry(authorizedInvocation(contractId, fn, args, subInvocations))],
     });
-  }
-
-  /** The `trust` call on a classic asset's contract — the SAC's trustline creator. */
-  private trustlineCall(asset: Asset, user: string): BatchCall {
-    if (asset.isNative || asset.code === undefined || asset.issuer === undefined) {
-      throw new AquariusError("Automatic trustlines are only available for classic assets");
-    }
-    if (asset.issuer === user) {
-      throw new AquariusError("An issuer needs no trustline for its own asset");
-    }
-    return {
-      contractId: asset.contractId(this.network.passphrase),
-      fn: "trust",
-      args: [new Address(user).toScVal()],
-    };
   }
 
   private async fetchHorizonAccount(

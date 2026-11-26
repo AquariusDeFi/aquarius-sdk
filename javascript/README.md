@@ -243,8 +243,11 @@ await quote.buildTransaction({ addTrustline: true });
 ```
 
 Classic assets only, and only when the issuer does not require
-authorization — the trustline is created by the asset contract's `trust`
-in the same batch as the swap.
+authorization. The router or provider fee collector opens the trustline inside
+the swap, using the signer's authorization. A different recipient needs its
+own authorization to open a trustline. If your provider fee collector predates
+receive-trustline support, use a compatible collector or open the line
+separately before swapping.
 
 ### Batch reads
 
@@ -769,7 +772,7 @@ amounts.
 
 The minimum comes from your slippage on the quoted `amountOut`, never from the
 API's `amount_out_min`. To authorize the output trustline inside the swap, pass
-`trustline: {assetCode, issuer, networkPassphrase}` and omit `batch`. The builder
+`trustline: {assetCode, issuer, networkPassphrase}`. The builder
 verifies the classic asset is `tokenOut` and puts `trust(source)` under the swap's
 authorization. The updated contract opens a missing line atomically; XLM, WASM
 tokens, issuers, contract recipients and existing lines need no new line.
@@ -788,8 +791,8 @@ Use the configured collector's actual denominator and fee cap.
 
 This requires the updated router and provider collector implementation. Existing
 collectors are not upgradeable and must be replaced to support split swaps.
-Explicit `batch` remains supported for legacy external `[trust, swap_split]`
-calls; only that mode uses `getSwapSplitResult(retval, true)`.
+Remove the old `batch` option when migrating. Use `getSwapSplitResult(retval, true)`
+only to decode historical batched results.
 The helpers never sign, submit or restore storage. Python has the same helpers
 in snake_case, with shared fixtures in `testdata/split-*.json`.
 For a collector-bound operation, use

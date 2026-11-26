@@ -36,7 +36,7 @@ const options = {
   minimum: "1",
 };
 const providerFee = {
-  contractId: fixture.batch,
+  contractId: fixture.collector,
   feeFraction: 100,
   feeDenominator: 10000,
 };

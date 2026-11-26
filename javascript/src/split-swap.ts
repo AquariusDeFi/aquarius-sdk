@@ -10,7 +10,6 @@ import {
 import { Buffer } from "buffer";
 import type { FindPathSplitPart, FindPathSplitResponse } from "./api.js";
 import { authorizedInvocation, sourceAccountEntry } from "./authorization.js";
-import { batchOperation } from "./batch.js";
 import { NoRouteError } from "./errors.js";
 import { validateProviderFee, type ProviderFeeConfig } from "./client.js";
 
@@ -404,9 +403,6 @@ export interface BuildSwapSplitOptions {
   minimum: string;
   /** Optional provider-fee collector; `minimum` bounds its net payout. */
   providerFee?: ProviderFeeConfig;
-  /** Legacy trust+swap batching for contracts without automatic trustlines.
-   * Omit to authorize `trust` directly under the swap invocation. */
-  batch?: string;
   /** Only a verified classic output asset can receive an atomic trust call. */
   trustline?: { assetCode: string; issuer: string; networkPassphrase: string };
 }
@@ -431,6 +427,10 @@ const assetContract = (
 export function buildSwapSplitOperation(
   options: BuildSwapSplitOptions,
 ): xdr.Operation {
+  ensureSwap(
+    !("batch" in options) || options.batch == null,
+    "swap batching is no longer supported",
+  );
   const {
     source,
     router,
@@ -439,7 +439,6 @@ export function buildSwapSplitOperation(
     plan,
     minimum,
     providerFee,
-    batch,
     trustline,
   } = options;
   ensureSwap(
@@ -488,68 +487,40 @@ export function buildSwapSplitOperation(
     addr(target),
     nativeToScVal(BigInt(plan.amountIn), { type: "i128" }),
   ]);
-  const root = authorizedInvocation(target, fn, args, [transfer]);
-  if (trustline === undefined || trustline === null)
-    return Operation.invokeContractFunction({
-      contract: target,
-      function: fn,
-      args,
-      auth: [sourceAccountEntry(root)],
-    });
-  if (batch != null) ensureSwap(isContract(batch), "batch is not a contract");
-  ensureSwap(
-    recipient === source,
-    "opening another recipient's trustline requires its authorization",
-  );
-  ensureSwap(
-    isObject(trustline) &&
-      [
-        trustline.assetCode,
-        trustline.issuer,
-        trustline.networkPassphrase,
-      ].every((value) => typeof value === "string"),
-    "trustline is not an asset code, issuer and network passphrase",
-  );
-  ensureSwap(
-    trustline.issuer !== source,
-    "the trustline asset is issued by the source",
-  );
-  ensureSwap(
-    assetContract(trustline) === tokenOut,
-    "the trustline asset is not token_out",
-  );
-  const trust = { contractId: tokenOut, fn: "trust", args: [addr(source)] };
-  if (batch == null) {
-    return Operation.invokeContractFunction({
-      contract: target,
-      function: fn,
-      args,
-      auth: [
-        sourceAccountEntry(
-          authorizedInvocation(target, fn, args, [
-            authorizedInvocation(tokenOut, "trust", trust.args),
-            transfer,
-          ]),
-        ),
-      ],
-    });
+  const subInvocations = [transfer];
+  if (trustline != null) {
+    ensureSwap(
+      recipient === source,
+      "opening another recipient's trustline requires its authorization",
+    );
+    ensureSwap(
+      isObject(trustline) &&
+        [trustline.assetCode, trustline.issuer, trustline.networkPassphrase]
+          .every((value) => typeof value === "string"),
+      "trustline is not an asset code, issuer and network passphrase",
+    );
+    ensureSwap(
+      trustline.issuer !== source,
+      "the trustline asset is issued by the source",
+    );
+    ensureSwap(assetContract(trustline) === tokenOut, "the trustline asset is not token_out");
+    subInvocations.unshift(authorizedInvocation(tokenOut, "trust", [addr(source)]));
   }
-  return batchOperation(
-    batch,
-    source,
-    [trust, { contractId: target, fn, args }],
-    [authorizedInvocation(tokenOut, "trust", trust.args), root],
-    true,
-  );
+  return Operation.invokeContractFunction({
+    contract: target,
+    function: fn,
+    args,
+    auth: [sourceAccountEntry(authorizedInvocation(target, fn, args, subInvocations))],
+  });
 }
 
 /**
  * The total output from the return value of a simulated or executed
- * `swap_split`; with explicit legacy batch mode, from the batch's results.
+ * `swap_split`. Pass true only when decoding a historical batched result.
  */
 export const getSwapSplitResult = (
   result: xdr.ScVal,
-  withTrustline: boolean,
+  withTrustline = false,
 ): bigint => {
   const unexpected = () =>
     new Error("Unexpected swap result. Check the transaction in the explorer.");

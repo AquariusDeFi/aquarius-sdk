@@ -365,8 +365,7 @@ def get_swap_minimum(
 def get_swap_split_result(result: SCVal, with_trustline: bool = False) -> int:
     """The total output from the return value of a simulated or executed `swap_split`.
 
-    With legacy batch mode, the batch returns one value per call: void for the trust call,
-    then the swap's output.
+    Pass with_trustline=True only to decode historical batch results.
     """
     if with_trustline:
         if (
@@ -404,7 +403,6 @@ def build_swap_split_operation(
     plan: SwapSplitPlan,
     minimum: str,
     provider_fee: ProviderFeeConfig | None = None,
-    batch: str | None = None,
     trustline: dict | None = None,
 ) -> InvokeHostFunction:
     """`router.swap_split` with its authorization: the call with all its arguments
@@ -412,8 +410,8 @@ def build_swap_split_operation(
 
     Checks the plan again before encoding it. `trustline` authorizes the contract
     to open the output line, using asset_code, issuer and network_passphrase.
-    Pass `batch` only for legacy external trust+swap batching. A provider fee
-    routes the call through its collector; `minimum` always bounds net output.
+    A provider fee routes the call through its collector; `minimum` always
+    bounds net output.
     Does not simulate, sign or submit.
     """
     _ensure_swap(
@@ -470,10 +468,8 @@ def build_swap_split_operation(
             scval.to_int128(int(plan.amount_in)),
         ],
     )
-    root = authorized_invocation(target, function, args, [transfer])
+    sub_invocations = [transfer]
     if trustline is not None:
-        if batch is not None:
-            _ensure_swap(_is_contract(batch), "batch is not a contract")
         _ensure_swap(
             recipient == source,
             "opening another recipient's trustline requires its authorization",
@@ -494,40 +490,10 @@ def build_swap_split_operation(
             _asset_contract(trustline) == token_out,
             "the trustline asset is not token_out",
         )
-        trust_args = [scval.to_address(source)]
-        if batch is None:
-            root = authorized_invocation(target, function, args, [
-                authorized_invocation(token_out, "trust", trust_args), transfer,
-            ])
-        else:
-            calls = [
-                scval.to_vec(
-                    [
-                        scval.to_address(token_out),
-                        scval.to_symbol("trust"),
-                        scval.to_vec(trust_args),
-                    ]
-                ),
-                scval.to_vec(
-                    [
-                        scval.to_address(target),
-                        scval.to_symbol(function),
-                        scval.to_vec(args),
-                    ]
-                ),
-            ]
-            args = [
-                scval.to_vec([scval.to_address(source)]),
-                scval.to_vec(calls),
-                scval.to_bool(True),
-            ]
-            root = authorized_invocation(
-                batch,
-                "batch",
-                args,
-                [authorized_invocation(token_out, "trust", trust_args), root],
-            )
-            target, function = batch, "batch"
+        sub_invocations.insert(
+            0, authorized_invocation(token_out, "trust", [scval.to_address(source)])
+        )
+    root = authorized_invocation(target, function, args, sub_invocations)
     host = HostFunction(
         type=HostFunctionType.HOST_FUNCTION_TYPE_INVOKE_CONTRACT,
         invoke_contract=InvokeContractArgs(
