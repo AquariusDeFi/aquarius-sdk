@@ -29,7 +29,7 @@ and [Python API](python/README.md) for usage and network configuration.
 
 Version `0.8.1` enables smart routing for exact-input `swap()` calls without a provider fee in both SDKs. A swap can use one route or split the input across pools.
 
-Version `0.8.2` makes swaps authorize the receive trustline in both SDKs: a swap into a classic asset the account does not hold opens the trustline in the same transaction. A swap whose receive trustline cannot be opened, such as a provider-fee swap paying another account without it, raises `NoTrustlineError`. The split builders no longer take a `batch` argument, and the JavaScript `addTrustline` option no longer affects swaps.
+Version `0.8.2` makes swaps authorize the receive trustline in both SDKs: a swap into a classic asset passed with its code and issuer, which the account does not hold, opens the trustline in the same transaction. An output passed only by contract ID gets no authorization and still needs an existing trustline. A swap raises `NoTrustlineError` when the recipient has not authorized opening its trustline, for example a provider-fee swap paying another account that does not hold it. The split builders no longer take a `batch` argument, and the JavaScript `addTrustline` option no longer affects swaps.
 
 ## Layout
 

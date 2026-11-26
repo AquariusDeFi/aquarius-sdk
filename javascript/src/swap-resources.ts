@@ -157,8 +157,8 @@ export const assertSwapResources = (
   // This also covers public/multisig signing without changing wallet flows.
   const signedSize = envelope.toXdr().length + (20 - tx.signatures.length) * 72;
   // RPC wraps all host events in DiagnosticEvent. Core charges only successful
-  // non-diagnostic ContractEvent XDR, plus the final return ScVal (with a
-  // trustline, the batch's whole result vector); never the diagnostic wrapper.
+  // non-diagnostic ContractEvent XDR, plus the final return ScVal; never the
+  // diagnostic wrapper.
   if (!Array.isArray(invocation.events))
     throw new Error("Missing swap simulation events.");
   const eventBytes = invocation.events.reduce((total, diagnostic) => {

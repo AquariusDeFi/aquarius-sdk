@@ -238,12 +238,14 @@ keeps a minimum of at least one base unit.
 ### Swapping into an asset you don't hold yet
 
 Swaps authorize the receive trustline. A swap that pays the signer a classic
-asset the account does not hold opens the trustline in the same transaction,
-under the same signature, when the issuer does not require authorization. A
-different recipient needs its own authorization to open a trustline. If your
-provider fee collector predates receive-trustline support, use a compatible
-collector or open the line separately before swapping. The `addTrustline`
-option no longer affects swaps.
+asset the account does not hold, passed as `Asset.classic(code, issuer)`, opens
+the trustline in the same transaction, under the same signature, when the
+issuer does not require authorization. The new trustline locks 0.5 XLM of
+reserve in the account. An output passed only by contract ID gets no
+authorization and still needs an existing trustline. A different recipient
+needs its own authorization to open a trustline. If your provider fee collector
+predates receive-trustline support, use a compatible collector or open the line
+separately before swapping. The `addTrustline` option no longer affects swaps.
 
 ### Batch reads
 

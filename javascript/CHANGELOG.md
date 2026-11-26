@@ -2,9 +2,9 @@
 
 ## 0.8.2
 
-- Swaps always authorize the receive trustline: a swap that pays the signer a classic asset other than XLM opens a missing trustline in the same transaction. `addTrustline` no longer affects swaps.
+- Swaps always authorize the receive trustline: a swap that pays the signer a classic asset other than XLM, passed as `Asset.classic(code, issuer)`, opens a missing trustline in the same transaction. An output passed only by contract ID gets no authorization and still needs an existing trustline. `addTrustline` no longer affects swaps.
 - Remove the `batch` argument of `buildSwapSplitOperation` and the collector's `buildSwapSplitOperation`; pass `trustline` to authorize the receive trustline inside the swap. `getSwapSplitResult` reads a swap's result without a second argument.
-- A swap whose receive trustline cannot be opened, such as a provider-fee swap paying another account without the trustline, fails with `NoTrustlineError`.
+- A swap fails with `NoTrustlineError` when the recipient has not authorized opening its receive trustline, for example a provider-fee swap paying another account that does not hold it.
 
 ## 0.8.1
 

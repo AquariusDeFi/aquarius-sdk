@@ -140,9 +140,10 @@ function swapSlippageBps(value?: number): number {
 export interface SwapOptions {
   /**
    * Has no effect on swaps. A swap that pays the signer a classic asset
-   * other than XLM, which the signer does not issue, always authorizes the
-   * swap contract to open the signer's output trustline in the same
-   * transaction.
+   * other than XLM, passed as `Asset.classic(code, issuer)`, which the signer
+   * does not issue, always authorizes the swap contract to open the signer's
+   * output trustline in the same transaction. An output passed only by
+   * contract ID gets no authorization and needs an existing trustline.
    */
   addTrustline?: boolean;
 }
@@ -1811,7 +1812,9 @@ export class AquariusClient {
    * authorization of the router call and its token-transfer sub-invocation
    * with exact amounts, so wallets present a bounded approval. For
    * strict-receive the authorized transfer is maxIn — the contract pulls the
-   * maximum and refunds the difference.
+   * maximum and refunds the difference. With `receiveTrustline`, the call
+   * also authorizes that asset's `trust(user)` before the transfer, with
+   * which the contract opens a missing trustline.
    */
   private buildSwapOperation(
     parsed: ParsedRoute,

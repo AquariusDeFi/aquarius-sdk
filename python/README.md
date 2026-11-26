@@ -91,8 +91,13 @@ quote = aqua.quote(XLM, AQUA, amount_out=500_0000000)
 ```
 
 Swaps authorize the receive trustline. A swap that pays the signer a classic
-asset the account does not hold opens the trustline in the same transaction,
-under the same signature, when the issuer does not require authorization.
+asset the account does not hold, passed as `Asset.classic(code, issuer)`, opens
+the trustline in the same transaction, under the same signature, when the
+issuer does not require authorization. The new trustline locks 0.5 XLM of
+reserve in the account. An output passed only by contract ID gets no
+authorization and still needs an existing trustline. If your provider fee
+collector predates receive-trustline support, use a compatible collector or
+open the line separately before swapping.
 
 ## Provider fees
 
