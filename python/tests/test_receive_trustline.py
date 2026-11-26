@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from stellar_sdk import Address, Keypair, StrKey, scval
 
-from aquarius import XLM, AquariusClient, Asset, ProviderFeeConfig
+from aquarius import XLM, AquariusClient, Asset, ProviderFeeConfig, SlippageError
 from aquarius.pool import Pool, sort_token_ids
 from aquarius.submit import ConfirmedTx
 
@@ -177,3 +177,22 @@ def test_a_provider_fee_paying_another_recipient_gets_no_trust(exact_input):
     [root] = client.roots
     assert fn_name(root).endswith("_to")
     assert calls(root) == [(XLM_ID, "transfer")]
+
+
+def test_a_pool_requote_keeps_the_output_as_named():
+    client = make_client()
+    submit_router = client._submit_router
+
+    def slipping_once(fn, args, *, auth):
+        if not client.roots:
+            client.roots.append(auth[0].root_invocation)
+            raise SlippageError("guard breached")
+        return submit_router(fn, args, auth=auth)
+
+    client._submit_router = slipping_once
+    with pytest.raises(SlippageError) as caught:
+        pool(client).quote(XLM, AQUA, amount_in=500).execute()
+    requoted = caught.value.requote()
+    assert requoted._to == AQUA
+    requoted.execute()
+    assert [calls(root) for root in client.roots] == [[(AQUA_ID, "trust"), (POOL_ID, "swap")]] * 2

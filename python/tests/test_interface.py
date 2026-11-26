@@ -146,6 +146,44 @@ def test_an_auth_failure_outside_a_trust_call_stays_unclassified():
     ) is None
 
 
+def unauthorized_trust_events(change):
+    """The recorded events with `change` applied to each event body."""
+    from stellar_sdk.xdr import DiagnosticEvent
+
+    events = []
+    for raw in UNAUTHORIZED_TRUST["events_xdr"]:
+        event = DiagnosticEvent.from_xdr(raw)
+        change(event.event.body.v0)
+        events.append(event.to_xdr())
+    return events
+
+
+def test_an_auth_failure_of_another_function_is_not_a_missing_trustline():
+    from stellar_sdk.xdr import SCValType
+
+    def trust_to_transfer(body):
+        data = body.data.vec.sc_vec if body.data.type == SCValType.SCV_VEC and body.data.vec else []
+        for value in [*body.topics, *data]:
+            if value.type == SCValType.SCV_SYMBOL and value.sym.sc_symbol == b"trust":
+                value.sym.sc_symbol = b"transfer"
+
+    error = error_from_diagnostics(unauthorized_trust_events(trust_to_transfer))
+    assert not isinstance(error, NoTrustlineError)
+
+
+def test_a_trust_call_failing_with_a_contract_error_is_not_a_missing_trustline():
+    from stellar_sdk.xdr import SCError, SCErrorType, SCValType, Uint32
+
+    def auth_to_contract_error(body):
+        for topic in body.topics:
+            if topic.type == SCValType.SCV_ERROR and topic.error.type == SCErrorType.SCE_AUTH:
+                topic.error = SCError(type=SCErrorType.SCE_CONTRACT, contract_code=Uint32(14))
+
+    error = error_from_diagnostics(unauthorized_trust_events(auth_to_contract_error))
+    assert not isinstance(error, NoTrustlineError)
+    assert "#14" in str(error)
+
+
 def test_timeout_resolution():
     from stellar_sdk import Keypair
 

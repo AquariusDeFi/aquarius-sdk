@@ -8,7 +8,7 @@ import { test } from "node:test";
 
 import { Address, Keypair, StrKey, nativeToScVal, scValToNative } from "@stellar/stellar-sdk";
 
-import { AquariusClient, Asset, XLM, sortTokenIds } from "../dist/index.js";
+import { AquariusClient, Asset, SlippageError, XLM, sortTokenIds } from "../dist/index.js";
 
 const PASSPHRASE = "Test SDF Network ; September 2015";
 const ISSUER = "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER";
@@ -144,4 +144,21 @@ test("addTrustline does not change the swap operation", async () => {
     assert.equal(encoded.length, 6);
     assert.equal(new Set(encoded).size, 1);
   }
+});
+
+test("a pool requote keeps the output as named", async () => {
+  const { client, roots } = makeClient();
+  const submitRouter = client.submitRouter;
+  client.submitRouter = async (fn, args, auth) => {
+    if (roots.length === 0) {
+      roots.push(auth[0].rootInvocation);
+      throw new SlippageError("guard breached");
+    }
+    return submitRouter(fn, args, auth);
+  };
+  const error = await (await pool(client).quote({ from: XLM, to: AQUA, amountIn: 500n })).execute().catch(e => e);
+  assert.ok(error instanceof SlippageError);
+  await (await error.requote()).execute();
+  const expected = [[AQUA_ID, "trust"], [POOL_ID, "swap"]];
+  assert.deepEqual(roots.map(calls), [expected, expected]);
 });

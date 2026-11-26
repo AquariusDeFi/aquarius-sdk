@@ -62,6 +62,13 @@ test("split contract trust stays under the swap root without a batch", () => {
   );
 });
 
+test("the split builder rejects batch", () => {
+  assert.throws(
+    () => buildSwapSplitOperation({ ...options, batch: fixture.collector }),
+    /swap batching is no longer supported/,
+  );
+});
+
 test("provider split authorizes only the collector and checks the net minimum", () => {
   const op = buildSwapSplitOperation({
     ...options,

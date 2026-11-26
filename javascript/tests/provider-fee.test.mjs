@@ -43,6 +43,7 @@ function decodeOperation(operation) {
     functionName: invoke.functionName.toString(),
     args: invoke.args.map(scValToNative),
     rootContractId: Address.fromScAddress(rootFn.contractAddress).toString(),
+    subInvocations: root.subInvocations.map(sub => sub.function.contractFn.functionName.toString()),
     transferTo: scValToNative(transferFn.args[1]),
     transferAmount: scValToNative(transferFn.args[2]),
   };
@@ -119,6 +120,7 @@ test("exact-input provider quote and destination invocation use net amounts", as
   assert.equal(operation.args[5], 987n);
   assert.equal(operation.args[6], 30);
   assert.equal(operation.rootContractId, COLLECTOR_ID);
+  assert.deepEqual(operation.subInvocations, ["transfer"]);
   assert.equal(operation.transferTo, COLLECTOR_ID);
   assert.equal(operation.transferAmount, 100n);
 });
@@ -161,6 +163,7 @@ test("exact-output provider quote grosses up route and uses the legacy collector
   assert.equal(operation.args[4], 1009n);
   assert.equal(operation.args[5], 30);
   assert.equal(operation.rootContractId, COLLECTOR_ID);
+  assert.deepEqual(operation.subInvocations, ["trust", "transfer"]);
   assert.equal(operation.transferTo, COLLECTOR_ID);
   assert.equal(operation.transferAmount, 1009n);
 });
@@ -195,6 +198,7 @@ test("exact-output destination uses the redirected collector ABI", async () => {
   assert.equal(operation.args[5], 1009n);
   assert.equal(operation.args[6], 30);
   assert.equal(operation.rootContractId, COLLECTOR_ID);
+  assert.deepEqual(operation.subInvocations, ["transfer"]);
   assert.equal(operation.transferTo, COLLECTOR_ID);
   assert.equal(operation.transferAmount, 1009n);
 });
@@ -212,6 +216,7 @@ test("direct swap keeps targeting and authorizing the router", async () => {
   assert.equal(operation.functionName, "swap_chained");
   assert.equal(operation.args.length, 5);
   assert.equal(operation.rootContractId, client.network.router);
+  assert.deepEqual(operation.subInvocations, ["trust", "transfer"]);
   assert.equal(operation.transferTo, client.network.router);
   assert.equal(operation.transferAmount, 100n);
 });

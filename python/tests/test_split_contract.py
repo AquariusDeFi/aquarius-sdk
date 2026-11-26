@@ -18,6 +18,11 @@ def test_contract_trust_is_nested_under_the_swap_root():
     assert [c.function.contract_fn.function_name.sc_symbol for c in root.sub_invocations] == [b"trust", b"transfer"]
 
 
+def test_the_split_builder_rejects_batch():
+    with pytest.raises(TypeError):
+        build_swap_split_operation(**options(), batch=FIXTURE["collector"])
+
+
 def test_provider_split_binds_collector_recipient_and_net_minimum():
     fee = ProviderFeeConfig(FIXTURE["collector"], 100, 10000)
     op = build_swap_split_operation(**options(), provider_fee=fee, trustline=trustline(FIXTURE["trustline"]))
