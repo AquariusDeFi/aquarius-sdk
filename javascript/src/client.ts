@@ -139,9 +139,10 @@ function swapSlippageBps(value?: number): number {
 
 export interface SwapOptions {
   /**
-   * Authorize the swap contract to open the signer's output trustline in
-   * the same transaction. Only for classic assets whose issuer does not
-   * require authorization.
+   * Has no effect on swaps. A swap that pays the signer a classic asset
+   * other than XLM, which the signer does not issue, always authorizes the
+   * swap contract to open the signer's output trustline in the same
+   * transaction.
    */
   addTrustline?: boolean;
 }
@@ -485,7 +486,10 @@ export class AquariusClient {
     const minimum = (BigInt(plan.amountOut) * BigInt(10_000 - bps) / 10_000n).toString();
     const signer = this.requireSigner();
     const source = signer.publicKey();
-    const operation = buildSwapSplitOperation({ source, router: this.network.router, tokenIn, tokenOut, plan, minimum });
+    const trustline = this.authorizesReceiveTrustline(params.to, source)
+      ? { assetCode: params.to.code!, issuer: params.to.issuer!, networkPassphrase: this.network.passphrase }
+      : undefined;
+    const operation = buildSwapSplitOperation({ source, router: this.network.router, tokenIn, tokenOut, plan, minimum, trustline });
     try {
       const tx = await this.engine.prepare(source, () => operation, signer);
       const result = await this.engine.signAndSubmit(tx, signer);
@@ -1314,6 +1318,7 @@ export class AquariusClient {
       buildContract: (contractId, fn, args, auth) =>
         this.buildContract(contractId, fn, args, auth),
       buildBatch: (calls, auth, returnResults) => this.buildBatch(calls, auth, returnResults),
+      authorizesReceiveTrustline: (asset, recipient) => this.authorizesReceiveTrustline(asset, recipient),
     });
   }
 
@@ -1460,12 +1465,17 @@ export class AquariusClient {
     tokenIn: string,
     originalParams: QuoteParams,
   ): Quote {
-    const buildOperation = (options?: SwapOptions) => this.buildSwapOperation(
+    // SwapOptions do not change the operation: the receive trustline is
+    // authorized whenever the output allows it.
+    const buildOperation = () => this.buildSwapOperation(
       parsed,
       exactInput,
       tokenIn,
       originalParams.providerFee,
-      options?.addTrustline ? originalParams.to : undefined,
+      this.authorizesReceiveTrustline(
+        originalParams.to,
+        originalParams.providerFee?.recipient ?? this.requireSigner().publicKey(),
+      ) ? originalParams.to : undefined,
     );
 
     const quote: Quote = {
@@ -1475,18 +1485,18 @@ export class AquariusClient {
       route: parsed.route,
       isExactInput: exactInput,
 
-      buildTransaction: async (options?: SwapOptions) => {
+      buildTransaction: async () => {
         const source = this.requireSigner().publicKey();
-        const tx = await this.engine.prepare(source, () => buildOperation(options));
+        const tx = await this.engine.prepare(source, () => buildOperation());
         return tx.toXDR();
       },
 
-      execute: async (options?: SwapOptions): Promise<Receipt> => {
+      execute: async (): Promise<Receipt> => {
         const signer = this.requireSigner();
         try {
           const tx = await this.engine.prepare(
             signer.publicKey(),
-            () => buildOperation(options),
+            () => buildOperation(),
             signer,
           );
           const result = await this.engine.signAndSubmit(tx, signer);
@@ -1785,6 +1795,18 @@ export class AquariusClient {
   }
 
   /**
+   * Whether a swap that pays `recipient` in `asset` authorizes the asset's
+   * `trust(signer)`: a classic asset other than XLM, paid to the signer, who
+   * does not issue it. The contract opens a missing trustline with it;
+   * `trust` on an existing line needs no authorization.
+   */
+  private authorizesReceiveTrustline(asset: Asset | string, recipient: string): boolean {
+    const user = this.requireSigner().publicKey();
+    return asset instanceof Asset && asset.code !== undefined && asset.issuer !== undefined
+      && recipient === user && asset.issuer !== user;
+  }
+
+  /**
    * Mirrors the transaction shape used by the Aquarius web app: explicit
    * authorization of the router call and its token-transfer sub-invocation
    * with exact amounts, so wallets present a bounded approval. For
@@ -1831,15 +1853,6 @@ export class AquariusClient {
 
     const subInvocations = [transferInvocation];
     if (receiveTrustline) {
-      if (providerFee?.recipient !== undefined && providerFee.recipient !== user) {
-        throw new AquariusError("Opening another recipient's trustline requires its authorization");
-      }
-      if (receiveTrustline.isNative || receiveTrustline.code === undefined || receiveTrustline.issuer === undefined) {
-        throw new AquariusError("Automatic trustlines are only available for classic assets");
-      }
-      if (receiveTrustline.issuer === user) {
-        throw new AquariusError("An issuer needs no trustline for its own asset");
-      }
       subInvocations.unshift(authorizedInvocation(
         receiveTrustline.contractId(this.network.passphrase),
         "trust",

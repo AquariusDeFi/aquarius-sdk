@@ -81,13 +81,13 @@ function quoteWithCapturedOps(client) {
   return { quote, ops, parsed };
 }
 
-test("addTrustline authorizes trust inside the router swap and reads its scalar result", async () => {
+test("a quote authorizes trust inside the router swap and reads its scalar result", async () => {
   const signer = Keypair.random();
   const client = new AquariusClient({ network: "testnet", signer });
   const { quote, ops, parsed } = quoteWithCapturedOps(client);
   client.engine.signAndSubmit = async () => ({ txHash: "swap", returnValue: u128(17n) });
 
-  const receipt = await quote.execute({ addTrustline: true });
+  const receipt = await quote.execute();
   assert.deepEqual(receipt, { txHash: "swap", amountIn: parsed.amountIn, amountOut: 17n });
   const invoke = ops[0].body.invokeHostFunctionOp;
   const hostFn = invoke.hostFunction.invokeContract;
@@ -103,34 +103,6 @@ test("addTrustline authorizes trust inside the router swap and reads its scalar 
   assert.deepEqual(argsOf(trust).map(scValToNative), [signer.publicKey()]);
   assert.equal(fnName(transfer), "transfer");
   assert.deepEqual(argsOf(transfer).map(scValToNative), [signer.publicKey(), NET.router, parsed.amountIn]);
-});
-
-test("addTrustline is refused for native, contract-only and self-issued assets", async () => {
-  const issuer = Keypair.random();
-  const client = new AquariusClient({ network: "testnet", signer: issuer });
-  client.engine.prepare = async (_source, buildOp) => ({ toXDR: () => buildOp() && "X" });
-  const parsedIn = parseFindPathResponse(fixture, { amountIn: 1n, slippageBps: 100, pairLabel: "x" });
-  for (const to of [XLM, Asset.contract(POOL_ID)]) {
-    const q = client.makeQuote(parsedIn, true, AQUA_ID, { from: AQUA, to, amountIn: 1n });
-    await assert.rejects(q.buildTransaction({ addTrustline: true }), /classic/);
-  }
-
-  const own = client.makeQuote(
-    parseFindPathResponse(fixture, { amountIn: 1n, slippageBps: 100, pairLabel: "x" }),
-    true,
-    XLM_ID,
-    { from: XLM, to: Asset.classic("OWN", issuer.publicKey()), amountIn: 1n },
-  );
-  await assert.rejects(own.buildTransaction({ addTrustline: true }), /issuer/);
-});
-
-test("without addTrustline the swap operation is unchanged", async () => {
-  const client = new AquariusClient({ network: "testnet", signer: Keypair.random() });
-  const { quote, ops } = quoteWithCapturedOps(client);
-  await quote.buildTransaction();
-  const hostFn = ops[0].body.invokeHostFunctionOp.hostFunction.invokeContract;
-  assert.equal(Address.fromScAddress(hostFn.contractAddress).toString(), NET.router);
-  assert.equal(hostFn.functionName.toString(), "swap_chained");
 });
 
 // --- pool: withdrawals through the batch -------------------------------------------------

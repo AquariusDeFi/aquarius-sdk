@@ -36,7 +36,8 @@ function decodeOperation(operation) {
   const invoke = invokeOp.hostFunction.invokeContract;
   const root = invokeOp.auth[0].rootInvocation;
   const rootFn = root.function.contractFn;
-  const transferFn = root.subInvocations[0].function.contractFn;
+  // A swap paying the signer authorizes trust before the transfer.
+  const transferFn = root.subInvocations.at(-1).function.contractFn;
   return {
     contractId: Address.fromScAddress(invoke.contractAddress).toString(),
     functionName: invoke.functionName.toString(),
