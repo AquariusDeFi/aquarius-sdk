@@ -157,6 +157,70 @@ test("a trustline failure reported directly stays typed", () => {
   assert.ok(classifyContractError(message) instanceof NoTrustlineError);
 });
 
+const unauthorizedTrust = JSON.parse(
+  readFileSync(
+    new URL("../../testdata/diagnostic_events_unauthorized_trust.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+test("diagnostics detect a receive trustline the swap contract could not open", async () => {
+  const { xdr } = await import("@stellar/stellar-sdk");
+  const events = unauthorizedTrust.events_xdr;
+  for (const error of [
+    errorFromDiagnostics(events, "hash"),
+    errorFromDiagnostics(events.map(raw => xdr.DiagnosticEvent.fromXdr(raw, "base64"))),
+    classifyContractError(unauthorizedTrust.sim_error_first_line, undefined, events),
+  ]) {
+    assert.ok(error instanceof NoTrustlineError);
+    assert.match(error.message, /output recipient/);
+  }
+});
+
+test("an Auth failure outside a trust call stays unclassified", () => {
+  const withoutTrustFailure = unauthorizedTrust.events_xdr.filter(
+    e => !Buffer.from(e, "base64").includes("contract call failed"),
+  );
+  assert.equal(errorFromDiagnostics(withoutTrustFailure), null);
+  assert.equal(classifyContractError(unauthorizedTrust.sim_error_first_line, undefined, withoutTrustFailure), null);
+});
+
+// The recorded events with `change` applied to each event body: it reads the
+// decoded body and writes replacement values into its wire form.
+async function unauthorizedTrustEvents(change) {
+  const { xdr } = await import("@stellar/stellar-sdk");
+  return unauthorizedTrust.events_xdr.map(raw => {
+    const event = xdr.DiagnosticEvent.fromXdr(raw, "base64");
+    const wire = event.toXdrObject();
+    change(xdr, event.event.body.v0, wire.event.body.v0);
+    return xdr.DiagnosticEvent.fromXdrObject(wire).toXdr("base64");
+  });
+}
+
+test("an Auth failure of another function is not a missing trustline", async () => {
+  const events = await unauthorizedTrustEvents((xdr, body, wire) => {
+    const rename = (values, slots) => values.forEach((value, i) => {
+      if (value.type === "scvSymbol" && value.sym.toString() === "trust") {
+        slots[i] = xdr.ScVal.scvSymbol("transfer").toXdrObject();
+      }
+    });
+    rename(body.topics, wire.topics);
+    if (body.data.type === "scvVec") rename(body.data.vec, wire.data.vec);
+  });
+  assert.ok(!(errorFromDiagnostics(events) instanceof NoTrustlineError));
+});
+
+test("a trust call failing with a contract error is not a missing trustline", async () => {
+  const events = await unauthorizedTrustEvents((xdr, body, wire) => body.topics.forEach((topic, i) => {
+    if (topic.type === "scvError" && topic.error.type === "sceAuth") {
+      wire.topics[i] = xdr.ScVal.scvError(xdr.ScError.sceContract(14)).toXdrObject();
+    }
+  }));
+  const error = errorFromDiagnostics(events);
+  assert.ok(!(error instanceof NoTrustlineError));
+  assert.match(error.message, /#14/);
+});
+
 test("timeout resolution follows the signer type", async () => {
   const { Keypair } = await import("@stellar/stellar-sdk");
   assert.equal(

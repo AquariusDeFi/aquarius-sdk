@@ -90,12 +90,12 @@ class FeeCollector:
         self, *, source: str, router: str, token_in: str, token_out: str,
         plan: SwapSplitPlan, minimum: str, fee_fraction: int,
         denominator: int = 10_000, recipient: str | None = None,
-        batch: str | None = None, trustline: dict | None = None,
+        trustline: dict | None = None,
     ):
         """Build a smart-routed exact-input swap with a net minimum payout."""
         return build_swap_split_operation(
             source=source, router=router, token_in=token_in, token_out=token_out,
-            plan=plan, minimum=minimum, batch=batch, trustline=trustline,
+            plan=plan, minimum=minimum, trustline=trustline,
             provider_fee=self.fee_config(fee_fraction, recipient=recipient, denominator=denominator),
         )
 

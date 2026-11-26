@@ -2248,22 +2248,9 @@
       "reason": "minimum is above 2^127 - 1"
     },
     {
-      "name": "trustline without batch",
+      "name": "authorize trustline under the swap",
       "base": "diamond",
-      "trust": true,
-      "options": {
-        "batch": null
-      }
-    },
-    {
-      "name": "batch is not a contract",
-      "base": "diamond",
-      "trust": true,
-      "options": {
-        "batch": "GBCQRID2VFAXA7Z6WLNZJSEJPKALFQIZOR3LNXRBHLBHHX35Q3CP6J7I"
-      },
-      "error": "swap",
-      "reason": "batch is not a contract"
+      "trust": true
     },
     {
       "name": "trustline is empty",

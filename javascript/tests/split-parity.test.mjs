@@ -111,7 +111,7 @@ for (const c of cases.builds)
   test("shared build: " + c.name, () => {
     const { response } = base(c.base);
     const trust = c.trust
-      ? { batch: fixture.batch, trustline: fixture.trustline }
+      ? { trustline: fixture.trustline }
       : {};
     const run = () =>
       sdk.buildSwapSplitOperation(
@@ -134,7 +134,7 @@ const contractCall = (fn) => ({
 const encoded = (values) => values.map((value) => value.toXdr("base64"));
 // The swap_split call and the user's whole authorization of it: the call
 // with the same arguments and the one input transfer.
-const assertSwapSplit = (call, root, response, minimum) => {
+const assertSwapSplit = (call, root, response, minimum, withTrustline = false) => {
   assert.equal(call.contract, fixture.router);
   assert.equal(call.name, "swap_split");
   assert.equal(call.args.length, 6);
@@ -150,8 +150,8 @@ const assertSwapSplit = (call, root, response, minimum) => {
   assert.equal(signed.contract, call.contract);
   assert.equal(signed.name, call.name);
   assert.deepEqual(encoded(signed.args), encoded(call.args));
-  assert.equal(root.subInvocations.length, 1);
-  const [transfer] = root.subInvocations;
+  assert.equal(root.subInvocations.length, withTrustline ? 2 : 1);
+  const transfer = root.subInvocations.at(-1);
   const moved = contractCall(transfer.function.contractFn);
   assert.equal(moved.contract, request.token_in_address);
   assert.equal(moved.name, "transfer");
@@ -191,52 +191,24 @@ for (const [name, entry] of Object.entries(fixture.plans).filter(
 for (const [name, entry] of Object.entries(fixture.plans).filter(
   ([, entry]) => entry.trustOperationXdr,
 ))
-  test("shared trust and swap_split batch: " + name, () => {
+  test("shared swap_split with receive trust: " + name, () => {
     const { response } = entry;
     const minimum = response.amount_out_min;
     const operation = sdk.buildSwapSplitOperation(
-      buildOptions(normalize(response), minimum, {
-        batch: fixture.batch,
-        trustline: fixture.trustline,
-      }),
+      buildOptions(normalize(response), minimum, { trustline: fixture.trustline }),
     );
     assert.equal(operation.toXdr("base64"), entry.trustOperationXdr);
     const invoke = operation.body.invokeHostFunctionOp;
-    const call = contractCall(invoke.hostFunction.invokeContract);
-    assert.equal(call.contract, fixture.batch);
-    assert.equal(call.name, "batch");
-    const [authorizers, calls, returnResults] = call.args;
-    assert.deepEqual(authorizers.vec.map(address), [fixture.source]);
-    assert.equal(returnResults.b, true);
-    assert.equal(calls.vec.length, 2);
-    const [trust, swap] = calls.vec.map((value) => value.vec);
-    assert.deepEqual(
-      [address(trust[0]), String(trust[1].sym), trust[2].vec.map(address)],
-      [request.token_out_address, "trust", [fixture.source]],
-    );
     assert.equal(invoke.auth.length, 1);
     const root = invoke.auth[0].rootInvocation;
-    const signed = contractCall(root.function.contractFn);
-    assert.deepEqual([signed.contract, signed.name], [fixture.batch, "batch"]);
-    assert.deepEqual(encoded(signed.args), encoded(call.args));
-    assert.equal(root.subInvocations.length, 2);
-    const [trustAuth, swapAuth] = root.subInvocations;
-    const trusted = contractCall(trustAuth.function.contractFn);
+    assertSwapSplit(contractCall(invoke.hostFunction.invokeContract), root, response, minimum, true);
+    const [trust] = root.subInvocations;
+    const trusted = contractCall(trust.function.contractFn);
     assert.deepEqual(
       [trusted.contract, trusted.name, trusted.args.map(address)],
       [request.token_out_address, "trust", [fixture.source]],
     );
-    assert.equal(trustAuth.subInvocations.length, 0);
-    assertSwapSplit(
-      {
-        contract: address(swap[0]),
-        name: String(swap[1].sym),
-        args: swap[2].vec,
-      },
-      swapAuth,
-      response,
-      minimum,
-    );
+    assert.equal(trust.subInvocations.length, 0);
   });
 test("an over-long route XDR is rejected before decoding", () => {
   const response = patched(fixture.plans.single.response, [

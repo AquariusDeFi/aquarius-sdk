@@ -1,6 +1,6 @@
 # aquarius-sdk
 
-Install version 0.8.1: `pip install aquarius-sdk==0.8.1`.
+Install version 0.8.2: `pip install aquarius-sdk==0.8.2`.
 
 Version `0.7.0` adds validated staged split swaps, provider split fees and native
 receive trust, preserves terminating simulation errors after handled trustline
@@ -23,7 +23,7 @@ sent to telemetry. This Python-only metadata does not change validation or retri
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.8.1 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+**Status: 0.8.2 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
 
 ## Swap through a specific pool
 
@@ -90,6 +90,15 @@ receipt = quote.execute()
 quote = aqua.quote(XLM, AQUA, amount_out=500_0000000)
 ```
 
+Swaps authorize the receive trustline. A swap that pays the signer a classic
+asset the account does not hold, passed as `Asset.classic(code, issuer)`, opens
+the trustline in the same transaction, under the same signature, when the
+issuer does not require authorization. The new trustline locks 0.5 XLM of
+reserve in the account. An output passed only by contract ID gets no
+authorization and still needs an existing trustline. If your provider fee
+collector predates receive-trustline support, use a compatible collector or
+open the line separately before swapping.
+
 ## Provider fees
 
 Pass the collector configuration with the quote. The SDK keeps the fee math exact, routes through the collector, and sends output to `recipient` without requiring that address to sign:
@@ -114,7 +123,7 @@ quote = aqua.quote(
 receipt = quote.execute()
 ```
 
-Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amount_out` instead of `amount_in` for an exact-output provider swap.
+Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amount_out` instead of `amount_in` for an exact-output provider swap. A `recipient` other than the signer must already hold the trustline for a classic output; otherwise the swap fails with `NoTrustlineError`.
 
 ## Liquidity
 
@@ -398,8 +407,8 @@ amounts.
 
 The minimum comes from your slippage on the quoted `amount_out`, never from the
 API's `amount_out_min`. To authorize the output trustline inside the swap, pass
-`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}` and
-omit `batch`. The builder verifies the asset is `token_out` and nests `trust`
+`trustline={"asset_code": ..., "issuer": ..., "network_passphrase": ...}`.
+The builder verifies the asset is `token_out` and nests `trust`
 under the swap authorization. The updated contract opens missing lines atomically;
 XLM, WASM tokens, issuers, contract recipients and existing lines need no new line.
 A missing line requires the recipient's authorization and XLM reserve; issuer
@@ -419,8 +428,8 @@ Use `aqua.assemble_transaction(transaction, operation, simulation)` after your
 successful simulation to preserve the fixed operation and apply SDK CPU and
 resource-fee headroom; then check the assembled envelope's resources. It does
 not simulate again, sign, submit or restore storage.
-Explicit `batch` retains legacy external `[trust, swap_split]` behavior; only
-that mode uses `get_swap_split_result(retval, with_trustline=True)`.
+Remove the old `batch` argument when migrating. Use
+`get_swap_split_result(retval, with_trustline=True)` only for historical batched results.
 Use `aqua.fee_collector(address).build_swap_split_operation(...)` for a collector-bound
 operation. Supply the same source, router, token pair, plan and net minimum as
 the standalone builder, plus `fee_fraction`, optional `denominator` and optional

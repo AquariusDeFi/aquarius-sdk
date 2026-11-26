@@ -21,10 +21,10 @@ anywhere); the JavaScript mirrors live in `javascript/e2e/` so they resolve
 ## The testnet lifecycle
 
 Generates a fresh keypair, funds it with friendbot, and exercises the whole
-surface: trustline, exact-input and exact-output swaps (with the SDK's retry
-backoff absorbing indexer lag), the unsigned-XDR escape hatch, pool discovery,
-deposit, position reads, withdraw, claim, and the error paths (ambiguous
-amounts, concentrated-deposit refusal).
+surface: exact-input and exact-output swaps (the first one opens the AQUA
+trustline; the SDK's retry backoff absorbs indexer lag), the unsigned-XDR
+escape hatch, pool discovery, deposit, position reads, withdraw, claim, and the
+error paths (ambiguous amounts, concentrated-deposit refusal).
 
 ## The mainnet lifecycle
 

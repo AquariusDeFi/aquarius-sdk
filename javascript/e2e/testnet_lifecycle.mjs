@@ -39,8 +39,7 @@ const aqua = new AquariusClient({ network: "testnet", signer: keypair });
 console.log(`throwaway account: ${keypair.publicKey()}`);
 
 await aqua.fundWithFriendbot();
-await aqua.ensureTrustline(AQUA);
-console.log("funded + AQUA trustline in place");
+console.log("funded");
 
 // escape hatch first, before our own swaps move the pool
 const quote = await aqua.quote({ from: XLM, to: AQUA, amountIn: 10_000_000n, slippage: 0.05 });
@@ -48,6 +47,7 @@ const envelope = TransactionBuilder.fromXDR(await quote.buildTransaction(), aqua
 assert.equal(envelope.signatures.length, 0, "escape-hatch XDR arrived signed");
 console.log("buildTransaction() escape hatch: unsigned XDR parses");
 
+// the swap opens the AQUA trustline the fresh account does not hold yet
 const receipt = await aqua.swap({ from: XLM, to: AQUA, amountIn: 100_000_000n, retries: 3, slippage: 0.05 });
 assert.ok(receipt.amountOut > 0n, "exact-input swap returned nothing");
 console.log(`swap 10 XLM -> ${fmt(receipt.amountOut)} AQUA  ${EXPLORER}${receipt.txHash}`);

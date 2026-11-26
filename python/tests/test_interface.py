@@ -120,6 +120,70 @@ def test_trustline_failure_reported_directly_stays_typed():
     assert isinstance(classify_contract_error(message), NoTrustlineError)
 
 
+UNAUTHORIZED_TRUST = json.loads((TESTDATA / "diagnostic_events_unauthorized_trust.json").read_text())
+
+
+def test_diagnostics_detect_a_receive_trustline_the_swap_contract_could_not_open():
+    events = UNAUTHORIZED_TRUST["events_xdr"]
+    for error in (
+        error_from_diagnostics(events, "hash"),
+        classify_contract_error(UNAUTHORIZED_TRUST["sim_error_first_line"], events_xdr=events),
+    ):
+        assert isinstance(error, NoTrustlineError)
+        assert "output recipient" in str(error)
+
+
+def test_an_auth_failure_outside_a_trust_call_stays_unclassified():
+    import base64
+
+    without_trust_failure = [
+        e for e in UNAUTHORIZED_TRUST["events_xdr"]
+        if b"contract call failed" not in base64.b64decode(e)
+    ]
+    assert error_from_diagnostics(without_trust_failure) is None
+    assert classify_contract_error(
+        UNAUTHORIZED_TRUST["sim_error_first_line"], events_xdr=without_trust_failure
+    ) is None
+
+
+def unauthorized_trust_events(change):
+    """The recorded events with `change` applied to each event body."""
+    from stellar_sdk.xdr import DiagnosticEvent
+
+    events = []
+    for raw in UNAUTHORIZED_TRUST["events_xdr"]:
+        event = DiagnosticEvent.from_xdr(raw)
+        change(event.event.body.v0)
+        events.append(event.to_xdr())
+    return events
+
+
+def test_an_auth_failure_of_another_function_is_not_a_missing_trustline():
+    from stellar_sdk.xdr import SCValType
+
+    def trust_to_transfer(body):
+        data = body.data.vec.sc_vec if body.data.type == SCValType.SCV_VEC and body.data.vec else []
+        for value in [*body.topics, *data]:
+            if value.type == SCValType.SCV_SYMBOL and value.sym.sc_symbol == b"trust":
+                value.sym.sc_symbol = b"transfer"
+
+    error = error_from_diagnostics(unauthorized_trust_events(trust_to_transfer))
+    assert not isinstance(error, NoTrustlineError)
+
+
+def test_a_trust_call_failing_with_a_contract_error_is_not_a_missing_trustline():
+    from stellar_sdk.xdr import SCError, SCErrorType, SCValType, Uint32
+
+    def auth_to_contract_error(body):
+        for topic in body.topics:
+            if topic.type == SCValType.SCV_ERROR and topic.error.type == SCErrorType.SCE_AUTH:
+                topic.error = SCError(type=SCErrorType.SCE_CONTRACT, contract_code=Uint32(14))
+
+    error = error_from_diagnostics(unauthorized_trust_events(auth_to_contract_error))
+    assert not isinstance(error, NoTrustlineError)
+    assert "#14" in str(error)
+
+
 def test_timeout_resolution():
     from stellar_sdk import Keypair
 
@@ -294,7 +358,8 @@ def test_swap_operation_carries_bounded_client_built_authorization():
         Address.from_xdr_sc_address(root.function.contract_fn.contract_address).address
         == client.network.router
     )
-    [transfer] = root.sub_invocations
+    [trust, transfer] = root.sub_invocations  # trust opens a missing AQUA trustline
+    assert trust.function.contract_fn.function_name.sc_symbol == b"trust"
     t = transfer.function.contract_fn
     assert t.function_name.sc_symbol == b"transfer"
     assert Address.from_xdr_sc_address(t.contract_address).address == token_in
@@ -304,6 +369,6 @@ def test_swap_operation_carries_bounded_client_built_authorization():
     [entry] = op.auth
     root = entry.root_invocation
     assert root.function.contract_fn.function_name.sc_symbol == b"swap_chained_strict_receive"
-    [transfer] = root.sub_invocations
+    [trust, transfer] = root.sub_invocations
     # max-in: the contract pulls at most the guard and refunds the difference
     assert scval.from_int128(transfer.function.contract_fn.args[2]) == quote.guard

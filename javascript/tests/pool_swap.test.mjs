@@ -35,6 +35,7 @@ function fakeContext(estimate) {
       ctx.submitted.push([contractId, fn, args, auth]);
       return { txHash: "h", returnValue: ctx.submitResult };
     },
+    authorizesReceiveTrustline: () => false, // the swaps below name their tokens by contract ID
   };
   return ctx;
 }

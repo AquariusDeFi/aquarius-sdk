@@ -166,6 +166,8 @@ export interface PoolContext {
     auth: xdr.SorobanAuthorizedInvocation[],
     returnResults: boolean,
   ): Promise<string>;
+  /** Whether a swap paying `recipient` in `asset` authorizes the asset's `trust(signer)`. */
+  authorizesReceiveTrustline(asset: Asset | string, recipient: string): boolean;
 }
 
 // --- helpers shared with the client ------------------------------------------------
@@ -974,6 +976,7 @@ export class Pool {
       tokenIn,
       tokenOut,
       params.slippage ?? 0.01,
+      params.to,
     );
   }
 
@@ -1373,6 +1376,8 @@ export class PoolQuote {
     private readonly tokenIn: string,
     private readonly tokenOut: string,
     private readonly slippage: number,
+    /** The output as the caller named it. */
+    private readonly to: Asset | string,
   ) {}
 
   /** Build, sign, submit, confirm, and parse the pinned-pool swap. */
@@ -1391,8 +1396,14 @@ export class PoolQuote {
     // single-pool flow nests: the pool's own swap calls user.require_auth()
     // and then pulls transfer(user -> pool) itself. The auth tree mirrors
     // that exactly: router.swap -> pool.swap -> token.transfer(user, pool).
+    // Before calling the pool, the router opens a missing receive trustline
+    // with the output asset's trust(user).
+    const trust = this.ctx.authorizesReceiveTrustline(this.to, user)
+      ? [authorizedInvocation(this.tokenOut, "trust", [new Address(user).toScVal()])]
+      : [];
     const entry = sourceAccountEntry(
       authorizedInvocation(this.ctx.router, "swap", args, [
+        ...trust,
         authorizedInvocation(
           this.pool.address,
           "swap",
@@ -1425,7 +1436,7 @@ export class PoolQuote {
         error.attachRequote(() =>
           this.pool.quote({
             from: this.tokenIn,
-            to: this.tokenOut,
+            to: this.to,
             amountIn: this.amountIn,
             slippage: this.slippage,
           }),

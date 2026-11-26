@@ -103,7 +103,7 @@ def test_swap_falls_back_only_when_split_endpoint_is_unavailable(monkeypatch, st
 
 def test_swap_with_provider_fee_uses_chained_collector(monkeypatch):
     client = AquariusClient(network="testnet")
-    fee = ProviderFeeConfig(FIXTURE["batch"], 3, 1000)
+    fee = ProviderFeeConfig(FIXTURE["collector"], 3, 1000)
     request = FIXTURE["request"]
     args = (Asset.contract(request["token_in_address"]), Asset.contract(request["token_out_address"]))
     quote = Mock()

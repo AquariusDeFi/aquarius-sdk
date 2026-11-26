@@ -1,9 +1,8 @@
 /**
  * The batch contract: several contract calls in one transaction, under one
  * signature. Used for atomic combinations the router has no single entry
- * point for — trustline + swap, withdraw + claim, create pool + first
- * deposit, claim across pools — and, in simulation, for reading many values
- * in one RPC round-trip.
+ * point for — withdraw + claim, create pool + first deposit, claim across
+ * pools — and, in simulation, for reading many values in one RPC round-trip.
  *
  * ABI: `batch(Vec<Address> authorizers, Vec<(Address, Symbol, Vec<Val>)> calls,
  * bool return_results) -> Vec<Val>`. The auth tree is built client-side:

@@ -365,9 +365,12 @@ class AquariusClient:
         minimum = int(plan.amount_out) * (10_000 - round(slippage * 10_000)) // 10_000
         signer = self._require_signer()
         source = signer_public_key(signer)
+        trustline = None
+        if self._authorizes_receive_trustline(to, source):
+            trustline = {"asset_code": to.code, "issuer": to.issuer, "network_passphrase": self.network.passphrase}
         operation = build_swap_split_operation(
             source=source, router=self.network.router, token_in=token_in, token_out=token_out,
-            plan=plan, minimum=str(minimum),
+            plan=plan, minimum=str(minimum), trustline=trustline,
         )
         try:
             tx = self.engine.prepare(source, lambda builder: builder.append_operation(operation), signer)
@@ -757,6 +760,17 @@ class AquariusClient:
 
     # -- internals ---------------------------------------------------------------------
 
+    def _authorizes_receive_trustline(self, asset, recipient: str) -> bool:
+        """Whether a swap that pays ``recipient`` in ``asset`` authorizes the
+        asset's ``trust(signer)``: a classic asset other than XLM, paid to the
+        signer, who does not issue it. The contract opens a missing trustline
+        with it; ``trust`` on an existing line needs no authorization."""
+        user = signer_public_key(self._require_signer())
+        return (
+            isinstance(asset, Asset) and asset.code is not None and asset.issuer is not None
+            and recipient == user and asset.issuer != user
+        )
+
     def _swap_append(self, quote: Quote):
         """The swap invocation with explicit, client-built authorization.
 
@@ -766,7 +780,10 @@ class AquariusClient:
         authorization content never depends on what simulation echoes back
         (assembly keeps pre-built auth and only fills in resources). For
         strict-receive the authorized transfer is max-in — the contract pulls
-        the maximum and refunds the difference.
+        the maximum and refunds the difference. When the signer receives a
+        classic asset other than XLM that it does not issue, the call also
+        authorizes the asset's ``trust(user)``, with which the contract opens
+        a missing trustline.
         """
         user = signer_public_key(self._require_signer())
         token_in = quote._params["from_"].contract_id(self.network.passphrase)
@@ -797,8 +814,14 @@ class AquariusClient:
             scval.to_address(target),
             scval.to_int128(transfer_amount),
         ])
+        to = quote._params["to"]
+        recipient = user if provider_fee is None or provider_fee.recipient is None else provider_fee.recipient
+        trust = (
+            [authorized_invocation(to.contract_id(self.network.passphrase), "trust", [scval.to_address(user)])]
+            if self._authorizes_receive_trustline(to, recipient) else []
+        )
         root_entry = source_account_entry(
-            authorized_invocation(target, fn, args, [transfer_invocation])
+            authorized_invocation(target, fn, args, [*trust, transfer_invocation])
         )
 
         return lambda b: b.append_invoke_contract_function_op(

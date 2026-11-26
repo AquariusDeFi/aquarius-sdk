@@ -1,10 +1,10 @@
 # @aquariusdefi/sdk
 
-Install version 0.8.1: `npm install @aquariusdefi/sdk@0.8.1 @stellar/stellar-sdk@^17.4.0`.
+Install version 0.8.2: `npm install @aquariusdefi/sdk@0.8.2 @stellar/stellar-sdk@^17.4.0`.
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar.
 
-**Status: 0.8.1 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
+**Status: 0.8.2 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
 
 Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.4.0)
 as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
@@ -105,7 +105,7 @@ const quote = await aqua.quote({
 const receipt = await quote.execute();
 ```
 
-Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amountOut` instead of `amountIn` for an exact-output provider swap.
+Omit `recipient` to send output back to the signer through the collector's legacy swap methods. Use `amountOut` instead of `amountIn` for an exact-output provider swap. A `recipient` other than the signer must already hold the trustline for a classic output; otherwise the swap fails with `NoTrustlineError`.
 
 ## Liquidity
 
@@ -237,14 +237,15 @@ keeps a minimum of at least one base unit.
 
 ### Swapping into an asset you don't hold yet
 
-```ts
-await quote.execute({ addTrustline: true });          // trustline + swap, one signature
-await quote.buildTransaction({ addTrustline: true });
-```
-
-Classic assets only, and only when the issuer does not require
-authorization — the trustline is created by the asset contract's `trust`
-in the same batch as the swap.
+Swaps authorize the receive trustline. A swap that pays the signer a classic
+asset the account does not hold, passed as `Asset.classic(code, issuer)`, opens
+the trustline in the same transaction, under the same signature, when the
+issuer does not require authorization. The new trustline locks 0.5 XLM of
+reserve in the account. An output passed only by contract ID gets no
+authorization and still needs an existing trustline. A different recipient
+needs its own authorization to open a trustline. If your provider fee collector
+predates receive-trustline support, use a compatible collector or open the line
+separately before swapping. The `addTrustline` option no longer affects swaps.
 
 ### Batch reads
 
@@ -280,7 +281,7 @@ await pool.buildClaimIncentives();
 await pool.buildScheduleIncentive({ token, tps, startAt, durationSeconds });
 await aqua.buildClaim(items);
 await aqua.pools.buildCreate(params);          // -> { xdr, pool }
-await quote.buildTransaction({ addTrustline: true });
+await quote.buildTransaction();
 ```
 
 When a separate restore is required, a build throws `RestoreRequiredError`
@@ -493,9 +494,9 @@ To use the stable release, replace the temporary Git URL or local tarball with
 the npm version and commit the regenerated application lockfile:
 
 ```sh
-yarn add @aquariusdefi/sdk@0.8.1 --exact
+yarn add @aquariusdefi/sdk@0.8.2 --exact
 # Or, for npm consumers:
-npm install @aquariusdefi/sdk@0.8.1 --save-exact
+npm install @aquariusdefi/sdk@0.8.2 --save-exact
 ```
 
 The required Node.js version and Stellar SDK peer dependency are unchanged from
@@ -769,7 +770,7 @@ amounts.
 
 The minimum comes from your slippage on the quoted `amountOut`, never from the
 API's `amount_out_min`. To authorize the output trustline inside the swap, pass
-`trustline: {assetCode, issuer, networkPassphrase}` and omit `batch`. The builder
+`trustline: {assetCode, issuer, networkPassphrase}`. The builder
 verifies the classic asset is `tokenOut` and puts `trust(source)` under the swap's
 authorization. The updated contract opens a missing line atomically; XLM, WASM
 tokens, issuers, contract recipients and existing lines need no new line.
@@ -788,8 +789,8 @@ Use the configured collector's actual denominator and fee cap.
 
 This requires the updated router and provider collector implementation. Existing
 collectors are not upgradeable and must be replaced to support split swaps.
-Explicit `batch` remains supported for legacy external `[trust, swap_split]`
-calls; only that mode uses `getSwapSplitResult(retval, true)`.
+Remove the old `batch` option when migrating. Use `getSwapSplitResult(retval, true)`
+only to decode historical batched results.
 The helpers never sign, submit or restore storage. Python has the same helpers
 in snake_case, with shared fixtures in `testdata/split-*.json`.
 For a collector-bound operation, use

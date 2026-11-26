@@ -10,7 +10,8 @@ transaction-meta layouts.
 | `find_path_testnet_xlm_aqua.json` | `/find-path/` response shape (success case, 3-hop route) | 2026-07-13, testnet API |
 | `simulation_error_after_handled_probe.json` | Synthetic simulation #2006 after a handled missing-trustline probe, shared by both submission-engine regression suites | Offline |
 | `diagnostic_events_missing_trustline.json` | DiagnosticEvent XDRs from a swap simulation that failed on a missing trustline (error #13 + the trustline text marker) | 2026-07-13, testnet RPC |
-| `split-plans.json` | `/find-path-split/` response bodies rendered by the backend serializer from synthetic constant-product pools over testnet SAC tokens: single chain, parallel split, shared-prefix diamond, prefix and suffix, plans at and over the stage, part and hop limits, no route; golden `swap_split` and trust-batch operations encoded from each `stages_xdr` with stellar-sdk primitives | 2026-11-05, offline |
+| `diagnostic_events_unauthorized_trust.json` | DiagnosticEvent XDRs from a provider-fee swap simulation paying another account without the output trustline: the collector's `trust` call failed with `Error(Auth, InvalidAction)` | 2026-11-26, testnet RPC |
+| `split-plans.json` | `/find-path-split/` response bodies rendered by the backend serializer from synthetic constant-product pools over testnet SAC tokens: single chain, parallel split, shared-prefix diamond, prefix and suffix, plans at and over the stage, part and hop limits, no route; golden `swap_split` operations, with and without the receive-trust authorization, encoded from each `stages_xdr` with stellar-sdk primitives | 2026-11-05, offline |
 | `split-behavior.json` | Amount, minimum, plan-validation and builder cases; each plan rejection is a change to a recorded plan | 2026-11-05, offline |
 | `split-resources.json` | Network-limit, footprint, configuration and return-value cases around the diamond plan's transaction | 2026-11-05, offline |
 

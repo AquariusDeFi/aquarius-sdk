@@ -124,7 +124,7 @@ test("swap uses a chained quote only when the split endpoint is unavailable", as
 
 test("swap with a provider fee quotes through the chained collector", async t => {
   const client = new AquariusClient({ network: "testnet" });
-  const providerFee = { contractId: fixture.batch, feeFraction: 3, feeDenominator: 1000 };
+  const providerFee = { contractId: fixture.collector, feeFraction: 3, feeDenominator: 1000 };
   const params = {
     from: Asset.contract(fixture.request.token_in_address), to: Asset.contract(fixture.request.token_out_address),
     amountIn: 100n, providerFee,

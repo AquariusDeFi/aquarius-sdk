@@ -33,6 +33,9 @@ class FakeClient:
         self.submitted.append((self.network.router, fn, args, auth))
         return ConfirmedTx(tx_hash="h", return_value=self.submit_result)
 
+    def _authorizes_receive_trustline(self, asset, recipient):
+        return False  # the swaps below name their tokens by contract ID
+
 
 def volatile_pool(client):
     return Pool(

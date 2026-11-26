@@ -36,7 +36,7 @@ const options = {
   minimum: "1",
 };
 const providerFee = {
-  contractId: fixture.batch,
+  contractId: fixture.collector,
   feeFraction: 100,
   feeDenominator: 10000,
 };
@@ -59,6 +59,13 @@ test("split contract trust stays under the swap root without a batch", () => {
       root.subInvocations[0].function.contractFn.contractAddress,
     ).toString(),
     options.tokenOut,
+  );
+});
+
+test("the split builder rejects batch", () => {
+  assert.throws(
+    () => buildSwapSplitOperation({ ...options, batch: fixture.collector }),
+    /swap batching is no longer supported/,
   );
 });
 

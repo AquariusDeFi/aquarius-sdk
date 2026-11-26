@@ -110,7 +110,9 @@ def is_user_rejection(error: object) -> bool:
 
 # The token contract reports a missing trustline in its diagnostic output.
 # Checked before contract codes: the same situation surfaces under different
-# codes depending on where in the chain the payout fails.
+# codes depending on where in the chain the payout fails. A swap contract
+# that opens the receive trustline itself fails instead on the asset's
+# `trust` call, when the recipient has not authorized opening the line.
 _TRUSTLINE_MARKER = "trustline entry is missing"
 _NO_TRUSTLINE_MESSAGE = (
     "The output recipient holds no trustline for the output asset — "
@@ -212,7 +214,7 @@ def error_from_diagnostics(
     code: int | None = None
     storage = False
     for raw, event in cascade:
-        if _TRUSTLINE_MARKER.encode() in base64.b64decode(raw):
+        if _TRUSTLINE_MARKER.encode() in base64.b64decode(raw) or _is_unauthorized_trust(event):
             return NoTrustlineError(_NO_TRUSTLINE_MESSAGE, tx_hash)
         for topic in event.event.body.v0.topics:
             if topic.type != SCValType.SCV_ERROR:
@@ -230,3 +232,20 @@ def error_from_diagnostics(
             tx_hash,
         )
     return None
+
+
+def _is_unauthorized_trust(event) -> bool:
+    """The host's report of a ``trust`` call that failed with an Auth error."""
+    from stellar_sdk.xdr import SCErrorType, SCValType
+
+    body = event.event.body.v0
+    if not any(
+        t.type == SCValType.SCV_ERROR and t.error.type == SCErrorType.SCE_AUTH for t in body.topics
+    ):
+        return False
+    data = body.data.vec.sc_vec if body.data.type == SCValType.SCV_VEC and body.data.vec else []
+    return (
+        len(data) >= 2
+        and data[0].type == SCValType.SCV_STRING and data[0].str.sc_string == b"contract call failed"
+        and data[1].type == SCValType.SCV_SYMBOL and data[1].sym.sc_symbol == b"trust"
+    )

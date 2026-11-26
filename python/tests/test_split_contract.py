@@ -18,8 +18,13 @@ def test_contract_trust_is_nested_under_the_swap_root():
     assert [c.function.contract_fn.function_name.sc_symbol for c in root.sub_invocations] == [b"trust", b"transfer"]
 
 
+def test_the_split_builder_rejects_batch():
+    with pytest.raises(TypeError):
+        build_swap_split_operation(**options(), batch=FIXTURE["collector"])
+
+
 def test_provider_split_binds_collector_recipient_and_net_minimum():
-    fee = ProviderFeeConfig(FIXTURE["batch"], 100, 10000)
+    fee = ProviderFeeConfig(FIXTURE["collector"], 100, 10000)
     op = build_swap_split_operation(**options(), provider_fee=fee, trustline=trustline(FIXTURE["trustline"]))
     root = op.auth[0].root_invocation
     assert scval.from_address(root.sub_invocations[1].function.contract_fn.args[1]).address == fee.contract_id
@@ -68,7 +73,7 @@ def test_shared_contract_trust_operation(name):
 
 @pytest.mark.parametrize("recipient", [None, FIXTURE["router"]])
 def test_collector_builds_the_same_split_operation(recipient):
-    collector = AquariusClient(network="testnet").fee_collector(FIXTURE["batch"])
+    collector = AquariusClient(network="testnet").fee_collector(FIXTURE["collector"])
     op = collector.build_swap_split_operation(**options(), fee_fraction=100, recipient=recipient)
     expected = build_swap_split_operation(
         **options(), provider_fee=collector.fee_config(100, recipient=recipient)
