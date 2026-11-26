@@ -1,9 +1,10 @@
 """E2E: the full write lifecycle on testnet with a throwaway account.
 
-Covers funding, trustline, swaps in both modes, the unsigned-XDR escape
-hatch, pool discovery, deposit, position reads, withdraw, claim, and the
-error paths. Real transactions on the live testnet; exits non-zero on the
-first failed check. Run: python e2e/testnet_lifecycle.py
+Covers funding, swaps in both modes (the first one opens the AQUA
+trustline), the unsigned-XDR escape hatch, pool discovery, deposit,
+position reads, withdraw, claim, and the error paths. Real transactions on
+the live testnet; exits non-zero on the first failed check.
+Run: python e2e/testnet_lifecycle.py
 """
 import time
 
@@ -38,8 +39,7 @@ client = AquariusClient(network="testnet", signer=keypair)
 print(f"throwaway account: {keypair.public_key}")
 
 client.fund_with_friendbot()
-client.ensure_trustline(AQUA)
-print("funded + AQUA trustline in place")
+print("funded")
 
 # escape hatch first, before our own swaps move the pool: the unsigned
 # envelope must parse and carry no signatures
@@ -48,7 +48,8 @@ envelope = TransactionEnvelope.from_xdr(quote.build_transaction(), client.networ
 assert len(envelope.signatures) == 0, "escape-hatch XDR arrived signed"
 print("build_transaction() escape hatch: unsigned XDR parses")
 
-# exact input, with the SDK's own retry/backoff absorbing testnet lag
+# exact input, with the SDK's own retry/backoff absorbing testnet lag; the
+# swap opens the AQUA trustline the fresh account does not hold yet
 receipt = client.swap(XLM, AQUA, amount_in=10_0000000, retries=3, slippage=0.05)
 assert receipt.amount_out > 0, "exact-input swap returned nothing"
 print(f"swap 10 XLM -> {fmt(receipt.amount_out)} AQUA  {EXPLORER}{receipt.tx_hash}")
