@@ -1,5 +1,9 @@
 # JavaScript SDK changelog
 
+## 0.8.3
+
+- `prepareFill()` no longer refuses a limit-order fill whose maximum transaction fee is at or above the order's execution reward. `maximumFee` still reports the assembled transaction's maximum fee.
+
 ## 0.8.2
 
 - Swaps always authorize the receive trustline: a swap that pays the signer a classic asset other than XLM, passed as `Asset.classic(code, issuer)`, opens a missing trustline in the same transaction. An output passed only by contract ID gets no authorization and still needs an existing trustline. `addTrustline` no longer affects swaps.

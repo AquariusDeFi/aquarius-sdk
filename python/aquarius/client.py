@@ -941,18 +941,10 @@ class AquariusClient:
         except AquariusError as exc:
             exc.diagnostics = {**context, "stage": "assembly", "reason": "assembly_failed"}
             raise
-        maximum_fee = prepared.transaction.fee
-        if maximum_fee >= record.order.executor_reward_xlm:
-            raise AquariusError(
-                f"fill maximum fee {maximum_fee} is not below execution fee "
-                f"{record.order.executor_reward_xlm}",
-                diagnostics={**context, "stage": "fee", "reason": "fee_cap",
-                             "maximum_fee": maximum_fee},
-            )
         return PreparedLimitOrderFill(
             order=record,
             receipt=receipt,
-            maximum_fee=maximum_fee,
+            maximum_fee=prepared.transaction.fee,
             transaction_xdr=prepared.to_xdr(),
             _transaction=prepared,
             _client=self,

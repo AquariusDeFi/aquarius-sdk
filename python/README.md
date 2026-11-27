@@ -1,6 +1,6 @@
 # aquarius-sdk
 
-Install version 0.8.2: `pip install aquarius-sdk==0.8.2`.
+Install version 0.8.3: `pip install aquarius-sdk==0.8.3`.
 
 Version `0.7.0` adds validated staged split swaps, provider split fees and native
 receive trust, preserves terminating simulation errors after handled trustline
@@ -16,14 +16,14 @@ Response bodies, including draft-error details, are omitted; callers control ret
 
 Limit-order `prepare_fill()` failures expose an optional `AquariusError.diagnostics`
 dictionary with stable `stage` / `reason` values, and numeric `simulation_ledger`,
-`contract_code`, `maximum_fee` or `reward_xlm` when available. Unknown failures
+`contract_code` or `reward_xlm` when available. Unknown failures
 may have no diagnostics. These fields omit RPC text, authorization and XDR;
 the exception message/cause can still contain sensitive data and must not be
 sent to telemetry. This Python-only metadata does not change validation or retries.
 
 The Python SDK for [Aquarius](https://aqua.network) — swaps, liquidity, and rewards on Stellar.
 
-**Status: 0.8.2 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
+**Status: 0.8.3 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). The API may still change before 1.0.
 
 ## Swap through a specific pool
 
@@ -325,11 +325,12 @@ The existing generic path lookup and parser are reused unchanged. Route lookup
 and limit policy are separate primitives. Before returning `prepared`, the SDK
 validates the registry record, detached
 `ADDRESS_V2` invocation tree or confirmed on-chain placement, settlement
-receipt, maker minimum, exact execution fee, and maximum transaction fee.
+receipt, maker minimum and exact execution fee.
 
 Preparation uses enforced authorization, preserves the maker's signed proof,
-and applies the configured CPU and resource fee headroom before checking that
-the maximum transaction fee is below the execution reward. Successful simulation
+and applies the configured CPU and resource fee headroom. `prepared.maximum_fee`
+is the assembled transaction's maximum fee. A fill is prepared even when that
+fee is at or above the execution reward. Successful simulation
 data may include automatic restoration entries and a restore preamble; fill
 preparation retains those entries in the invocation's transaction data without
 building or submitting a separate restore. Unsigned placement and cancellation

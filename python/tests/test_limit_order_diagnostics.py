@@ -10,7 +10,6 @@ from test_limit_order_management import fill_receipt, prepared_client, route_xdr
     ("simulation", "simulation", "simulation_failed"),
     ("receipt", "receipt", "invalid_receipt"),
     ("auth", "authorization", "authorization_changed"),
-    ("fee", "fee", "fee_cap"),
     ("payout", "receipt", "invalid_receipt"),
     ("count", "receipt", "invalid_result_count"),
     ("assembly", "assembly", "assembly_failed"),
@@ -31,8 +30,6 @@ def test_fill_failures_carry_safe_diagnostics_without_submitting(failure, stage,
         simulation.results = []
     elif failure == "assembly":
         client.engine._assemble = Mock(side_effect=AquariusError("PRIVATE-ASSEMBLY"))
-    else:
-        client.engine._assemble = Mock(return_value=Mock(transaction=Mock(fee=5_000_000)))
     with pytest.raises(AquariusError) as caught:
         record.prepare_fill(route_xdr())
     context = caught.value.diagnostics
@@ -41,8 +38,6 @@ def test_fill_failures_carry_safe_diagnostics_without_submitting(failure, stage,
     assert context["reward_xlm"] == 5_000_000
     if failure == "simulation":
         assert context["contract_code"] == 205
-    if failure == "fee":
-        assert context["maximum_fee"] == 5_000_000
     assert "PRIVATE" not in repr(context)
     client.engine.sign_and_submit.assert_not_called()
 
