@@ -1,6 +1,6 @@
 {
   "name": "@aquariusdefi/sdk",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "private": true,
   "description": "Git installation entry point for the Aquarius JavaScript SDK",
   "type": "module",

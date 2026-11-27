@@ -257,7 +257,7 @@ def test_route_and_fill_receipt_preserve_contract_shape_and_maker_minimum():
         )
 
 
-def test_prepare_fill_attaches_auth_checks_fee_and_submits_through_engine():
+def test_prepare_fill_attaches_auth_reports_fee_and_submits_through_engine():
     payload, filler = detached_payload()
     client = AquariusClient(
         network="testnet",
@@ -294,7 +294,7 @@ def test_prepare_fill_attaches_auth_checks_fee_and_submits_through_engine():
         )
     )
     prepared_tx = SimpleNamespace(
-        transaction=SimpleNamespace(fee=4_999_999),
+        transaction=SimpleNamespace(fee=1_000_000),
         to_xdr=lambda: "prepared-xdr",
     )
     client.engine._operation_xdr = Mock(return_value=())
@@ -304,16 +304,16 @@ def test_prepare_fill_attaches_auth_checks_fee_and_submits_through_engine():
     )
 
     prepared = record.prepare_fill(route_xdr())
-    assert prepared.maximum_fee == 4_999_999
+    assert prepared.maximum_fee == 1_000_000
     assert captured[-1]["contract_id"] == SETTLEMENT
     assert captured[-1]["function_name"] == "fill"
     assert captured[-1]["auth"] == [record.authorization]
     result = prepared.execute()
     assert result.tx_hash == "cd" * 32
 
-    prepared_tx.transaction.fee = 5_000_000
-    with pytest.raises(AquariusError, match="below execution fee"):
-        record.prepare_fill(route_xdr())
+    for fee in (5_000_000, 5_000_001):
+        prepared_tx.transaction.fee = fee
+        assert record.prepare_fill(route_xdr()).maximum_fee == fee
 
 
 def test_record_cancel_requires_the_maker_and_uses_canonical_order():
@@ -390,7 +390,7 @@ def prepared_client(*, resource_fee=17, resource_headroom=0, instruction_headroo
     return client, record, filler, simulation
 
 
-def test_fill_enforces_exact_maker_auth_and_applies_headroom_before_fee_guard():
+def test_fill_enforces_exact_maker_auth_and_applies_headroom():
     from stellar_sdk.soroban_rpc import AuthMode
 
     client, record, _, simulation = prepared_client(resource_headroom=0.5, instruction_headroom=0.25)
@@ -402,10 +402,13 @@ def test_fill_enforces_exact_maker_auth_and_applies_headroom_before_fee_guard():
     assert client.server.simulate_transaction.call_args.kwargs == {"auth_mode": AuthMode.ENFORCE}
     client.engine.sign_and_submit.assert_not_called()
 
-    # A fee below the reward in simulation exceeds it after the 50% reserve.
+
+def test_fill_is_prepared_when_maximum_fee_exceeds_executor_reward():
     client, record, _, _ = prepared_client(resource_fee=4_000_000, resource_headroom=0.5)
-    with pytest.raises(AquariusError, match="below execution fee"):
-        record.prepare_fill(route_xdr())
+    prepared = record.prepare_fill(route_xdr())
+    assert prepared.maximum_fee == prepared._transaction.transaction.fee
+    assert prepared.maximum_fee > record.order.executor_reward_xlm
+    client.engine.sign_and_submit.assert_not_called()
 
 
 def test_fill_rejects_rpc_auth_without_submission():

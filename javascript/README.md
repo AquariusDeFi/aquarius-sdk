@@ -1,10 +1,10 @@
 # @aquariusdefi/sdk
 
-Install version 0.8.2: `npm install @aquariusdefi/sdk@0.8.2 @stellar/stellar-sdk@^17.4.0`.
+Install version 0.8.3: `npm install @aquariusdefi/sdk@0.8.3 @stellar/stellar-sdk@^17.4.0`.
 
 The TypeScript SDK for [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar.
 
-**Status: 0.8.2 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
+**Status: 0.8.3 — swaps and the liquidity lifecycle are complete and verified with real testnet transactions.** Concentrated liquidity position management is available as a beta surface (the contracts are under an ongoing external audit). Pool creation, gauge incentives, reward accounting and the batch-contract flows (0.6) mirror the Aquarius web app's transaction shapes and are covered by unit tests; run them against testnet before relying on them. The API may still change before 1.0.
 
 Requires Node.js 22.12 or newer and `@stellar/stellar-sdk` 17.x (at least 17.4.0)
 as a peer dependency. Browser bundlers resolve the SDK's explicit `buffer`
@@ -494,9 +494,9 @@ To use the stable release, replace the temporary Git URL or local tarball with
 the npm version and commit the regenerated application lockfile:
 
 ```sh
-yarn add @aquariusdefi/sdk@0.8.2 --exact
+yarn add @aquariusdefi/sdk@0.8.3 --exact
 # Or, for npm consumers:
-npm install @aquariusdefi/sdk@0.8.2 --save-exact
+npm install @aquariusdefi/sdk@0.8.3 --save-exact
 ```
 
 The required Node.js version and Stellar SDK peer dependency are unchanged from
@@ -687,11 +687,12 @@ The existing generic path lookup and parser are reused unchanged. Route lookup
 and limit policy are separate primitives. Before returning `prepared`, the SDK
 validates the registry record, detached
 `ADDRESS_V2` invocation tree or confirmed on-chain placement, settlement
-receipt, maker minimum, exact execution fee, and maximum transaction fee.
+receipt, maker minimum and exact execution fee.
 
 Preparation uses enforced authorization, preserves the maker's signed proof,
-and applies the configured CPU and resource fee headroom before checking that
-the maximum transaction fee is below the execution reward. Successful simulation
+and applies the configured CPU and resource fee headroom. `prepared.maximumFee`
+is the assembled transaction's maximum fee. A fill is prepared even when that
+fee is at or above the execution reward. Successful simulation
 data may include automatic restoration entries and a restore preamble; fill
 preparation retains those entries in the invocation's transaction data without
 building or submitting a separate restore. Unsigned placement and cancellation

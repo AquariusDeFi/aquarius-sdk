@@ -2,7 +2,7 @@
 
 Official SDKs for building on [Aquarius](https://aqua.network) — swaps, limit orders, liquidity, and rewards on Stellar, in Python and TypeScript.
 
-**Release target: 0.8.2.** Swaps (quote → execute in both modes) and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are complete in both languages, each verified end to end with real testnet transactions. Concentrated liquidity position management (range deposits, withdrawals, fee claims, position reads) is available as a **beta** surface: the concentrated contracts are under an ongoing external audit, and router deposits into concentrated pools remain refused — ranges are managed through the pool contract directly. Provider-fee collectors — routing swaps through your own fee-taking contract, deploying one, and claiming what it accumulates — are fully supported.
+**Release target: 0.8.3.** Swaps (quote → execute in both modes) and the liquidity lifecycle — pool discovery, deposit, withdraw, rewards, positions — are complete in both languages, each verified end to end with real testnet transactions. Concentrated liquidity position management (range deposits, withdrawals, fee claims, position reads) is available as a **beta** surface: the concentrated contracts are under an ongoing external audit, and router deposits into concentrated pools remain refused — ranges are managed through the pool contract directly. Provider-fee collectors — routing swaps through your own fee-taking contract, deploying one, and claiming what it accumulates — are fully supported.
 
 Version `0.7.0` adds validated staged split swaps, provider-fee split calls, contract-native receive trustline authorization, and fixed-operation assembly with SDK resource headroom in both languages. Split swaps require a router implementing `swap_split`; contract-native trust requires the updated router and, for provider fees, a new collector with `swap_split`/`swap_split_to` and automatic trust support. Publishing this SDK does not upgrade deployed contracts.
 
@@ -30,6 +30,8 @@ and [Python API](python/README.md) for usage and network configuration.
 Version `0.8.1` enables smart routing for exact-input `swap()` calls without a provider fee in both SDKs. A swap can use one route or split the input across pools.
 
 Version `0.8.2` makes swaps authorize the receive trustline in both SDKs: a swap into a classic asset passed with its code and issuer, which the account does not hold, opens the trustline in the same transaction. An output passed only by contract ID gets no authorization and still needs an existing trustline. A swap raises `NoTrustlineError` when the recipient has not authorized opening its trustline, for example a provider-fee swap paying another account that does not hold it. The split builders no longer take a `batch` argument, and the JavaScript `addTrustline` option no longer affects swaps.
+
+Version `0.8.3` removes the limit-order fill fee cap in both SDKs: `prepare_fill()` / `prepareFill()` returns a prepared fill even when its maximum transaction fee is at or above the order's execution reward. `maximum_fee` / `maximumFee` still reports the assembled transaction's maximum fee.
 
 ## Layout
 
@@ -127,13 +129,13 @@ There are two channels:
 
 A feature branch does not change the package version. It is merged into `testnet`, where the testnet version is set and tagged, and it reaches `master` through its own pull request. Several features can be on testnet at once without competing prerelease numbers.
 
-Release preparation sets the stable version explicitly. For `0.8.2`, keep the
+Release preparation sets the stable version explicitly. For `0.8.3`, keep the
 root Git-install manifest, `javascript/package.json`, the JavaScript lockfile,
 `python/pyproject.toml` and `aquarius.__version__` in sync. After the release PR is
-merged and its checks pass, tag the resulting `master` commit as `js-v0.8.2` and
-`py-v0.8.2`. The release workflows check each tag against its package version and
+merged and its checks pass, tag the resulting `master` commit as `js-v0.8.3` and
+`py-v0.8.3`. The release workflows check each tag against its package version and
 publish `javascript/` to npm and `python/` to PyPI. Consumers using a temporary
-Git dependency for these stable APIs should switch to `@aquariusdefi/sdk@0.8.2`
+Git dependency for these stable APIs should switch to `@aquariusdefi/sdk@0.8.3`
 after publication and regenerate their lockfile.
 
 ## Development

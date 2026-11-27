@@ -1565,17 +1565,10 @@ export class AquariusClient {
       throw new AquariusError("limit-order simulation changed authorization");
     }
     const prepared = await this.assembleLimitOrderFill(transaction, simulation, xdr.Operation.fromXDR(operationXdr));
-    const maximumFee = BigInt(prepared.fee);
-    if (maximumFee >= record.order.executorRewardXlm) {
-      throw new AquariusError(
-        `fill maximum fee ${maximumFee} is not below execution fee ` +
-        `${record.order.executorRewardXlm}`,
-      );
-    }
     return new PreparedLimitOrderFill(
       record,
       receipt,
-      maximumFee,
+      BigInt(prepared.fee),
       prepared.toXDR(),
       async () => {
         const result = await this.engine.signAndSubmit(prepared, signer);

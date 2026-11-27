@@ -261,7 +261,7 @@ test("client follows cursor pages and rejects duplicate orders", async () => {
   await assert.rejects(client.openLimitOrders(), /repeated an order/);
 });
 
-test("prepared fill checks receipt and fee before SDK submission", async () => {
+test("prepared fill checks receipt and reports fee before SDK submission", async () => {
   const filler = Keypair.random();
   const client = new AquariusClient({
     network: "testnet",
@@ -286,14 +286,14 @@ test("prepared fill checks receipt and fee before SDK submission", async () => {
     events: [],
   });
   const preparedTx = {
-    fee: "4999999",
+    fee: "1000000",
     toXDR: () => "prepared",
   };
   client.assembleLimitOrderFill = () => preparedTx;
   client.engine.signAndSubmit = async () => ({ txHash: "cd".repeat(32), returnValue: receipt(record.orderId, filler.publicKey()) });
 
   const prepared = await record.prepareFill(routeXdr());
-  assert.equal(prepared.maximumFee, 4_999_999n);
+  assert.equal(prepared.maximumFee, 1_000_000n);
   const invocation = operation.body.invokeHostFunctionOp.hostFunction.invokeContract;
   assert.equal(
     Address.fromScAddress(invocation.contractAddress).toString(),
@@ -306,8 +306,10 @@ test("prepared fill checks receipt and fee before SDK submission", async () => {
     receipt: prepared.receipt,
   });
 
-  client.assembleLimitOrderFill = () => ({ ...preparedTx, fee: "5000000" });
-  await assert.rejects(record.prepareFill(routeXdr()), /below execution fee/);
+  for (const fee of [5_000_000n, 5_000_001n]) {
+    client.assembleLimitOrderFill = () => ({ ...preparedTx, fee: String(fee) });
+    assert.equal((await record.prepareFill(routeXdr())).maximumFee, fee);
+  }
 });
 
 test("record cancellation uses the canonical order body", async () => {
@@ -362,7 +364,7 @@ async function preparedClient({ resourceFee = 17, resourceHeadroom = 0, instruct
   return { client, record, filler, simulation, modes };
 }
 
-test("fill enforces fixed auth and checks fees after instruction and resource headroom", async () => {
+test("fill enforces fixed auth and applies instruction and resource headroom", async () => {
   const { Transaction } = await import("@stellar/stellar-sdk");
   const { record, modes } = await preparedClient({ resourceHeadroom: 0.5, instructionHeadroom: 0.25 });
   const prepared = await record.prepareFill(routeXdr());
@@ -371,8 +373,15 @@ test("fill enforces fixed auth and checks fees after instruction and resource he
   assert.deepEqual(tx.operations[0].auth, []);
   assert.equal(tx.toEnvelope().v1.tx.ext.sorobanData.resources.instructions, 12_500);
   assert.equal(prepared.maximumFee, 375_126n);
-  const expensive = await preparedClient({ resourceFee: 4_000_000, resourceHeadroom: 0.5 });
-  await assert.rejects(expensive.record.prepareFill(routeXdr()), /below execution fee/);
+});
+
+test("fill is prepared when the maximum fee exceeds the executor reward", async () => {
+  const { Transaction } = await import("@stellar/stellar-sdk");
+  const { record } = await preparedClient({ resourceFee: 4_000_000, resourceHeadroom: 0.5 });
+  const prepared = await record.prepareFill(routeXdr());
+  const tx = new Transaction(prepared.transactionXdr, Networks.TESTNET);
+  assert.equal(prepared.maximumFee, BigInt(tx.fee));
+  assert.ok(prepared.maximumFee > record.order.executorRewardXlm);
 });
 
 test("fill rejects injected RPC auth without submitting", async () => {
